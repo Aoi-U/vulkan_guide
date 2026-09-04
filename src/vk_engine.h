@@ -5,17 +5,45 @@
 
 #include <vk_types.h>
 
-struct FrameData {
+// NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
+// and delete them from a loop
+struct DeletionQueue
+{
+	std::deque<std::function<void()>> deletors;
+
+	// adds a function to the deletion queue
+	void push_function(std::function<void()>&& function)
+	{
+		deletors.push_back(function);
+	}
+
+	// flushes the deletion queue
+	void flush()
+	{
+		// reverse iterate the deletion queue to execute all functions
+		for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+			(*it)(); // call the function
+		}
+
+		deletors.clear();
+	}
+};
+
+struct FrameData 
+{
 	VkCommandPool _commandPool;
 	VkCommandBuffer _mainCommandBuffer;
 
 	VkSemaphore _swapchainSemaphore;
 	VkFence _renderFence;
+
+	DeletionQueue _deletionQueue;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;
 
-class VulkanEngine {
+class VulkanEngine 
+{
 public:
 
 	bool _isInitialized{ false };
@@ -41,8 +69,16 @@ public:
 	FrameData _frames[FRAME_OVERLAP];
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
 
+	// draw resources
+	AllocatedImage _drawImage;
+	VkExtent2D _drawExtent;
+
 	VkQueue _graphicsQueue;
 	uint32_t _graphicsQueueFamily;
+
+	VmaAllocator _allocator;
+
+	DeletionQueue _mainDeletionQueue;
 
 	struct SDL_Window* _window{ nullptr };
 
@@ -56,6 +92,8 @@ public:
 
 	//draw loop
 	void draw();
+
+	void draw_background(VkCommandBuffer cmd);
 
 	//run main loop
 	void run();
