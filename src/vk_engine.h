@@ -4,6 +4,7 @@
 #pragma once
 
 #include <vk_types.h>
+#include <vk_descriptors.h>
 
 // NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
 // and delete them from a loop
@@ -78,6 +79,13 @@ public:
 
 	VmaAllocator _allocator;
 
+	DescriptorAllocator globalDescriptorAllocator;
+	VkDescriptorSet _drawImageDescriptors;
+	VkDescriptorSetLayout _drawImageDescriptorLayout;
+
+	VkPipeline _gradientPipeline;
+	VkPipelineLayout _gradientPipelineLayout;
+
 	DeletionQueue _mainDeletionQueue;
 
 	struct SDL_Window* _window{ nullptr };
@@ -109,5 +117,10 @@ private:
 	// vulkan swapchain functions
 	void create_swapchain(uint32_t width, uint32_t height);
 	void destroy_swapchain();
+
+	void init_descriptors();
+
+	void init_pipelines();
+	void init_background_pipelines();
 
 };
