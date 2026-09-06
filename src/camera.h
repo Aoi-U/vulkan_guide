@@ -1,5 +1,5 @@
 
-#include <vk_types.h>
+#include <utils/vk_types.h>
 
 class Camera {
 public:

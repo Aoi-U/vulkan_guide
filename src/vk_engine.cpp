@@ -4,10 +4,10 @@
 #include <SDL.h>
 #include <SDL_vulkan.h>
 
-#include <vk_initializers.h>
-#include <vk_types.h>
-#include <vk_images.h>
-#include <vk_pipelines.h>
+#include <utils/vk_initializers.h>
+#include <utils/vk_types.h>
+#include <utils/vk_images.h>
+#include <utils/vk_pipelines.h>
 
 // bootstrap library
 #include "VkBootstrap.h"
@@ -78,7 +78,8 @@ void VulkanEngine::cleanup()
 		// flush global deletion queue
 		_mainDeletionQueue.flush();
 
-		destroy_swapchain();
+		_descriptorManager.cleanup(_device);
+		_swapchain.cleanup(_device);
 
 		vkDestroySurfaceKHR(_instance, _surface, nullptr);
 		vkDestroyDevice(_device, nullptr);
@@ -103,9 +104,13 @@ void VulkanEngine::draw()
 
 	VK_CHECK(vkResetFences(_device, 1, &get_current_frame()._renderFence));
 
+	const auto& swapchainImages = _swapchain.get_swapchain_images();
+	const auto& renderSemaphores = _swapchain.get_render_semaphores();
+	const auto& swapchainExtent = _swapchain.get_extent();
+
 	// request image from swapchain
 	uint32_t swapchainImageIndex;
-	VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain, 1000000000, get_current_frame()._swapchainSemaphore, nullptr, &swapchainImageIndex));
+	VK_CHECK(vkAcquireNextImageKHR(_device, _swapchain.get_swapchain(), 1000000000, get_current_frame()._swapchainSemaphore, nullptr, &swapchainImageIndex));
 
 	// begin rendering commands
 	VkCommandBuffer cmd = get_current_frame()._mainCommandBuffer;
@@ -132,13 +137,13 @@ void VulkanEngine::draw()
 	// transition the draw image and the swapchain image into their correct transfer layouts 
 	// so we can blit from the draw image to the swapchain image
 	vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	vkutil::transition_image(cmd, swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 	// copy from draw image into the swapchain
-	vkutil::copy_image_to_image(cmd, _drawImage.image, _swapchainImages[swapchainImageIndex], _drawExtent, _swapchainExtent);
+	vkutil::copy_image_to_image(cmd, _drawImage.image, swapchainImages[swapchainImageIndex], _drawExtent, swapchainExtent);
 
 	// set swapchain image layout to present so can show it on the screen
-	vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	vkutil::transition_image(cmd, swapchainImages[swapchainImageIndex], VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
 
 	// finalize the command buffer
@@ -151,7 +156,7 @@ void VulkanEngine::draw()
 	VkCommandBufferSubmitInfo cmdInfo = vkinit::command_buffer_submit_info(cmd);
 
 	VkSemaphoreSubmitInfo waitInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT_KHR, get_current_frame()._swapchainSemaphore);
-	VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, _renderSemaphores[swapchainImageIndex]);
+	VkSemaphoreSubmitInfo signalInfo = vkinit::semaphore_submit_info(VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT, renderSemaphores[swapchainImageIndex]);
 
 	VkSubmitInfo2 submit = vkinit::submit_info(&cmdInfo, &signalInfo, &waitInfo);
 
@@ -162,13 +167,14 @@ void VulkanEngine::draw()
 	// prepare present
 	// this will put the image we just rendered to the visible window
 	// want to wait on the _renderSemaphore for that, as its necessary that drawing commands have finished before the image is displayed to the user
+	VkSwapchainKHR swapchainHandle = _swapchain.get_swapchain();
 	VkPresentInfoKHR presentInfo = {};
 	presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
 	presentInfo.pNext = nullptr;
-	presentInfo.pSwapchains = &_swapchain;
+	presentInfo.pSwapchains = &swapchainHandle;
 	presentInfo.swapchainCount = 1;
 
-	presentInfo.pWaitSemaphores = &_renderSemaphores[swapchainImageIndex];
+	presentInfo.pWaitSemaphores = &renderSemaphores[swapchainImageIndex];
 	presentInfo.waitSemaphoreCount = 1;
 
 	presentInfo.pImageIndices = &swapchainImageIndex;
@@ -185,12 +191,16 @@ void VulkanEngine::draw_background(VkCommandBuffer cmd)
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipeline);
 	
 	// bind the descriptor set containing the draw image for the compute pipeline
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &_drawImageDescriptors, 0, nullptr);
+	const auto& drawImageDescriptorSet = _descriptorManager.get_draw_image_descriptor_set();
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &drawImageDescriptorSet, 0, nullptr);
 
 	// execute the compute pipeline dispatch
 	// using 16x16 workgroup size so we need to divide by it
 	vkCmdDispatch(cmd, std::ceil(_drawExtent.width / 16.0), std::ceil(_drawExtent.height / 16.0), 1);
 }
+
+void VulkanEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function)
+{}
 
 void VulkanEngine::run()
 {
@@ -293,7 +303,7 @@ void VulkanEngine::init_vulkan()
 
 void VulkanEngine::init_swapchain()
 {
-	create_swapchain(_windowExtent.width, _windowExtent.height);
+	_swapchain.init(_chosenGPU, _device, _surface, _windowExtent.width, _windowExtent.height);
 
 	// create a draw image that we will render into, and then blit to the swapchain image
 
@@ -351,6 +361,18 @@ void VulkanEngine::init_commands()
 
 		VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_frames[i]._mainCommandBuffer));
 	}
+
+	// create command pool for immediate submit
+	VK_CHECK(vkCreateCommandPool(_device, &commandPoolInfo, nullptr, &_immCommandPool));
+
+	// allocate the command buffer for immediate submit
+	VkCommandBufferAllocateInfo cmdAllocInfo = vkinit::command_buffer_allocate_info(&_immCommandPool, 1);
+
+	VK_CHECK(vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_immCommandBuffer));
+
+	_mainDeletionQueue.push_function([=]() {
+		vkDestroyCommandPool(_device, _immCommandPool, nullptr);
+		});
 }
 
 void VulkanEngine::init_sync_structures()
@@ -369,93 +391,9 @@ void VulkanEngine::init_sync_structures()
 	}
 }
 
-void VulkanEngine::create_swapchain(uint32_t width, uint32_t height)
-{
-	vkb::SwapchainBuilder swapchainBuilder{ _chosenGPU, _device, _surface };
-	_swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;
-
-	vkb::Swapchain vkbSwapchain = swapchainBuilder
-		.set_desired_format(VkSurfaceFormatKHR{ .format = _swapchainImageFormat, .colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR })
-		// use vsync present mode
-		.set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
-		.set_desired_extent(width, height)
-		.add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
-		.build()
-		.value();
-
-	_swapchainExtent = vkbSwapchain.extent;
-	// store swapchain and its related images
-	_swapchain = vkbSwapchain.swapchain;
-	_swapchainImages = vkbSwapchain.get_images().value();
-	_swapchainImageViews = vkbSwapchain.get_image_views().value();
-
-	VkSemaphoreCreateInfo semaphoreCreateInfo = vkinit::semaphore_create_info();
-	_renderSemaphores.resize(_swapchainImages.size());
-	for (int i = 0; i < _renderSemaphores.size(); i++) {
-		VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr, &_renderSemaphores[i]));
-	}
-}
-
-void VulkanEngine::destroy_swapchain()
-{
-	// destroy semaphores
-	for (VkSemaphore semaphore : _renderSemaphores)
-	{
-		vkDestroySemaphore(_device, semaphore, nullptr);
-	}
-	_renderSemaphores.clear();
-
-	vkDestroySwapchainKHR(_device, _swapchain, nullptr);
-
-	// destroy swapchain resources
-	for (VkImageView imageView : _swapchainImageViews)
-	{
-		vkDestroyImageView(_device, imageView, nullptr);
-	}
-}
-
 void VulkanEngine::init_descriptors()
 {
-	// create a descriptor pool that will hold 10 sets with 1 image each
-	std::vector<DescriptorAllocator::PoolSizeRatio> sizes =
-	{
-		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}
-	};
-
-	globalDescriptorAllocator.init_pool(_device, 10, sizes);
-
-	// make the descriptor set layout for our compute draw
-	{
-		DescriptorLayoutBuilder builder;
-		builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-		_drawImageDescriptorLayout = builder.build(_device, VK_SHADER_STAGE_COMPUTE_BIT);
-	}
-
-	// allocate a descriptor set for our draw image
-	_drawImageDescriptors = globalDescriptorAllocator.allocate(_device, _drawImageDescriptorLayout);
-
-	VkDescriptorImageInfo imgInfo{};
-	imgInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-	imgInfo.imageView = _drawImage.imageView;
-
-	VkWriteDescriptorSet drawImageWrite = {};
-	drawImageWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-	drawImageWrite.pNext = nullptr;
-
-	drawImageWrite.dstBinding = 0;
-	drawImageWrite.dstSet = _drawImageDescriptors;
-	drawImageWrite.descriptorCount = 1;
-	drawImageWrite.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
-	drawImageWrite.pImageInfo = &imgInfo;
-
-	vkUpdateDescriptorSets(_device, 1, &drawImageWrite, 0, nullptr);
-
-	// make sure both the descriptor allocator and the new layout get cleaned up properly
-	_mainDeletionQueue.push_function([&]() {
-		globalDescriptorAllocator.destroy_pools(_device);
-
-		vkDestroyDescriptorSetLayout(_device, _drawImageDescriptorLayout, nullptr);
-		});
+	_descriptorManager.init(_device, _drawImage.imageView);
 }
 
 void VulkanEngine::init_pipelines()
@@ -465,11 +403,12 @@ void VulkanEngine::init_pipelines()
 
 void VulkanEngine::init_background_pipelines()
 {
+	const auto& drawImageLayout = _descriptorManager.get_draw_image_descriptor_layout();
 	// create the pipeline layout
 	VkPipelineLayoutCreateInfo computeLayout{};
 	computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	computeLayout.pNext = nullptr;
-	computeLayout.pSetLayouts = &_drawImageDescriptorLayout;
+	computeLayout.pSetLayouts = &drawImageLayout;
 	computeLayout.setLayoutCount = 1;
 
 	VK_CHECK(vkCreatePipelineLayout(_device, &computeLayout, nullptr, &_gradientPipelineLayout));
@@ -503,3 +442,6 @@ void VulkanEngine::init_background_pipelines()
 		vkDestroyPipeline(_device, _gradientPipeline, nullptr);
 		});
 }
+
+void VulkanEngine::init_imgui()
+{}

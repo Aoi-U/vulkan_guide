@@ -3,8 +3,11 @@
 
 #pragma once
 
-#include <vk_types.h>
-#include <vk_descriptors.h>
+#include <utils/vk_types.h>
+#include <utils/vk_descriptors.h>
+
+#include <SwapchainManager.h>
+#include <DescriptorManager.h>
 
 // NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
 // and delete them from a loop
@@ -59,13 +62,8 @@ public:
 	VkDevice _device; // vulkan logical device for comands
 	VkSurfaceKHR _surface; // vulkan window surface
 
-	// vulkan swapchain handles
-	VkSwapchainKHR _swapchain;
-	VkFormat _swapchainImageFormat;
-	std::vector<VkImage> _swapchainImages;
-	std::vector<VkImageView> _swapchainImageViews;
-	std::vector<VkSemaphore> _renderSemaphores;
-	VkExtent2D _swapchainExtent;
+	// vulkan swapchain handle
+	SwapchainManager _swapchain;
 
 	FrameData _frames[FRAME_OVERLAP];
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
@@ -79,14 +77,17 @@ public:
 
 	VmaAllocator _allocator;
 
-	DescriptorAllocator globalDescriptorAllocator;
-	VkDescriptorSet _drawImageDescriptors;
-	VkDescriptorSetLayout _drawImageDescriptorLayout;
+	DescriptorManager _descriptorManager;
 
 	VkPipeline _gradientPipeline;
 	VkPipelineLayout _gradientPipelineLayout;
 
 	DeletionQueue _mainDeletionQueue;
+
+	// immediate submit structures
+	VkFence _immFence;
+	VkCommandBuffer _immCommandBuffer;
+	VkCommandPool _immCommandPool;
 
 	struct SDL_Window* _window{ nullptr };
 
@@ -103,6 +104,8 @@ public:
 
 	void draw_background(VkCommandBuffer cmd);
 
+	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+
 	//run main loop
 	void run();
 
@@ -113,14 +116,9 @@ private:
 	void init_swapchain();
 	void init_commands();
 	void init_sync_structures();
-
-	// vulkan swapchain functions
-	void create_swapchain(uint32_t width, uint32_t height);
-	void destroy_swapchain();
-
 	void init_descriptors();
-
 	void init_pipelines();
 	void init_background_pipelines();
+	void init_imgui();
 
 };
