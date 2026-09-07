@@ -99,6 +99,9 @@ public:
 	VkPipeline _gradientPipeline;
 	VkPipelineLayout _gradientPipelineLayout;
 
+	VkPipeline _trianglePipeline;
+	VkPipelineLayout _trianglePipelineLayout;
+
 	DeletionQueue _mainDeletionQueue;
 
 	// immediate submit structures
@@ -123,6 +126,7 @@ public:
 	void draw();
 
 	void draw_background(VkCommandBuffer cmd);
+	void draw_geometry(VkCommandBuffer cmd);
 	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
 
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
@@ -140,6 +144,7 @@ private:
 	void init_descriptors();
 	void init_pipelines();
 	void init_background_pipelines();
+	void init_triangle_pipeline();
 	void init_imgui();
 
 };
