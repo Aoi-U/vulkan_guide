@@ -4,10 +4,27 @@
 #pragma once
 
 #include <utils/vk_types.h>
-#include <utils/vk_descriptors.h>
 
 #include <SwapchainManager.h>
 #include <DescriptorManager.h>
+
+struct ComputePushConstants
+{
+	glm::vec4 data1;
+	glm::vec4 data2;
+	glm::vec4 data3;
+	glm::vec4 data4;
+};
+
+struct ComputeEffect
+{
+	const char* name;
+
+	VkPipeline pipeline;
+	VkPipelineLayout layout;
+
+	ComputePushConstants data;
+};
 
 // NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
 // and delete them from a loop
@@ -88,6 +105,9 @@ public:
 	VkFence _immFence;
 	VkCommandBuffer _immCommandBuffer;
 	VkCommandPool _immCommandPool;
+
+	std::vector<ComputeEffect> backgroundEffects;
+	int currentBackgroundEffect{ 0 };
 
 	struct SDL_Window* _window{ nullptr };
 
