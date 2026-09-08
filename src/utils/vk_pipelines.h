@@ -38,6 +38,10 @@ public:
 
 	void disable_blending();
 
+	void enable_blending_additive();
+
+	void enable_blending_alphablend();
+
 	void set_color_attachment_format(VkFormat format);
 
 	void set_depth_format(VkFormat format);
