@@ -28,17 +28,12 @@ void SwapchainManager::destroy_swapchain()
 	}
 	_renderSemaphores.clear();
 
-	if (_swapchain != VK_NULL_HANDLE) {
-		vkDestroySwapchainKHR(_device, _swapchain, nullptr);
-		_swapchain = VK_NULL_HANDLE;
-	}
+	vkDestroySwapchainKHR(_device, _swapchain, nullptr);
 
 	// destroy swapchain resources
 	for (VkImageView imageView : _swapchainImageViews) {
 		vkDestroyImageView(_device, imageView, nullptr);
 	}
-	_swapchainImageViews.clear();
-	_swapchainImages.clear();
 }
 
 void SwapchainManager::create_swapchain(uint32_t width, uint32_t height)
