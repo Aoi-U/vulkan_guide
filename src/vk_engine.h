@@ -4,6 +4,7 @@
 #pragma once
 
 #include <utils/vk_types.h>
+#include <utils/vk_loader.h>
 
 #include <SwapchainManager.h>
 #include <DescriptorManager.h>
@@ -88,6 +89,7 @@ public:
 
 	// draw resources
 	AllocatedImage _drawImage;
+	AllocatedImage _depthImage;
 	VkExtent2D _drawExtent;
 
 	VkQueue _graphicsQueue;
@@ -100,12 +102,10 @@ public:
 	VkPipeline _gradientPipeline;
 	VkPipelineLayout _gradientPipelineLayout;
 
-	VkPipeline _trianglePipeline;
-	VkPipelineLayout _trianglePipelineLayout;
-
 	VkPipeline _meshPipeline;
 	VkPipelineLayout _meshPipelineLayout;
-	GPUMeshBuffers rectangle;
+
+	std::vector<std::shared_ptr<MeshAsset>> testMeshes;
 
 	DeletionQueue _mainDeletionQueue;
 
@@ -156,7 +156,6 @@ private:
 	void init_descriptors();
 	void init_pipelines();
 	void init_background_pipelines();
-	void init_triangle_pipeline();
 	void init_mesh_pipeline();
 	void init_imgui();
 
