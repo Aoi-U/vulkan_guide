@@ -83,6 +83,7 @@ public:
 
 	// vulkan swapchain handle
 	SwapchainManager _swapchain;
+	bool resize_requested{ false };
 
 	FrameData _frames[FRAME_OVERLAP];
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
@@ -91,6 +92,7 @@ public:
 	AllocatedImage _drawImage;
 	AllocatedImage _depthImage;
 	VkExtent2D _drawExtent;
+	float renderScale{ 1.0f };
 
 	VkQueue _graphicsQueue;
 	uint32_t _graphicsQueueFamily;
@@ -159,4 +161,6 @@ private:
 	void init_mesh_pipeline();
 	void init_imgui();
 
+
+	void resize_swapchain();
 };
