@@ -94,7 +94,6 @@ void VulkanEngine::cleanup()
 		// flush global deletion queue
 		_mainDeletionQueue.flush();
 
-		_descriptorManager.cleanup(_device);
 		_swapchain.cleanup(_device);
 
 		vkDestroySurfaceKHR(_instance, _surface, nullptr);
@@ -228,8 +227,7 @@ void VulkanEngine::draw_background(VkCommandBuffer cmd)
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
 
 	// bind the descriptor set containing the draw image for the compute pipeline
-	const auto& drawImageDescriptorSet = _descriptorManager.get_draw_image_descriptor_set();
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &drawImageDescriptorSet, 0, nullptr);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipelineLayout, 0, 1, &_drawImageDescriptorSet, 0, nullptr);
 	
 	vkCmdPushConstants(cmd, _gradientPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(ComputePushConstants), &effect.data);
 
@@ -674,7 +672,30 @@ void VulkanEngine::init_sync_structures()
 
 void VulkanEngine::init_descriptors()
 {
-	_descriptorManager.init(_device, _drawImage.imageView);
+	// create a descriptor pool that will hold 10 sets with 1 image each
+	std::vector<DescriptorAllocator::PoolSizeRatio> sizes =
+	{
+		{ VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1}
+	};
+
+	_globalDescriptorAllocator.init_pool(_device, 10, sizes);
+	_mainDeletionQueue.push_function([&]() {
+		vkDestroyDescriptorPool(_device, _globalDescriptorAllocator.pool, nullptr);
+		});
+
+	// make the descriptor set layout for our compute draw
+	{
+		DescriptorLayoutBuilder builder;
+		builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+		_drawImageDescriptorLayout = builder.build(_device, VK_SHADER_STAGE_COMPUTE_BIT);
+	}
+
+	// allocate a descriptor set for our draw image
+	_drawImageDescriptorSet = _globalDescriptorAllocator.allocate(_device, _drawImageDescriptorLayout);
+
+	DescriptorWriter writer;
+	writer.write_image(0, _drawImage.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+	writer.update_set(_device, _drawImageDescriptorSet);
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		// create a descriptor pool
@@ -700,6 +721,7 @@ void VulkanEngine::init_descriptors()
 	}
 
 	_mainDeletionQueue.push_function([&]() {
+		vkDestroyDescriptorSetLayout(_device, _drawImageDescriptorLayout, nullptr);
 		vkDestroyDescriptorSetLayout(_device, _gpuSceneDataDescriptorLayout, nullptr);
 		});
 }
@@ -715,12 +737,11 @@ void VulkanEngine::init_pipelines()
 
 void VulkanEngine::init_background_pipelines()
 {
-	const auto& drawImageDescriptorLayout = _descriptorManager.get_draw_image_descriptor_layout();
 	// create the pipeline layout
 	VkPipelineLayoutCreateInfo computeLayout{};
 	computeLayout.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	computeLayout.pNext = nullptr;
-	computeLayout.pSetLayouts = &drawImageDescriptorLayout;
+	computeLayout.pSetLayouts = &_drawImageDescriptorLayout;
 	computeLayout.setLayoutCount = 1;
 
 	// create push constant range for the compute shader

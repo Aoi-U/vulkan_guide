@@ -5,9 +5,9 @@
 
 #include <utils/vk_types.h>
 #include <utils/vk_loader.h>
+#include <utils/vk_descriptors.h>
 
 #include <SwapchainManager.h>
-#include <DescriptorManager.h>
 #include <span>
 
 struct ComputePushConstants
@@ -110,7 +110,9 @@ public:
 
 	VmaAllocator _allocator;
 
-	DescriptorManager _descriptorManager;
+	DescriptorAllocator _globalDescriptorAllocator;
+	VkDescriptorSet _drawImageDescriptorSet;
+	VkDescriptorSetLayout _drawImageDescriptorLayout;
 
 	GPUSceneData sceneData;
 	VkDescriptorSetLayout _gpuSceneDataDescriptorLayout;
