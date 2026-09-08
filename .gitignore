@@ -3,3 +3,5 @@
 /assets/brickadia
 /.vs
 /out
+/shaders/*.spv
+/CMakeFiles
