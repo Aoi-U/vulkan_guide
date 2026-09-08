@@ -5,3 +5,4 @@
 /out
 /shaders/*.spv
 /CMakeFiles
+/CmakeCache.txt
