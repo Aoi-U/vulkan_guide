@@ -9,6 +9,7 @@
 
 #include <SwapchainManager.h>
 #include <span>
+#include <camera.h>
 
 struct ComputePushConstants
 {
@@ -201,6 +202,8 @@ public:
 	int currentBackgroundEffect{ 0 };
 
 	struct SDL_Window* _window{ nullptr };
+
+	Camera mainCamera; // NOTE: move camera to gameplay layer. engine should just have the matrices needed for rendering
 
 	static VulkanEngine& Get();
 

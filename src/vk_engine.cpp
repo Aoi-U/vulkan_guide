@@ -67,6 +67,11 @@ void VulkanEngine::init()
 
 	// everything went fine
 	_isInitialized = true;
+
+	mainCamera.velocity = glm::vec3(0.f);
+	mainCamera.position = glm::vec3(0, 0, 5);
+	mainCamera.pitch = 0;
+	mainCamera.yaw = 0;
 }
 
 void VulkanEngine::cleanup()
@@ -323,8 +328,15 @@ void VulkanEngine::update_scene()
 	mainDrawContext.opaqueSurfaces.clear();
 
 	loadedNodes["Suzanne"]->draw(glm::mat4{ 1.f }, mainDrawContext);
+
+	static auto lastTime = std::chrono::steady_clock::now();
+	auto now = std::chrono::steady_clock::now();
+	float deltaTime = std::chrono::duration<float>(now - lastTime).count();
+	lastTime = now;
+
+	mainCamera.update(deltaTime);
+	sceneData.view = mainCamera.getViewMatrix();
 	
-	sceneData.view = glm::translate(glm::vec3{ 0, 0, -5 });
 	// camera projection
 	sceneData.proj = glm::perspective(glm::radians(70.0f), (float)_windowExtent.width / (float)_windowExtent.height, 10000.f, 0.1f);
 	
@@ -383,6 +395,7 @@ void VulkanEngine::run()
 			if (e.type == SDL_QUIT)
 				bQuit = true;
 
+
 			if (e.type == SDL_WINDOWEVENT) {
 				if (e.window.event == SDL_WINDOWEVENT_MINIMIZED) {
 					stop_rendering = true;
@@ -392,6 +405,7 @@ void VulkanEngine::run()
 				}
 			}
 
+			mainCamera.processSDLEvent(e);
 			// send sdl event to imgui for handling
 			ImGui_ImplSDL2_ProcessEvent(&e);
 		}
