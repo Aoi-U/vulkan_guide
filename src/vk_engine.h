@@ -61,6 +61,7 @@ struct GLTFMetallic_Roughness
 	MaterialInstance write_material(VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator);
 };
 
+// core render object data 
 struct RenderObject
 {
 	uint32_t indexCount;
@@ -71,6 +72,18 @@ struct RenderObject
 
 	glm::mat4 transform;
 	VkDeviceAddress vertexBufferAddress;
+};
+
+struct DrawContext
+{
+	std::vector<RenderObject> opaqueSurfaces;
+};
+
+// scene graph node for a renderable mesh
+struct MeshNode : public Node {
+	std::shared_ptr<MeshAsset> mesh;
+
+	virtual void draw(const glm::mat4& topMatrix, DrawContext& ctx) override;
 };
 
 // NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
@@ -97,7 +110,7 @@ struct DeletionQueue
 	}
 };
 
-struct FrameData 
+struct FrameData
 {
 	VkCommandPool _commandPool;
 	VkCommandBuffer _mainCommandBuffer;
@@ -111,7 +124,7 @@ struct FrameData
 
 constexpr unsigned int FRAME_OVERLAP = 2;
 
-class VulkanEngine 
+class VulkanEngine
 {
 public:
 
@@ -163,6 +176,9 @@ public:
 	GPUMeshBuffers rectangle;
 	std::vector<std::shared_ptr<MeshAsset>> testMeshes;
 
+	DrawContext mainDrawContext;
+	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
+
 	AllocatedImage _whiteImage;
 	AllocatedImage _blackImage;
 	AllocatedImage _greyImage;
@@ -200,6 +216,8 @@ public:
 	void draw_background(VkCommandBuffer cmd);
 	void draw_geometry(VkCommandBuffer cmd);
 	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
+
+	void update_scene();
 
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
