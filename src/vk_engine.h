@@ -28,6 +28,51 @@ struct ComputeEffect
 	ComputePushConstants data;
 };
 
+struct GLTFMetallic_Roughness
+{
+	MaterialPipeline opaquePipeline;
+	MaterialPipeline transparentPipeline;
+
+	VkDescriptorSetLayout materialLayout;
+
+	struct MaterialConstants
+	{
+		glm::vec4 colorFactors;
+		glm::vec4 metalRoughFactors;
+		// padding, need it anyway for uniform bnuffers
+		glm::vec4 padding[14];
+	};
+
+	struct MaterialResources
+	{
+		AllocatedImage colorImage;
+		VkSampler colorSampler;
+		AllocatedImage metalRoughImage;
+		VkSampler metalRoughSampler;
+		VkBuffer dataBuffer;
+		uint32_t dataBufferOffset;
+	};
+
+	DescriptorWriter writer;
+
+	void build_pipelines(VulkanEngine* engine);
+	void clear_resources(VkDevice device);
+
+	MaterialInstance write_material(VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator);
+};
+
+struct RenderObject
+{
+	uint32_t indexCount;
+	uint32_t firstIndex;
+	VkBuffer indexBuffer;
+
+	MaterialInstance* material;
+
+	glm::mat4 transform;
+	VkDeviceAddress vertexBufferAddress;
+};
+
 // NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
 // and delete them from a loop
 struct DeletionQueue
@@ -62,16 +107,6 @@ struct FrameData
 
 	DeletionQueue _deletionQueue;
 	DescriptorAllocatorGrowable _frameDescriptors;
-};
-
-struct GPUSceneData
-{
-	glm::mat4 view;
-	glm::mat4 proj;
-	glm::mat4 viewproj;
-	glm::vec4 ambientCOlor;
-	glm::vec4 sunlightDirection; // w component for sun power
-	glm::vec4 sunlightColor;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;
@@ -132,6 +167,9 @@ public:
 	AllocatedImage _blackImage;
 	AllocatedImage _greyImage;
 	AllocatedImage _errorCheckerboardImage;
+
+	MaterialInstance defaultData;
+	GLTFMetallic_Roughness metalRoughMaterial;
 
 	VkSampler _defaultSamplerLinear;
 	VkSampler _defaultSamplerNearest;

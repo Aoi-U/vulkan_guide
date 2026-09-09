@@ -36,6 +36,16 @@ struct AllocatedBuffer
   VmaAllocationInfo info;
 };
 
+struct GPUSceneData
+{
+  glm::mat4 view;
+  glm::mat4 proj;
+  glm::mat4 viewproj;
+  glm::vec4 ambientCOlor;
+  glm::vec4 sunlightDirection; // w component for sun power
+  glm::vec4 sunlightColor;
+};
+
 struct Vertex
 {
   glm::vec3 position;
@@ -43,6 +53,26 @@ struct Vertex
   glm::vec3 normal;
   float uv_y;
   glm::vec4 color;
+};
+
+enum class MaterialPass
+{
+  MainColor,
+  Transparent,
+  Other
+};
+
+struct MaterialPipeline
+{
+  VkPipeline pipeline;
+  VkPipelineLayout layout;
+};
+
+struct MaterialInstance
+{
+  MaterialPipeline* pipeline;
+  VkDescriptorSet materialSet;
+  MaterialPass passType;
 };
 
 // holds the resources needed for a mesh
@@ -57,6 +87,18 @@ struct GPUDrawPushConstants
 {
   glm::mat4 worldMatrix;
   VkDeviceAddress vertexBufferAddress;
+};
+
+struct DrawContext;
+
+class IRenderable
+{
+  virtual void draw(const glm::mat4& topMatrix, DrawContext& ctx) = 0;
+};
+
+class Node : public IRenderable
+{
+
 };
 
 
