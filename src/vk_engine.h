@@ -29,6 +29,7 @@ struct ComputeEffect
 	ComputePushConstants data;
 };
 
+// represents a gltf material with metallic roughness 
 struct GLTFMetallic_Roughness
 {
 	MaterialPipeline opaquePipeline;
@@ -36,6 +37,7 @@ struct GLTFMetallic_Roughness
 
 	VkDescriptorSetLayout materialLayout;
 
+	// data that is sent to shader for a material instance
 	struct MaterialConstants
 	{
 		glm::vec4 colorFactors;
@@ -44,6 +46,7 @@ struct GLTFMetallic_Roughness
 		glm::vec4 padding[14];
 	};
 
+	// resources needed for a material instance
 	struct MaterialResources
 	{
 		AllocatedImage colorImage;
@@ -54,15 +57,18 @@ struct GLTFMetallic_Roughness
 		uint32_t dataBufferOffset;
 	};
 
+	// helper class to write descriptor sets for the material
 	DescriptorWriter writer;
 
+	// builds the pipelines for the material
 	void build_pipelines(VulkanEngine* engine);
 	void clear_resources(VkDevice device);
 
+	// creates a material instance for a given pass and resources
 	MaterialInstance write_material(VkDevice device, MaterialPass pass, const MaterialResources& resources, DescriptorAllocatorGrowable& descriptorAllocator);
 };
 
-// core render object data 
+// represents a single renderable object in the scene
 struct RenderObject
 {
 	uint32_t indexCount;
@@ -70,11 +76,12 @@ struct RenderObject
 	VkBuffer indexBuffer;
 
 	MaterialInstance* material;
-
+	Bounds bounds;
 	glm::mat4 transform;
 	VkDeviceAddress vertexBufferAddress;
 };
 
+// context for a single draw call, contains all the render objects to be drawn
 struct DrawContext
 {
 	std::vector<RenderObject> opaqueSurfaces;
@@ -124,6 +131,16 @@ struct FrameData
 	DescriptorAllocatorGrowable _frameDescriptors;
 };
 
+struct EngineStats
+{
+	float frameTime;
+	float deltaTime;
+	int triangleCount;
+	int drawcallCount;
+	float sceneUpdateTime;
+	float meshDrawTime;
+};
+
 constexpr unsigned int FRAME_OVERLAP = 2;
 
 class VulkanEngine
@@ -164,7 +181,6 @@ public:
 
 	VkDescriptorSet _drawImageDescriptorSet;
 	VkDescriptorSetLayout _drawImageDescriptorLayout;
-	VkDescriptorSetLayout _singleImageDescriptorLayout;
 
 	GPUSceneData sceneData;
 	VkDescriptorSetLayout _gpuSceneDataDescriptorLayout;
@@ -181,12 +197,12 @@ public:
 	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
 	std::unordered_map<std::string, std::shared_ptr<LoadedGLTF>> loadedScenes;
 
+	// default textures
 	AllocatedImage _whiteImage;
 	AllocatedImage _blackImage;
 	AllocatedImage _greyImage;
 	AllocatedImage _errorCheckerboardImage;
 
-	MaterialInstance defaultData;
 	GLTFMetallic_Roughness metalRoughMaterial;
 
 	VkSampler _defaultSamplerLinear;
@@ -201,6 +217,8 @@ public:
 
 	std::vector<ComputeEffect> backgroundEffects;
 	int currentBackgroundEffect{ 0 };
+
+	EngineStats stats;
 
 	struct SDL_Window* _window{ nullptr };
 

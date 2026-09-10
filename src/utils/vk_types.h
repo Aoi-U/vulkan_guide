@@ -20,6 +20,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 
+// represents an image that has been allocated on the GPU
 struct AllocatedImage
 {
 	VkImage image;
@@ -29,6 +30,7 @@ struct AllocatedImage
 	VkFormat imageFormat;
 };
 
+// represents a buffer that has been allocated on the GPU
 struct AllocatedBuffer
 {
 	VkBuffer buffer;
@@ -36,6 +38,7 @@ struct AllocatedBuffer
 	VmaAllocationInfo info;
 };
 
+// per frame uniform data sent to GPU
 struct GPUSceneData
 {
 	glm::mat4 view;
@@ -46,6 +49,7 @@ struct GPUSceneData
 	glm::vec4 sunlightColor;
 };
 
+// a single vertex 
 struct Vertex
 {
 	glm::vec3 position;
@@ -55,6 +59,7 @@ struct Vertex
 	glm::vec4 color;
 };
 
+// used to identify which pipeline to use for a given material instance
 enum class MaterialPass : uint8_t
 {
 	MainColor,
@@ -62,12 +67,14 @@ enum class MaterialPass : uint8_t
 	Other
 };
 
+// represents a pipeline and its layout 
 struct MaterialPipeline
 {
 	VkPipeline pipeline;
 	VkPipelineLayout layout;
 };
 
+// represents a single instance of a material with its own resources and pipeline
 struct MaterialInstance
 {
 	MaterialPipeline* pipeline;
@@ -83,6 +90,7 @@ struct GPUMeshBuffers
 	VkDeviceAddress vertexBufferAddress;
 };
 
+// holds the data that is pushed to the GPU for a draw call
 struct GPUDrawPushConstants
 {
 	glm::mat4 worldMatrix;

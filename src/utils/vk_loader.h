@@ -9,18 +9,30 @@
 // forward declaration
 class VulkanEngine;
 
+// represents a gltf material
 struct GLTFMaterial
 {
 	MaterialInstance data;
 };
 
+// the bounding volume of a mesh used for frustum culling
+struct Bounds
+{
+	glm::vec3 origin;
+	float sphereRadius;
+	glm::vec3 extents;
+};
+
+// a single surface of a mesh
 struct GeoSurface
 {
 	uint32_t startIndex;
 	uint32_t count;
+	Bounds bounds;
 	std::shared_ptr<GLTFMaterial> material;
 };
 
+// a mesh asset
 struct MeshAsset
 {
 	std::string name;
@@ -28,7 +40,6 @@ struct MeshAsset
 	std::vector<GeoSurface> surfaces;
 	GPUMeshBuffers meshBuffers;
 };
-
 
 struct LoadedGLTF : public IRenderable
 {
