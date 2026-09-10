@@ -15,6 +15,9 @@ public:
 	// horizontal rotation
 	float yaw{ 0.f };
 
+	// camera speed
+	float speed{ 10.f };
+
 	glm::mat4 getViewMatrix();
 	glm::mat4 getRotationMatrix();
 

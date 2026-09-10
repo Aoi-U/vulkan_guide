@@ -69,9 +69,14 @@ void VulkanEngine::init()
 	_isInitialized = true;
 
 	mainCamera.velocity = glm::vec3(0.f);
-	mainCamera.position = glm::vec3(0, 0, 5);
+	mainCamera.position = glm::vec3(30.f, 0.f, -085.f);
 	mainCamera.pitch = 0;
 	mainCamera.yaw = 0;
+
+	std::string structurePath = { "../../assets/structure.glb" };
+	auto structureFile = loadGltf(this, structurePath);
+	assert(structureFile.has_value());
+	loadedScenes["structure"] = *structureFile;
 }
 
 void VulkanEngine::cleanup()
@@ -79,6 +84,8 @@ void VulkanEngine::cleanup()
 	if (_isInitialized) {
 		// make sure the gpu has stopped doing its things
 		vkDeviceWaitIdle(_device);
+
+		loadedScenes.clear();
 
 		for (int i = 0; i < FRAME_OVERLAP; i++) {
 			vkDestroyCommandPool(_device, _frames[i]._commandPool, nullptr);
@@ -327,8 +334,6 @@ void VulkanEngine::update_scene()
 {
 	mainDrawContext.opaqueSurfaces.clear();
 
-	loadedNodes["Suzanne"]->draw(glm::mat4{ 1.f }, mainDrawContext);
-
 	static auto lastTime = std::chrono::steady_clock::now();
 	auto now = std::chrono::steady_clock::now();
 	float deltaTime = std::chrono::duration<float>(now - lastTime).count();
@@ -349,12 +354,14 @@ void VulkanEngine::update_scene()
 	sceneData.sunlightColor = glm::vec4(1.0f);
 	sceneData.sunlightDirection = glm::vec4(0, 1, 0.5, 1);
 
-	for (int x = -3; x < 3; x++) {
-		glm::mat4 scale = glm::scale(glm::vec3{ 0.2 });
-		glm::mat4 translation = glm::translate(glm::vec3{ x, 1, 0 });
+	//for (int x = -3; x < 3; x++) {
+	//	glm::mat4 scale = glm::scale(glm::vec3{ 0.2 });
+	//	glm::mat4 translation = glm::translate(glm::vec3{ x, 1, 0 });
 
-		loadedNodes["Cube"]->draw(translation * scale, mainDrawContext);
-	}
+	//	loadedNodes["Cube"]->draw(translation * scale, mainDrawContext);
+	//}
+
+	loadedScenes["structure"]->draw(glm::mat4{ 1.f }, mainDrawContext);
 }
 
 void VulkanEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function)
@@ -677,48 +684,6 @@ void VulkanEngine::init_default_data()
 		destroy_image(_blackImage);
 		destroy_image(_errorCheckerboardImage);
 		});
-
-
-	GLTFMetallic_Roughness::MaterialResources materialResources;
-	// default the material textures
-	materialResources.colorImage = _whiteImage;
-	materialResources.colorSampler = _defaultSamplerLinear;
-	materialResources.metalRoughImage = _whiteImage;
-	materialResources.metalRoughSampler = _defaultSamplerLinear;
-
-	// set the uniform buffer for the material data
-	AllocatedBuffer materialConstants = create_buffer(sizeof(GLTFMetallic_Roughness::MaterialConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-	// write the default material buffer data
-	GLTFMetallic_Roughness::MaterialConstants* sceneUniformData = (GLTFMetallic_Roughness::MaterialConstants*)materialConstants.allocation->GetMappedData();
-	sceneUniformData->colorFactors = glm::vec4{ 1, 1, 1, 1 }; // default color white
-	sceneUniformData->metalRoughFactors = glm::vec4{ 1, 0.5, 0, 0 }; // default metallic 1, roughness 0.5
-
-	// add to deletion queue
-	_mainDeletionQueue.push_function([=, this]() {
-		destroy_buffer(materialConstants);
-		});
-
-	materialResources.dataBuffer = materialConstants.buffer;
-	materialResources.dataBufferOffset = 0;
-
-	defaultData = metalRoughMaterial.write_material(_device, MaterialPass::MainColor, materialResources, _globalDescriptorAllocator);
-
-	testMeshes = loadGtlfMeshes(this, "../../assets/basicmesh.glb").value();
-
-	for (auto& m : testMeshes) {
-		std::shared_ptr<MeshNode> newNode = std::make_shared<MeshNode>();
-		newNode->mesh = m;
-
-		newNode->localTransform = glm::mat4{ 1.f };
-		newNode->worldTransform = glm::mat4{ 1.f };
-
-		for (auto& s : newNode->mesh->surfaces) {
-			s.material = std::make_shared<GLTFMaterial>(defaultData);
-		}
-
-		loadedNodes[m->name] = std::move(newNode);
-	}
 }
 
 void VulkanEngine::init_vulkan()

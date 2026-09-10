@@ -45,6 +45,13 @@ void Camera::processSDLEvent(SDL_Event& e)
 		}
 	}
 
+	// scrolling the mouse wheel will change the camera speed
+	if (e.type == SDL_MOUSEWHEEL) {
+		speed += (float)e.wheel.y;
+		if (speed < 1.f)
+			speed = 1.f;
+	}
+
 	if (e.type == SDL_MOUSEMOTION && SDL_GetRelativeMouseMode() == SDL_TRUE) {
 		yaw += (float)e.motion.xrel / 500.f;
 		pitch -= (float)e.motion.yrel / 500.f;
@@ -60,7 +67,7 @@ void Camera::update(float deltaTime)
 	velocity.z = (keyStates[SDLK_s] ? 1.f : 0.f) - (keyStates[SDLK_w] ? 1.f : 0.f);
 
 	glm::mat4 cameraRotation = getRotationMatrix();
-	position += glm::vec3(cameraRotation * glm::vec4(velocity * deltaTime, 0.f));
+	position += glm::vec3(cameraRotation * glm::vec4(velocity * deltaTime * speed, 0.f));
 }
 
 void Camera::setCursorLocked(bool locked)
