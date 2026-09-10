@@ -46,6 +46,83 @@ VkSamplerMipmapMode extract_mipmap_mode(fastgltf::Filter filter)
 	}
 }
 
+// helper to load an image from fastgltf into a vulkan image using stb_image
+std::optional<AllocatedImage> load_image(VulkanEngine* engine, fastgltf::Asset& asset, fastgltf::Image& image)
+{
+	AllocatedImage newImage{};
+
+	int width, height, nrChannels;
+
+	std::visit(
+		fastgltf::visitor{
+			[](auto& arg) {},
+			[&](fastgltf::sources::URI& filePath) { // case: textures stored outside the gltf/glb file
+				assert(filePath.fileByteOffset == 0); // we dont support offsets with stbi
+				assert(filePath.uri.isLocalPath()); // only capable of loading local files
+
+				const std::string path(filePath.uri.path().begin(), filePath.uri.path().end());
+				unsigned char* data = stbi_load(path.c_str(), &width, &height, &nrChannels, 4);
+
+				if (data) {
+					VkExtent3D imageSize;
+					imageSize.width = width;
+					imageSize.height = height;
+					imageSize.depth = 1;
+
+					newImage = engine->create_image(data, imageSize, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+
+					stbi_image_free(data);
+				}
+			},
+			[&](fastgltf::sources::Vector& vector) { // case: fastgltf loads texture into a vector
+				unsigned char* data = stbi_load_from_memory(vector.bytes.data(), static_cast<int>(vector.bytes.size()), &width, &height, &nrChannels, 4);
+
+				if (data) {
+					VkExtent3D imageSize;
+					imageSize.width = width;
+					imageSize.height = height;
+					imageSize.depth = 1;
+
+					newImage = engine->create_image(data, imageSize, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+
+					stbi_image_free(data);
+				}
+			},
+			[&](fastgltf::sources::BufferView& view) { // case: image file is embedded into the binary GLB file
+				auto& bufferView = asset.bufferViews[view.bufferViewIndex];
+				auto& buffer = asset.buffers[bufferView.bufferIndex];
+
+				std::visit(fastgltf::visitor{
+					// only care about VectorWithMime because we specify LoadExternalBuffers, meaning all buffers are already loaded into a vector
+					[](auto& arg) {},
+					[&](fastgltf::sources::Vector& vector) {
+						unsigned char* data = stbi_load_from_memory(vector.bytes.data() + bufferView.byteOffset, static_cast<int>(bufferView.byteLength), &width, &height, &nrChannels, 4);
+
+						if (data) {
+							VkExtent3D imageSize;
+							imageSize.width = width;
+							imageSize.height = height;
+							imageSize.depth = 1;
+
+							newImage = engine->create_image(data, imageSize, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+
+							stbi_image_free(data);
+						}
+					} },
+					buffer.data);
+			},
+		},
+		image.data);
+
+	// if any of the attemps to load the data failed, we havnt written the image
+	// so handle is null
+	if (newImage.image == VK_NULL_HANDLE) {
+		return {};
+	}
+	
+	return newImage;
+}
+
 std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::string_view filePath)
 {
 	std::cout << "Loading GLTF: " << filePath << std::endl;
@@ -128,9 +205,18 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 	std::vector<std::shared_ptr<MeshAsset>> meshes;
 
 	// load all textures
-	// temp set as checkerboard
 	for (fastgltf::Image& image : gltf.images) {
-		images.push_back(engine->_errorCheckerboardImage);
+		std::optional<AllocatedImage> img = load_image(engine, gltf, image);
+
+		if (img.has_value()) {
+			images.push_back(*img);
+			file.images[image.name.c_str()] = *img;
+		}
+		else {
+			// failed to load, use error checkerboard image
+			images.push_back(engine->_errorCheckerboardImage);
+			std::cout << "gltf failed to load texture: " << image.name << std::endl;
+		}
 	}
 
 	// create buffer to hold the material data
@@ -339,4 +425,27 @@ void LoadedGLTF::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 }
 
 void LoadedGLTF::clearAll()
-{}
+{
+	VkDevice dv = creator->_device;
+	
+	descriptorPool.destroy_pools(dv);
+	creator->destroy_buffer(materialDataBuffer);
+
+	for (auto& [k, v] : meshes) {
+		creator->destroy_buffer(v->meshBuffers.indexBuffer);
+		creator->destroy_buffer(v->meshBuffers.vertexBuffer);
+	}
+
+	for (auto& [k, v] : images) {
+		if (v.image == creator->_errorCheckerboardImage.image) {
+			// dont destroy default images
+			continue;
+		}
+		creator->destroy_image(v);
+	}
+
+	for (auto& sampler : samplers) {
+		vkDestroySampler(dv, sampler, nullptr);
+	}
+
+}

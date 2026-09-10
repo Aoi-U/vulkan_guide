@@ -45,7 +45,6 @@ void Camera::processSDLEvent(SDL_Event& e)
 		}
 	}
 
-	// scrolling the mouse wheel will change the camera speed
 	if (e.type == SDL_MOUSEWHEEL) {
 		speed += (float)e.wheel.y;
 		if (speed < 1.f)

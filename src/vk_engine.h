@@ -78,6 +78,7 @@ struct RenderObject
 struct DrawContext
 {
 	std::vector<RenderObject> opaqueSurfaces;
+	std::vector<RenderObject> transparentSurfaces;
 };
 
 // scene graph node for a renderable mesh
@@ -175,7 +176,6 @@ public:
 	VkPipelineLayout _meshPipelineLayout;
 
 	GPUMeshBuffers rectangle;
-	std::vector<std::shared_ptr<MeshAsset>> testMeshes;
 
 	DrawContext mainDrawContext;
 	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
@@ -249,9 +249,6 @@ private:
 	void init_descriptors();
 	void init_pipelines();
 	void init_background_pipelines();
-	void init_mesh_pipeline();
 	void init_imgui();
-
-
 	void resize_swapchain();
 };
