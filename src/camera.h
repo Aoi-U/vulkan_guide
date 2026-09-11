@@ -18,6 +18,9 @@ public:
 	// camera speed
 	float speed{ 10.f };
 
+	// whether the camera is currently active and processing input
+	bool isActive{ false };
+
 	glm::mat4 getViewMatrix();
 	glm::mat4 getRotationMatrix();
 
