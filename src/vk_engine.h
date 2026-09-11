@@ -191,8 +191,6 @@ public:
 	VkPipeline _meshPipeline;
 	VkPipelineLayout _meshPipelineLayout;
 
-	GPUMeshBuffers rectangle;
-
 	DrawContext mainDrawContext;
 	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
 	std::unordered_map<std::string, std::shared_ptr<LoadedGLTF>> loadedScenes;
@@ -235,24 +233,36 @@ public:
 	//draw loop
 	void draw();
 
+	// draws the background effect to the draw image
 	void draw_background(VkCommandBuffer cmd);
+
+	// draws the scene to the draw image
 	void draw_geometry(VkCommandBuffer cmd);
+
+	// draw imgui
 	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
 
+	// updates scene data and push drawable objects to the draw context
 	void update_scene();
-
+	
+	// submits a function to be executed immediately on the gpu
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
 	//run main loop
 	void run();
 
+	// creates a buffer 
 	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
 	void destroy_buffer(const AllocatedBuffer& buffer);
 
+	// creates an image
 	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+
+	// creates an image with data
 	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
 	void destroy_image(const AllocatedImage& image);
 
+	// uploads a mesh to the gpu and returns the buffers for it
 	GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
 	void init_default_data();

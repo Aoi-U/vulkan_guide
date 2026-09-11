@@ -210,7 +210,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 
 		if (img.has_value()) {
 			images.push_back(*img);
-			file.images[image.name.c_str()] = *img;
+			//file.images[image.name.c_str()] = *img;
+			file.images[image.name.empty() ? std::to_string(images.size()) : image.name.c_str()] = *img;
 		}
 		else {
 			// failed to load, use error checkerboard image
@@ -228,7 +229,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 	for (fastgltf::Material& mat : gltf.materials) {
 		std::shared_ptr<GLTFMaterial> newMat = std::make_shared<GLTFMaterial>();
 		materials.push_back(newMat);
-		file.materials[mat.name.c_str()] = newMat;
+		//file.materials[mat.name.c_str()] = newMat;
+		file.materials[mat.name.empty() ? std::to_string(materials.size()) : mat.name.c_str()] = newMat;
 
 		GLTFMetallic_Roughness::MaterialConstants constants;
 		constants.colorFactors.x = mat.pbrData.baseColorFactor[0];
@@ -288,7 +290,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 	for (fastgltf::Mesh& mesh : gltf.meshes) {
 		std::shared_ptr<MeshAsset> newMesh = std::make_shared<MeshAsset>();
 		meshes.push_back(newMesh);
-		file.meshes[mesh.name.c_str()] = newMesh;
+		//file.meshes[mesh.name.c_str()] = newMesh;
+		file.meshes[mesh.name.empty() ? std::to_string(meshes.size()) : mesh.name.c_str()] = newMesh;
 		newMesh->name = mesh.name;
 
 		// clear the mesh arrays each mesh
@@ -375,7 +378,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 						vertices[initialVertex + idx].color = v;
 						});
 				}
-				else if (colorAccessor.type == fastgltf::AccessorType::Vec3) {
+				else 
+					if (colorAccessor.type == fastgltf::AccessorType::Vec3) {
 					fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, colorAccessor, [&](glm::vec3 v, size_t idx) {
 						vertices[initialVertex + idx].color = glm::vec4(v, 1.f);
 						});
@@ -406,6 +410,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 			newMesh->surfaces.push_back(newSurface);
 		}
 
+		// upload the mesh to the GPU
 		newMesh->meshBuffers = engine->uploadMesh(indices, vertices);
 	}
 
@@ -423,7 +428,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 		}
 
 		nodes.push_back(newNode);
-		file.nodes[node.name.c_str()] = newNode;
+		//file.nodes[node.name.c_str()] = newNode;
+		file.nodes[node.name.empty() ? std::to_string(nodes.size()) : node.name.c_str()] = newNode;
 
 		std::visit(fastgltf::visitor{
 			[&](fastgltf::Node::TransformMatrix matrix) {
