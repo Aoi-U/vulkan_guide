@@ -1,16 +1,19 @@
-﻿#include <utils/vk_loader.h>
+﻿#include <asset/vk_loader.h>
 
 #include "stb_image.h"
 #include <iostream>
 
 #include "vk_engine.h"
-#include "vk_initializers.h"
-#include "utils/vk_types.h"
+#include "utils/vk_initializers.h"
+#include "core/vk_types.h"
 #include <glm/gtx/quaternion.hpp>
 
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/parser.hpp>
 #include <fastgltf/tools.hpp>
+
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 // helper to convert fastgltf filter to vulkan filter
 VkFilter extract_filter(fastgltf::Filter filter)
@@ -485,18 +488,9 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 
 void LoadedGLTF::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 {
-	glm::mat4 transform{ 1.0f };
-	transform = glm::translate(transform, scenePosition);
-	transform = glm::rotate(transform, glm::radians(sceneRotation.x), glm::vec3{ 1.f, 0.f, 0.f });
-	transform = glm::rotate(transform, glm::radians(sceneRotation.y), glm::vec3{ 0.f, 1.f, 0.f });
-	transform = glm::rotate(transform, glm::radians(sceneRotation.z), glm::vec3{ 0.f, 0.f, 1.f }); 
-	transform = glm::scale(transform, sceneScale);
-
-	glm::mat4 modelMatrix = topMatrix * transform;
-
 	// create renderables from the scenenodes
 	for (auto& n : topNodes) {
-		n->draw(modelMatrix, ctx);
+		n->draw(topMatrix, ctx);
 	}
 }
 

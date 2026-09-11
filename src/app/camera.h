@@ -1,5 +1,5 @@
 
-#include <utils/vk_types.h>
+#include <core/vk_types.h>
 #include <SDL_events.h>
 #include <unordered_map>
 

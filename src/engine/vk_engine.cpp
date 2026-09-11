@@ -5,7 +5,7 @@
 #include <SDL_vulkan.h>
 
 #include <utils/vk_initializers.h>
-#include <utils/vk_types.h>
+#include <core/vk_types.h>
 #include <utils/vk_images.h>
 #include <utils/vk_pipelines.h>
 
@@ -106,6 +106,15 @@ void VulkanEngine::init()
 
 	init_default_data();
 
+	assetManager.init(this);
+
+	assetManager.loadScene("structure", "../assets/structure.glb");
+	assetManager.loadScene("brutalist_building", "../assets/brutalist_building.glb");
+
+	assetManager.createModelInstance("brutalist1", "brutalist_building");
+	assetManager.createModelInstance("brutalist2", "brutalist_building");
+	assetManager.createModelInstance("structure", "structure");
+
 	// everything went fine
 	_isInitialized = true;
 
@@ -114,15 +123,15 @@ void VulkanEngine::init()
 	mainCamera.pitch = 0;
 	mainCamera.yaw = 0;
 
-	std::string structurePath = { "../../assets/structure.glb" };
-	auto structureFile = loadGltf(this, structurePath);
-	assert(structureFile.has_value());
-	loadedScenes["structure"] = *structureFile;
+	//std::string structurePath = { "../assets/structure.glb" };
+	//auto structureFile = loadGltf(this, structurePath);
+	//assert(structureFile.has_value());
+	//loadedScenes["structure"] = *structureFile;
 
-	std::string brutalist_buildingPath = { "../../assets/brutalist_building.glb" };
-	auto brutalist_buildingFile = loadGltf(this, brutalist_buildingPath);
-	assert(brutalist_buildingFile.has_value());
-	loadedScenes["brutalist_building"] = *brutalist_buildingFile;
+	//std::string brutalist_buildingPath = { "../assets/brutalist_building.glb" };
+	//auto brutalist_buildingFile = loadGltf(this, brutalist_buildingPath);
+	//assert(brutalist_buildingFile.has_value());
+	//loadedScenes["brutalist_building"] = *brutalist_buildingFile;
 }
 
 void VulkanEngine::cleanup()
@@ -131,7 +140,8 @@ void VulkanEngine::cleanup()
 		// make sure the gpu has stopped doing its things
 		vkDeviceWaitIdle(_device);
 
-		loadedScenes.clear();
+		//loadedScenes.clear();
+		assetManager.cleanup();
 
 		for (int i = 0; i < FRAME_OVERLAP; i++) {
 			// flush the deletion queue
@@ -463,18 +473,18 @@ void VulkanEngine::update_imgui()
 
 
 	if (ImGui::Begin("Scene Control")) {
-		for (auto& [name, scene] : loadedScenes) {
+		for (auto& [name, instance] : assetManager.getInstances()) {
 			// Push unique ID per loaded model scene
 			ImGui::PushID(name.c_str());
 
 			if (ImGui::CollapsingHeader(name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
-				DrawVec3ControlStyled("Translation", scene->scenePosition, glm::vec3(0.0f), 0.5f);
+				DrawVec3ControlStyled("Translation", instance.position, glm::vec3(0.0f), 0.5f);
 				ImGui::Spacing();
 
-				DrawVec3ControlStyled("Rotation", scene->sceneRotation, glm::vec3(0.0f), 0.5f);
+				DrawVec3ControlStyled("Rotation", instance.rotation, glm::vec3(0.0f), 0.5f);
 				ImGui::Spacing();
 
-				DrawVec3ControlStyled("Scale", scene->sceneScale, glm::vec3(1.0f), 0.01f, &scene->lockScale);
+				DrawVec3ControlStyled("Scale", instance.scale, glm::vec3(1.0f), 0.01f, &instance.lockScale);
 			}
 
 			ImGui::PopID();
@@ -514,8 +524,12 @@ void VulkanEngine::update_scene()
 
 	//loadedScenes["structure"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
 	//loadedScenes["brutalist_building"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
-	for (const auto& [name, scene] : loadedScenes) {
-		scene->draw(glm::mat4{ 1.0f }, mainDrawContext);
+	//for (const auto& [name, scene] : loadedScenes) {
+	//	scene->draw(glm::mat4{ 1.0f }, mainDrawContext);
+	//}
+
+	for (const auto& [name, instance] : assetManager.getInstances()) {
+		instance.draw(glm::mat4{ 1.f }, mainDrawContext);
 	}
 
 	auto end = std::chrono::system_clock::now();
@@ -1076,12 +1090,12 @@ void VulkanEngine::init_background_pipelines()
 
 	// create the compute pipeline object
 	VkShaderModule gradientShader;
-	if (!vkutil::load_shader_module("../../shaders/gradient_color.comp.spv", _device, &gradientShader)) {
+	if (!vkutil::load_shader_module("../shaders/gradient_color.comp.spv", _device, &gradientShader)) {
 		fmt::print("Error when building the compute shader\n");
 	}
 
 	VkShaderModule skyShader;
-	if (!vkutil::load_shader_module("../../shaders/sky.comp.spv", _device, &skyShader)) {
+	if (!vkutil::load_shader_module("../shaders/sky.comp.spv", _device, &skyShader)) {
 		fmt::print("Error when building the compute shader\n");
 	}
 
@@ -1274,13 +1288,13 @@ void VulkanEngine::resize_swapchain()
 void GLTFMetallic_Roughness::build_pipelines(VulkanEngine* engine)
 {
 	VkShaderModule meshFragShader;
-	if (!vkutil::load_shader_module("../../shaders/mesh.frag.spv", engine->_device, &meshFragShader)) {
+	if (!vkutil::load_shader_module("../shaders/mesh.frag.spv", engine->_device, &meshFragShader)) {
 		fmt::println("Error when building the mesh fragment shader module");
 
 	}
 
 	VkShaderModule meshVertexShader;
-	if (!vkutil::load_shader_module("../../shaders/mesh.vert.spv", engine->_device, &meshVertexShader)) {
+	if (!vkutil::load_shader_module("../shaders/mesh.vert.spv", engine->_device, &meshVertexShader)) {
 		fmt::println("Error when building the mesh vertex shader module");
 	}
 

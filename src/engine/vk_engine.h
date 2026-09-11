@@ -3,13 +3,13 @@
 
 #pragma once
 
-#include <utils/vk_types.h>
-#include <utils/vk_loader.h>
+#include <core/vk_types.h>
+#include <asset/vk_loader.h>
 #include <utils/vk_descriptors.h>
-
+#include <asset/AssetManager.h>
 #include <SwapchainManager.h>
 #include <span>
-#include <camera.h>
+#include <app/camera.h>
 
 struct ComputePushConstants
 {
@@ -192,8 +192,10 @@ public:
 	VkPipelineLayout _meshPipelineLayout;
 
 	DrawContext mainDrawContext;
-	std::unordered_map<std::string, std::shared_ptr<Node>> loadedNodes;
 	std::unordered_map<std::string, std::shared_ptr<LoadedGLTF>> loadedScenes;
+	AssetManager assetManager;
+
+
 
 	// default textures
 	AllocatedImage _whiteImage;

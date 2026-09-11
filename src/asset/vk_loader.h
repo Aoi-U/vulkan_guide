@@ -1,10 +1,10 @@
 ﻿#pragma once
 
-#include <utils/vk_types.h>
+#include <core/vk_types.h>
 #include <unordered_map>
 #include <filesystem>
 
-#include "vk_descriptors.h"
+#include "utils/vk_descriptors.h"
 
 // forward declaration
 class VulkanEngine;
@@ -59,11 +59,6 @@ struct LoadedGLTF : public IRenderable
 	AllocatedBuffer materialDataBuffer{};
 
 	VulkanEngine* creator = nullptr;
-
-	glm::vec3 scenePosition{ 0.f };
-	glm::vec3 sceneRotation{ 0.f };
-	glm::vec3 sceneScale{ 1.f };
-	bool lockScale{ true };
 
 	~LoadedGLTF() { clearAll(); };
 

@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include <utils/vk_types.h>
+#include <core/vk_types.h>
 
 namespace vkinit {
 //> init_cmd
