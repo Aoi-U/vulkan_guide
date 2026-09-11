@@ -126,9 +126,11 @@ struct Node : public IRenderable
 
 	virtual void draw(const glm::mat4& topMatrix, DrawContext& ctx)
 	{
+		glm::mat4 nodeMatrix = topMatrix * localTransform;
+
 		// draw children
 		for (auto& c : children) {
-			c->draw(topMatrix, ctx);
+			c->draw(nodeMatrix, ctx);
 		}
 	}
 };

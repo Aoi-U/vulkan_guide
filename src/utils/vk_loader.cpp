@@ -108,6 +108,18 @@ std::optional<AllocatedImage> load_image(VulkanEngine* engine, fastgltf::Asset& 
 
 							stbi_image_free(data);
 						}
+					},
+					[&](fastgltf::sources::ByteView& byteView) {
+						unsigned char* data = stbi_load_from_memory(
+								reinterpret_cast<const unsigned char*>(byteView.bytes.data()) + bufferView.byteOffset,
+								static_cast<int>(bufferView.byteLength),
+								&width, &height, &nrChannels, 4);
+
+						if (data) {
+								VkExtent3D imageSize{ (uint32_t)width, (uint32_t)height, 1 };
+								newImage = engine->create_image(data, imageSize, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT, false);
+								stbi_image_free(data);
+						}
 					} },
 					buffer.data);
 			},
@@ -119,7 +131,7 @@ std::optional<AllocatedImage> load_image(VulkanEngine* engine, fastgltf::Asset& 
 	if (newImage.image == VK_NULL_HANDLE) {
 		return {};
 	}
-	
+
 	return newImage;
 }
 
@@ -325,16 +337,6 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 					indices.push_back(initialVertex + i);
 				}
 			}
-		
-			// load indices
-			//{
-			//	fastgltf::Accessor& indexAccessor = gltf.accessors[p.indicesAccessor.value()];
-			//	indices.reserve(indices.size() + indexAccessor.count);
-
-			//	fastgltf::iterateAccessor<std::uint32_t>(gltf, indexAccessor, [&](std::uint32_t idx) {
-			//		indices.push_back(idx + initialVertex);
-			//		});
-			//}
 
 			// load vertices
 			{
@@ -373,15 +375,25 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 			auto colors = p.findAttribute("COLOR_0");
 			if (colors != p.attributes.end()) {
 				fastgltf::Accessor& colorAccessor = gltf.accessors[(*colors).second];
+
+				auto normalizeColor = [&](glm::vec4 c) -> glm::vec4 {
+					if (colorAccessor.componentType == fastgltf::ComponentType::UnsignedByte) {
+						return c / 255.0f;
+					}
+					if (colorAccessor.componentType == fastgltf::ComponentType::UnsignedShort) {
+						return c / 65535.0f;
+					}
+					return c;
+					};
+
 				if (colorAccessor.type == fastgltf::AccessorType::Vec4) {
 					fastgltf::iterateAccessorWithIndex<glm::vec4>(gltf, colorAccessor, [&](glm::vec4 v, size_t idx) {
-						vertices[initialVertex + idx].color = v;
+						vertices[initialVertex + idx].color = normalizeColor(v);
 						});
 				}
-				else 
-					if (colorAccessor.type == fastgltf::AccessorType::Vec3) {
+				else if (colorAccessor.type == fastgltf::AccessorType::Vec3) {
 					fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, colorAccessor, [&](glm::vec3 v, size_t idx) {
-						vertices[initialVertex + idx].color = glm::vec4(v, 1.f);
+						vertices[initialVertex + idx].color = normalizeColor(glm::vec4(v, 1.f));
 						});
 				}
 			}
@@ -473,16 +485,25 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 
 void LoadedGLTF::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 {
+	glm::mat4 transform{ 1.0f };
+	transform = glm::translate(transform, scenePosition);
+	transform = glm::rotate(transform, glm::radians(sceneRotation.x), glm::vec3{ 1.f, 0.f, 0.f });
+	transform = glm::rotate(transform, glm::radians(sceneRotation.y), glm::vec3{ 0.f, 1.f, 0.f });
+	transform = glm::rotate(transform, glm::radians(sceneRotation.z), glm::vec3{ 0.f, 0.f, 1.f }); 
+	transform = glm::scale(transform, sceneScale);
+
+	glm::mat4 modelMatrix = topMatrix * transform;
+
 	// create renderables from the scenenodes
 	for (auto& n : topNodes) {
-		n->draw(topMatrix, ctx);
+		n->draw(modelMatrix, ctx);
 	}
 }
 
 void LoadedGLTF::clearAll()
 {
 	VkDevice dv = creator->_device;
-	
+
 	descriptorPool.destroy_pools(dv);
 	creator->destroy_buffer(materialDataBuffer);
 

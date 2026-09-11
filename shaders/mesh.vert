@@ -6,7 +6,7 @@
 #include "input_structures.glsl"
 
 layout (location = 0) out vec3 outNormal;
-layout (location = 1) out vec3 outColor;
+layout (location = 1) out vec4 outColor;
 layout (location = 2) out vec2 outUV;
 
 struct Vertex
@@ -39,7 +39,7 @@ void main()
   gl_Position = sceneData.viewproj * PushConstants.renderMatrix * position;
 
   outNormal = (PushConstants.renderMatrix * vec4(v.normal, 0.f)).xyz;
-  outColor = v.color.xyz * materialData.colorFactors.xyz;
+  outColor = v.color * materialData.colorFactors;
   outUV.x = v.uv_x;
   outUV.y = v.uv_y;
 }

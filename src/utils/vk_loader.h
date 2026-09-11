@@ -56,9 +56,14 @@ struct LoadedGLTF : public IRenderable
 	
 	DescriptorAllocatorGrowable descriptorPool;
 
-	AllocatedBuffer materialDataBuffer;
+	AllocatedBuffer materialDataBuffer{};
 
-	VulkanEngine* creator;
+	VulkanEngine* creator = nullptr;
+
+	glm::vec3 scenePosition{ 0.f };
+	glm::vec3 sceneRotation{ 0.f };
+	glm::vec3 sceneScale{ 1.f };
+	bool lockScale{ true };
 
 	~LoadedGLTF() { clearAll(); };
 

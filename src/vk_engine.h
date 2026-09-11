@@ -242,6 +242,9 @@ public:
 	// draw imgui
 	void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
 
+	// updates the imgui interface
+	void update_imgui();
+
 	// updates scene data and push drawable objects to the draw context
 	void update_scene();
 	

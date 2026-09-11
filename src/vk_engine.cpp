@@ -13,9 +13,10 @@
 #include "VkBootstrap.h"
 
 // imgui 
-#include "imgui.h"
-#include "imgui_impl_sdl2.h"
-#include "imgui_impl_vulkan.h"
+//#include "imgui.h"
+//#include "imgui_impl_sdl2.h"
+//#include "imgui_impl_vulkan.h"
+#include <utils/imgui_helpers.h>
 
 #include <glm/gtx/transform.hpp>
 
@@ -58,7 +59,7 @@ bool is_visible(const RenderObject& obj, const glm::mat4& viewProj)
 	}
 
 	// check if the clip space box is within the view
-	if (min.z > 1.f || max.z < 0.f || min.x > 1.f || max.z < -1.f || min.y > 1.f || max.y < -1.f) {
+	if (min.z > 1.f || max.z < 0.f || min.x > 1.f || max.x < -1.f || min.y > 1.f || max.y < -1.f) {
 		return false;
 	}
 
@@ -109,14 +110,14 @@ void VulkanEngine::init()
 	_isInitialized = true;
 
 	mainCamera.velocity = glm::vec3(0.f);
-	mainCamera.position = glm::vec3(30.f, 0.f, -085.f);
+	mainCamera.position = glm::vec3(0.f, 0.f, 0.f);
 	mainCamera.pitch = 0;
 	mainCamera.yaw = 0;
 
-	//std::string structurePath = { "../../assets/structure.glb" };
-	//auto structureFile = loadGltf(this, structurePath);
-	//assert(structureFile.has_value());
-	//loadedScenes["structure"] = *structureFile;
+	std::string structurePath = { "../../assets/structure.glb" };
+	auto structureFile = loadGltf(this, structurePath);
+	assert(structureFile.has_value());
+	loadedScenes["structure"] = *structureFile;
 
 	std::string brutalist_buildingPath = { "../../assets/brutalist_building.glb" };
 	auto brutalist_buildingFile = loadGltf(this, brutalist_buildingPath);
@@ -360,8 +361,8 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
 				VkViewport viewport = {};
 				viewport.x = 0;
 				viewport.y = 0;
-				viewport.width = _windowExtent.width;
-				viewport.height = _windowExtent.height;
+				viewport.width = _drawExtent.width;
+				viewport.height = _drawExtent.height;
 				viewport.minDepth = 0.f;
 				viewport.maxDepth = 1.f;
 
@@ -428,6 +429,63 @@ void VulkanEngine::draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView)
 	vkCmdEndRendering(cmd);
 }
 
+void VulkanEngine::update_imgui()
+{
+	// imgui new frame
+	ImGui_ImplVulkan_NewFrame();
+	ImGui_ImplSDL2_NewFrame();
+	ImGui::NewFrame();
+
+	ImGui::Begin("stats");
+
+	ImGui::Text("frametime %f ms", stats.frameTime);
+	ImGui::Text("draw time %f ms", stats.meshDrawTime);
+	ImGui::Text("scene update time %f ms", stats.sceneUpdateTime);
+	ImGui::Text("triangles %i", stats.triangleCount);
+	ImGui::Text("draws %i", stats.drawcallCount);
+	ImGui::End();
+
+
+	if (ImGui::Begin("background")) {
+		ImGui::SliderFloat("Render Scale", &renderScale, 0.3f, 1.f);
+		ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
+		ImGui::Text("Selected effect: ", selected.name);
+
+		ImGui::SliderInt("Effect index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
+
+		ImGui::InputFloat4("data1", (float*)&selected.data.data1);
+		ImGui::InputFloat4("data2", (float*)&selected.data.data2);
+		ImGui::InputFloat4("data3", (float*)&selected.data.data3);
+		ImGui::InputFloat4("data4", (float*)&selected.data.data4);
+	
+	}
+	ImGui::End();
+
+
+	if (ImGui::Begin("Scene Control")) {
+		for (auto& [name, scene] : loadedScenes) {
+			// Push unique ID per loaded model scene
+			ImGui::PushID(name.c_str());
+
+			if (ImGui::CollapsingHeader(name.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+				DrawVec3ControlStyled("Translation", scene->scenePosition, glm::vec3(0.0f), 0.5f);
+				ImGui::Spacing();
+
+				DrawVec3ControlStyled("Rotation", scene->sceneRotation, glm::vec3(0.0f), 0.5f);
+				ImGui::Spacing();
+
+				DrawVec3ControlStyled("Scale", scene->sceneScale, glm::vec3(1.0f), 0.01f, &scene->lockScale);
+			}
+
+			ImGui::PopID();
+		}
+	}
+	ImGui::End();
+
+	// make imgui calculate internal draw structures
+	ImGui::Render();
+}
+
 void VulkanEngine::update_scene()
 {
 	//static auto lastTime = std::chrono::steady_clock::now();
@@ -455,7 +513,10 @@ void VulkanEngine::update_scene()
 	sceneData.sunlightDirection = glm::vec4(0, 1, 0.5, 1);
 
 	//loadedScenes["structure"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
-	loadedScenes["brutalist_building"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
+	//loadedScenes["brutalist_building"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
+	for (const auto& [name, scene] : loadedScenes) {
+		scene->draw(glm::mat4{ 1.0f }, mainDrawContext);
+	}
 
 	auto end = std::chrono::system_clock::now();
 	auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -515,7 +576,12 @@ void VulkanEngine::run()
 				}
 			}
 
-			mainCamera.processSDLEvent(e);
+			
+			ImGuiIO& io = ImGui::GetIO();
+			if (!io.WantCaptureMouse || mainCamera.isActive) {
+				mainCamera.processSDLEvent(e);
+			}
+
 			// send sdl event to imgui for handling
 			ImGui_ImplSDL2_ProcessEvent(&e);
 		}
@@ -530,37 +596,7 @@ void VulkanEngine::run()
 		if (resize_requested)
 			resize_swapchain();
 
-		// imgui new frame
-		ImGui_ImplVulkan_NewFrame();
-		ImGui_ImplSDL2_NewFrame();
-		ImGui::NewFrame();
-
-		ImGui::Begin("stats");
-
-		ImGui::Text("frametime %f ms", stats.frameTime);
-		ImGui::Text("draw time %f ms", stats.meshDrawTime);
-		ImGui::Text("scene update time %f ms", stats.sceneUpdateTime);
-		ImGui::Text("triangles %i", stats.triangleCount);
-		ImGui::Text("draws %i", stats.drawcallCount);
-		ImGui::End();
-
-
-		if (ImGui::Begin("background")) {
-			ImGui::SliderFloat("Render Scale", &renderScale, 0.3f, 1.f);
-			ComputeEffect& selected = backgroundEffects[currentBackgroundEffect];
-			ImGui::Text("Selected effect: ", selected.name);
-
-			ImGui::SliderInt("Effect index", &currentBackgroundEffect, 0, backgroundEffects.size() - 1);
-
-			ImGui::InputFloat4("data1", (float*)&selected.data.data1);
-			ImGui::InputFloat4("data2", (float*)&selected.data.data2);
-			ImGui::InputFloat4("data3", (float*)&selected.data.data3);
-			ImGui::InputFloat4("data4", (float*)&selected.data.data4);
-		}
-		ImGui::End();
-
-		// make imgui calculate internal draw structures
-		ImGui::Render();
+		update_imgui();
 
 		draw();
 
@@ -1285,7 +1321,7 @@ void GLTFMetallic_Roughness::build_pipelines(VulkanEngine* engine)
 	pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
 	pipelineBuilder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
 	pipelineBuilder.set_multisampling_none();
-	pipelineBuilder.disable_blending();
+	pipelineBuilder.enable_blending_alphablend();
 	pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
 
 	// render format
@@ -1345,7 +1381,7 @@ MaterialInstance GLTFMetallic_Roughness::write_material(VkDevice device, Materia
 
 void MeshNode::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 {
-	glm::mat4 nodeMatrix = topMatrix * worldTransform;
+	glm::mat4 nodeMatrix = topMatrix * localTransform;
 
 	// draw all surfaces of the mesh
 	// mesh can have multiple surfaces, each with its own material
@@ -1368,5 +1404,8 @@ void MeshNode::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 	}
 
 	// recurse down
-	Node::draw(topMatrix, ctx);
+	//Node::draw(topMatrix, ctx);
+	for (auto& c : children) {
+		c->draw(nodeMatrix, ctx);
+	}
 }
