@@ -23,7 +23,7 @@ target_link_libraries(app PRIVATE
 
 set_target_properties(app PROPERTIES
     OUTPUT_NAME "engine"
-    VS_DEBUGGER_WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/bin"
+    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:app>"
 )
 
 if(WIN32)

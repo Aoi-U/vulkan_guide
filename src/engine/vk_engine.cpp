@@ -108,8 +108,8 @@ void VulkanEngine::init()
 
 	assetManager.init(this);
 
-	assetManager.loadScene("structure", "../assets/structure.glb");
-	assetManager.loadScene("brutalist_building", "../assets/brutalist_building.glb");
+	assetManager.loadScene("structure", "../../assets/structure.glb");
+	assetManager.loadScene("brutalist_building", "../../assets/brutalist_building.glb");
 
 	assetManager.createModelInstance("brutalist1", "brutalist_building");
 	assetManager.createModelInstance("brutalist2", "brutalist_building");
@@ -528,6 +528,7 @@ void VulkanEngine::update_scene()
 	//	scene->draw(glm::mat4{ 1.0f }, mainDrawContext);
 	//}
 
+	// draw all models in the scene
 	for (const auto& [name, instance] : assetManager.getInstances()) {
 		instance.draw(glm::mat4{ 1.f }, mainDrawContext);
 	}
@@ -1090,12 +1091,12 @@ void VulkanEngine::init_background_pipelines()
 
 	// create the compute pipeline object
 	VkShaderModule gradientShader;
-	if (!vkutil::load_shader_module("../shaders/gradient_color.comp.spv", _device, &gradientShader)) {
+	if (!vkutil::load_shader_module("../../shaders/gradient_color.comp.spv", _device, &gradientShader)) {
 		fmt::print("Error when building the compute shader\n");
 	}
 
 	VkShaderModule skyShader;
-	if (!vkutil::load_shader_module("../shaders/sky.comp.spv", _device, &skyShader)) {
+	if (!vkutil::load_shader_module("../../shaders/sky.comp.spv", _device, &skyShader)) {
 		fmt::print("Error when building the compute shader\n");
 	}
 
@@ -1288,13 +1289,13 @@ void VulkanEngine::resize_swapchain()
 void GLTFMetallic_Roughness::build_pipelines(VulkanEngine* engine)
 {
 	VkShaderModule meshFragShader;
-	if (!vkutil::load_shader_module("../shaders/mesh.frag.spv", engine->_device, &meshFragShader)) {
+	if (!vkutil::load_shader_module("../../shaders/mesh.frag.spv", engine->_device, &meshFragShader)) {
 		fmt::println("Error when building the mesh fragment shader module");
 
 	}
 
 	VkShaderModule meshVertexShader;
-	if (!vkutil::load_shader_module("../shaders/mesh.vert.spv", engine->_device, &meshVertexShader)) {
+	if (!vkutil::load_shader_module("../../shaders/mesh.vert.spv", engine->_device, &meshVertexShader)) {
 		fmt::println("Error when building the mesh vertex shader module");
 	}
 
@@ -1418,8 +1419,8 @@ void MeshNode::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 	}
 
 	// recurse down
-	//Node::draw(topMatrix, ctx);
-	for (auto& c : children) {
-		c->draw(nodeMatrix, ctx);
-	}
+	Node::draw(topMatrix, ctx);
+	//for (auto& c : children) {
+	//	c->draw(nodeMatrix, ctx);
+	//}
 }
