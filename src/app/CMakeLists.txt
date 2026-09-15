@@ -15,14 +15,15 @@ target_include_directories(app PRIVATE
 
 target_link_libraries(app PRIVATE
     core
-    engine
-    asset
+    window
+    graphics
+    resources
     SDL2::SDL2
     imgui
 )
 
 set_target_properties(app PROPERTIES
-    OUTPUT_NAME "engine"
+    OUTPUT_NAME "app"
     VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:app>"
 )
 

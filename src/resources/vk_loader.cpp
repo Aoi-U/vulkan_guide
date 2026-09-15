@@ -1,4 +1,4 @@
-﻿#include <asset/vk_loader.h>
+﻿#include <resources/vk_loader.h>
 
 #include "stb_image.h"
 #include <iostream>

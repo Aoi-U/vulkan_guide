@@ -10,7 +10,6 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
 
-# Disable VS Solution Folders so all projects appear at root level
 set_property(GLOBAL PROPERTY USE_FOLDERS OFF)
 
 # Third party dependencies
@@ -18,8 +17,9 @@ add_subdirectory(third_party)
 
 # Source modules
 add_subdirectory(src/core)
-add_subdirectory(src/engine)
-add_subdirectory(src/asset)
+add_subdirectory(src/window)
+add_subdirectory(src/graphics)
+add_subdirectory(src/resources)
 add_subdirectory(src/app)
 
 # Shader Compilation Target

@@ -4,12 +4,13 @@
 #pragma once
 
 #include <core/vk_types.h>
-#include <asset/vk_loader.h>
+#include <resources/vk_loader.h>
 #include <utils/vk_descriptors.h>
-#include <asset/AssetManager.h>
+#include <resources/AssetManager.h>
 #include <SwapchainManager.h>
 #include <span>
 #include <app/camera.h>
+#include <window/window.h>
 
 struct ComputePushConstants
 {
@@ -149,8 +150,6 @@ public:
 
 	bool _isInitialized{ false };
 	int _frameNumber{ 0 };
-	bool stop_rendering{ false };
-	VkExtent2D _windowExtent{ 1700 , 900 };
 
 	// vulkan instance handles
 	VkInstance _instance; // vulkan library handle
@@ -158,6 +157,8 @@ public:
 	VkPhysicalDevice _chosenGPU; // gpu chosen as the default device
 	VkDevice _device; // vulkan logical device for comands
 	VkSurfaceKHR _surface; // vulkan window surface
+
+	Window* _window{ nullptr };
 
 	// vulkan swapchain handle
 	SwapchainManager _swapchain;
@@ -220,17 +221,19 @@ public:
 
 	EngineStats stats;
 
-	struct SDL_Window* _window{ nullptr };
 
 	Camera mainCamera; // NOTE: move camera to gameplay layer. engine should just have the matrices needed for rendering
 
 	static VulkanEngine& Get();
 
 	//initializes everything in the engine
-	void init();
+	void init(Window* window);
 
 	//shuts down the engine
 	void cleanup();
+	
+	// renders a single frame, called from main loop
+	void render_frame();
 
 	//draw loop
 	void draw();
@@ -253,9 +256,6 @@ public:
 	// submits a function to be executed immediately on the gpu
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
 
-	//run main loop
-	void run();
-
 	// creates a buffer 
 	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
 	void destroy_buffer(const AllocatedBuffer& buffer);
@@ -271,6 +271,7 @@ public:
 	GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
 	void init_default_data();
+	void resize_swapchain();
 
 private:
 
@@ -283,5 +284,4 @@ private:
 	void init_pipelines();
 	void init_background_pipelines();
 	void init_imgui();
-	void resize_swapchain();
 };

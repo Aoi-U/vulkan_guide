@@ -71,24 +71,13 @@ VulkanEngine* loadedEngine = nullptr;
 constexpr bool bUseValidationLayers = true;
 
 VulkanEngine& VulkanEngine::Get() { return *loadedEngine; }
-void VulkanEngine::init()
+void VulkanEngine::init(Window* window)
 {
 	// only one engine initialization is allowed with the application.
 	assert(loadedEngine == nullptr);
 	loadedEngine = this;
 
-	// We initialize SDL and create a window with it.
-	SDL_Init(SDL_INIT_VIDEO);
-
-	SDL_WindowFlags window_flags = (SDL_WindowFlags)(SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE);
-
-	_window = SDL_CreateWindow(
-		"Vulkan Engine",
-		SDL_WINDOWPOS_UNDEFINED,
-		SDL_WINDOWPOS_UNDEFINED,
-		_windowExtent.width,
-		_windowExtent.height,
-		window_flags);
+	_window = window;
 
 	init_vulkan();
 
@@ -122,16 +111,6 @@ void VulkanEngine::init()
 	mainCamera.position = glm::vec3(0.f, 0.f, 0.f);
 	mainCamera.pitch = 0;
 	mainCamera.yaw = 0;
-
-	//std::string structurePath = { "../assets/structure.glb" };
-	//auto structureFile = loadGltf(this, structurePath);
-	//assert(structureFile.has_value());
-	//loadedScenes["structure"] = *structureFile;
-
-	//std::string brutalist_buildingPath = { "../assets/brutalist_building.glb" };
-	//auto brutalist_buildingFile = loadGltf(this, brutalist_buildingPath);
-	//assert(brutalist_buildingFile.has_value());
-	//loadedScenes["brutalist_building"] = *brutalist_buildingFile;
 }
 
 void VulkanEngine::cleanup()
@@ -164,12 +143,16 @@ void VulkanEngine::cleanup()
 
 		vkb::destroy_debug_utils_messenger(_instance, _debug_messenger);
 		vkDestroyInstance(_instance, nullptr);
-
-		SDL_DestroyWindow(_window);
 	}
 
 	// clear engine pointer
 	loadedEngine = nullptr;
+}
+
+void VulkanEngine::render_frame()
+{
+	update_imgui();
+	draw();
 }
 
 void VulkanEngine::draw()
@@ -354,6 +337,8 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
 	MaterialInstance* lastMaterial = nullptr;
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 
+	VkExtent2D windowExtent = _window->get_extent();
+
 	auto draw = [&](const RenderObject& r) {
 		if (r.material != lastMaterial) {
 			lastMaterial = r.material;
@@ -381,8 +366,8 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd)
 				VkRect2D scissor = {};
 				scissor.offset.x = 0;
 				scissor.offset.y = 0;
-				scissor.extent.width = _windowExtent.width;
-				scissor.extent.height = _windowExtent.height;
+				scissor.extent.width = windowExtent.width;
+				scissor.extent.height = windowExtent.height;
 
 				vkCmdSetScissor(cmd, 0, 1, &scissor);
 			}
@@ -498,19 +483,13 @@ void VulkanEngine::update_imgui()
 
 void VulkanEngine::update_scene()
 {
-	//static auto lastTime = std::chrono::steady_clock::now();
-	//auto now = std::chrono::steady_clock::now();
-	//float deltaTime = std::chrono::duration<float>(now - lastTime).count();
-	//lastTime = now;
-
-	//mainCamera.update(deltaTime);
-
 	auto start = std::chrono::system_clock::now();
 
 	mainCamera.update(stats.deltaTime);
 
 	// camera projection
-	sceneData.proj = glm::perspective(glm::radians(70.0f), (float)_windowExtent.width / (float)_windowExtent.height, 10000.f, 0.1f);
+	VkExtent2D windowExtent = _window->get_extent();
+	sceneData.proj = glm::perspective(glm::radians(70.0f), (float)windowExtent.width / (float)windowExtent.height, 10000.f, 0.1f);
 
 	// invert y direction on proj matrix so that we are more similar to opengl and gltf axis
 	sceneData.proj[1][1] *= -1;
@@ -521,12 +500,6 @@ void VulkanEngine::update_scene()
 	sceneData.ambientColor = glm::vec4(0.1f);
 	sceneData.sunlightColor = glm::vec4(1.0f);
 	sceneData.sunlightDirection = glm::vec4(0, 1, 0.5, 1);
-
-	//loadedScenes["structure"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
-	//loadedScenes["brutalist_building"]->draw(glm::mat4{ 1.0 }, mainDrawContext);
-	//for (const auto& [name, scene] : loadedScenes) {
-	//	scene->draw(glm::mat4{ 1.0f }, mainDrawContext);
-	//}
 
 	// draw all models in the scene
 	for (const auto& [name, instance] : assetManager.getInstances()) {
@@ -560,66 +533,6 @@ void VulkanEngine::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& f
 	// _renderFence will now block until the graphics commands finish execution
 	VK_CHECK(vkQueueSubmit2(_graphicsQueue, 1, &submit, _immFence));
 	VK_CHECK(vkWaitForFences(_device, 1, &_immFence, true, 9999999999));
-}
-
-void VulkanEngine::run()
-{
-	SDL_Event e;
-	bool bQuit = false;
-
-	// main loop
-	while (!bQuit) {
-		// begin clock
-		auto start = std::chrono::system_clock::now();
-
-		// Handle events on queue
-		while (SDL_PollEvent(&e) != 0) {
-			// close the window when user alt-f4s or clicks the X button
-			if (e.type == SDL_QUIT)
-				bQuit = true;
-
-
-			if (e.type == SDL_WINDOWEVENT) {
-				if (e.window.event == SDL_WINDOWEVENT_MINIMIZED) {
-					stop_rendering = true;
-				}
-				if (e.window.event == SDL_WINDOWEVENT_RESTORED) {
-					stop_rendering = false;
-				}
-				if (e.window.event == SDL_WINDOWEVENT_RESIZED) {
-					resize_requested = true;
-				}
-			}
-
-			
-			ImGuiIO& io = ImGui::GetIO();
-			if (!io.WantCaptureMouse || mainCamera.isActive) {
-				mainCamera.processSDLEvent(e);
-			}
-
-			// send sdl event to imgui for handling
-			ImGui_ImplSDL2_ProcessEvent(&e);
-		}
-
-		// do not draw if we are minimized
-		if (stop_rendering) {
-			// throttle the speed to avoid the endless spinning
-			std::this_thread::sleep_for(std::chrono::milliseconds(100));
-			continue;
-		}
-
-		if (resize_requested)
-			resize_swapchain();
-
-		update_imgui();
-
-		draw();
-
-		auto end = std::chrono::system_clock::now();
-		auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-		stats.frameTime = elapsed.count() / 1000.f;
-		stats.deltaTime = stats.frameTime / 1000.f;
-	}
 }
 
 AllocatedBuffer VulkanEngine::create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
@@ -839,7 +752,8 @@ void VulkanEngine::init_vulkan()
 	_instance = vkb_inst.instance;
 	_debug_messenger = vkb_inst.debug_messenger;
 
-	SDL_Vulkan_CreateSurface(_window, _instance, &_surface);
+	// create a surface that we can render to
+	_window->create_surface(_instance, &_surface);
 
 	// vulkan 1.3 features
 	VkPhysicalDeviceVulkan13Features features{ .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
@@ -889,14 +803,15 @@ void VulkanEngine::init_vulkan()
 
 void VulkanEngine::init_swapchain()
 {
-	_swapchain.init(_chosenGPU, _device, _surface, _windowExtent.width, _windowExtent.height);
+	VkExtent2D windowExtent = _window->get_extent();
+	_swapchain.init(_chosenGPU, _device, _surface, windowExtent.width, windowExtent.height);
 
 	// create a draw image that we will render into, and then blit to the swapchain image
 
 	// draw image size will match the window
 	VkExtent3D drawImageExtent = {
-		_windowExtent.width,
-		_windowExtent.height,
+		windowExtent.width,
+		windowExtent.height,
 		1
 	};
 
@@ -1185,7 +1100,7 @@ void VulkanEngine::init_imgui()
 	ImGui::CreateContext();
 
 	// initialize imgui for SDL
-	ImGui_ImplSDL2_InitForVulkan(_window);
+	ImGui_ImplSDL2_InitForVulkan(_window->get_sdl_window());
 
 	// initialize imgui for vulkan
 	ImGui_ImplVulkan_InitInfo initInfo = {};
@@ -1223,12 +1138,8 @@ void VulkanEngine::resize_swapchain()
 
 	_swapchain.destroy_swapchain();
 
-	int w, h;
-	SDL_GetWindowSize(_window, &w, &h);
-	_windowExtent.width = w;
-	_windowExtent.height = h;
-
-	_swapchain.create_swapchain(_windowExtent.width, _windowExtent.height);
+	VkExtent2D windowExtent = _window->get_extent();
+	_swapchain.create_swapchain(windowExtent.width, windowExtent.height);
 
 	// destroy old render targets
 	destroy_image(_drawImage);
@@ -1237,8 +1148,8 @@ void VulkanEngine::resize_swapchain()
 
 	// update draw extent and recreate images
 	VkExtent3D drawImageExtent = {
-		(uint32_t)_windowExtent.width,
-		(uint32_t)_windowExtent.height,
+		(uint32_t)windowExtent.width,
+		(uint32_t)windowExtent.height,
 		1
 	};
 
