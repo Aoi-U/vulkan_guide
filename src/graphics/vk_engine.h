@@ -11,6 +11,7 @@
 #include <span>
 #include <app/camera.h>
 #include <window/window.h>
+#include <VulkanCore.h>
 
 struct ComputePushConstants
 {
@@ -151,12 +152,7 @@ public:
 	bool _isInitialized{ false };
 	int _frameNumber{ 0 };
 
-	// vulkan instance handles
-	VkInstance _instance; // vulkan library handle
-	VkDebugUtilsMessengerEXT _debug_messenger; // vulkan debug output handle
-	VkPhysicalDevice _chosenGPU; // gpu chosen as the default device
-	VkDevice _device; // vulkan logical device for comands
-	VkSurfaceKHR _surface; // vulkan window surface
+	VulkanCore _vulkanCore;
 
 	Window* _window{ nullptr };
 
@@ -172,11 +168,6 @@ public:
 	AllocatedImage _depthImage;
 	VkExtent2D _drawExtent;
 	float renderScale{ 1.0f };
-
-	VkQueue _graphicsQueue;
-	uint32_t _graphicsQueueFamily;
-
-	VmaAllocator _allocator;
 
 	DescriptorAllocatorGrowable _globalDescriptorAllocator;
 
@@ -195,8 +186,6 @@ public:
 	DrawContext mainDrawContext;
 	std::unordered_map<std::string, std::shared_ptr<LoadedGLTF>> loadedScenes;
 	AssetManager assetManager;
-
-
 
 	// default textures
 	AllocatedImage _whiteImage;
@@ -273,10 +262,11 @@ public:
 	void init_default_data();
 	void resize_swapchain();
 
+	VkDevice get_device() { return _vulkanCore.get_device(); }
+
 private:
 
 	// vulkan initialization functions
-	void init_vulkan();
 	void init_swapchain();
 	void init_commands();
 	void init_sync_structures();

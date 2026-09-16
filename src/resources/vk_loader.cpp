@@ -194,7 +194,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 		{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1}
 	};
 
-	file.descriptorPool.init(engine->_device, gltf.materials.size(), sizes);
+	file.descriptorPool.init(engine->get_device(), gltf.materials.size(), sizes);
 
 	// load samplers 
 	for (fastgltf::Sampler& sampler : gltf.samplers) {
@@ -208,7 +208,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 		sampl.mipmapMode = extract_mipmap_mode(sampler.minFilter.value_or(fastgltf::Filter::Nearest));
 
 		VkSampler newSampler;
-		vkCreateSampler(engine->_device, &sampl, nullptr, &newSampler);
+		vkCreateSampler(engine->get_device(), &sampl, nullptr, &newSampler);
 
 		file.samplers.push_back(newSampler);
 	}
@@ -292,7 +292,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::s
 		}
 
 		// build material
-		newMat->data = engine->metalRoughMaterial.write_material(engine->_device, passType, materialResources, file.descriptorPool);
+		newMat->data = engine->metalRoughMaterial.write_material(engine->get_device(), passType, materialResources, file.descriptorPool);
 
 		dataIndex++;
 	}
@@ -496,7 +496,7 @@ void LoadedGLTF::draw(const glm::mat4& topMatrix, DrawContext& ctx)
 
 void LoadedGLTF::clearAll()
 {
-	VkDevice dv = creator->_device;
+	VkDevice dv = creator->get_device();
 
 	descriptorPool.destroy_pools(dv);
 	creator->destroy_buffer(materialDataBuffer);
