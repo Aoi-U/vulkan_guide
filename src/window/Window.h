@@ -10,7 +10,7 @@ struct SDL_Window;
 class Window
 {
 public:
-	Window(const std::string& name, uint32_t width, uint32_t height); 
+	void init(const std::string& name, uint32_t width, uint32_t height);
 	void cleanup();
 
 	// create a vulkan surface for the window

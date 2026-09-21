@@ -1,0 +1,26 @@
+Sources/
+├── Core/
+│   ├── Engine.h / Engine.cpp          // Loop management, delta timing
+│   ├── Module.h                       // Base module interface
+│   └── Log.h
+├── Window/
+│   ├── Window.h / Window.cpp          // SDL2 windowing & events
+│   └── Input.h / Input.cpp            // Input handling (keyboard, mouse)
+├── Graphics/
+│   ├── Driver/
+│   │   ├── GraphicsContext.h/.cpp    // Device, Queues, Allocator
+│   │   ├── Swapchain.h/.cpp          // Swapchain & dynamic sync
+│   │   ├── Descriptors.h/.cpp        // Descriptor allocators & builders
+│   │   └── Pipeline.h/.cpp           // PipelineBuilder & helpers
+│   ├── Passes/
+│   │   ├── BackgroundPass.h/.cpp
+│   │   ├── ForwardMeshPass.h/.cpp
+│   │   └── ImGuiPass.h/.cpp
+│   └── Renderer.h / Renderer.cpp     // Frame synchronization, frame graph/pipeline loop
+├── Resources/
+│   ├── AssetManager.h/.cpp           // Asset caching & registry
+│   ├── ModelLoader.h/.cpp            // fastgltf & stb_image parsing
+│   └── Material.h/.cpp               // Material definitions & pipeline layouts
+└── Scene/
+    ├── Camera.h/.cpp                 // Camera matrices & controls
+    └── Node.h / MeshNode.h           // Transform hierarchy & scene graph

@@ -4,15 +4,41 @@
 #include <chrono>
 #include <thread>
 
+#include <utils/vk_initializers.h>
+#include <imgui.h>
+#include <imgui_impl_sdl2.h>
+#include <imgui_impl_vulkan.h>
+#include <glm/gtx/transform.hpp>
+
+
 App::App()
 {
-	_window = std::make_unique<Window>("Vulkan Engine", 1280, 720);
-	_graphicsEngine = std::make_unique<VulkanEngine>();
+	_window = std::make_unique<Window>();
+	_vulkanCore = std::make_unique<VulkanCore>();
+	_renderer = std::make_unique<Renderer>();
+	_editor = std::make_unique<Editor>();
+
+	_guiRenderer = std::make_unique<GuiRenderer>();
 }
 
 void App::init()
 {
-	_graphicsEngine->init(_window.get());
+
+	_window->init("Vulkan Engine", 1280, 720);
+	_vulkanCore->init(*_window);
+	_renderer->init(_window.get(), _vulkanCore.get());
+	
+	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
+
+	_assetManager.init(_vulkanCore.get(), _renderer->get_material_system());
+	auto structureAsset = _assetManager.loadScene("structure", "../../assets/structure.glb");
+	auto brutalistAsset = _assetManager.loadScene("brutalist_building", "../../assets/brutalist_building.glb");
+
+	
+
+	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
+	_camera.pitch = 0.0f;
+	_camera.yaw = 0.0f;
 }
 
 void App::run()
@@ -21,16 +47,14 @@ void App::run()
 
 	while (!_window->should_close()) {
 		auto currentTime = std::chrono::steady_clock::now();
-		float deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+		_deltaTime = std::chrono::duration<float>(currentTime - lastTime).count();
+		_frameTime = _deltaTime * 1000.f;
 		lastTime = currentTime;
 
-		_graphicsEngine->stats.deltaTime = deltaTime;
-		_graphicsEngine->stats.frameTime = deltaTime * 1000.f;
-
 		_window->poll_events([&](const SDL_Event& e) {
-			const ImGuiIO& io = ImGui::GetIO();
-			if (!io.WantCaptureMouse || _graphicsEngine->mainCamera.isActive) {
-				_graphicsEngine->mainCamera.processSDLEvent(const_cast<SDL_Event&>(e));
+			_editor->process_event(e);
+			if (!_editor->want_capture_mouse() || _camera.isActive) {
+				_camera.processSDLEvent(const_cast<SDL_Event&>(e));
 			}
 			});
 
@@ -40,20 +64,57 @@ void App::run()
 			continue;
 		}
 
-		// resize swapchain if window has been resized
-		if (_window->is_resized()) {
-			_graphicsEngine->resize_swapchain();
-			_window->reset_resized_flag();
-		}
+		EngineStats stats;
+		stats.frameTimeMs = _frameTime;
+		stats.fps = 1.0f / _deltaTime;
+		stats.renderStats = _renderer->get_stats();
 
-		// render a frame
-		_graphicsEngine->render_frame();
+		_guiRenderer->new_frame();
+		_editor->draw_gui(_registry, _assetManager, stats);
+
+		update_scene(_deltaTime);
+
+		_renderer->render_scene(_registry, _sceneData, 
+			[&](VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D extent) {
+				_guiRenderer->render(cmd, targetImageView, extent);
+			});
 
 	}
 }
 
 void App::cleanup()
 {
-	_graphicsEngine->cleanup();
+	vkDeviceWaitIdle(_vulkanCore->get_device());
+
+	_guiRenderer->cleanup();
+	_registry.clear();
+	_assetManager.cleanup();
+	_renderer->cleanup();
+	_vulkanCore->cleanup();
 	_window->cleanup();
+}
+
+void App::update_scene(float deltaTime) {
+	_camera.update(deltaTime);
+
+	VkExtent2D extent = _window->get_extent();
+	_sceneData.proj = glm::perspective(
+		glm::radians(70.0f),
+		(float)extent.width / (float)extent.height,
+		10000.f,
+		0.1f
+	);
+	_sceneData.proj[1][1] *= -1;
+	_sceneData.view = _camera.getViewMatrix();
+	_sceneData.viewproj = _sceneData.proj * _sceneData.view;
+	_sceneData.ambientColor = glm::vec4(0.1f);
+	_sceneData.sunlightColor = glm::vec4(1.0f);
+	_sceneData.sunlightDirection = glm::vec4(0.f, 1.f, 0.5f, 1.f);
+
+	//_drawContext.opaqueObjects.clear();
+	//_drawContext.transparentObjects.clear();
+
+	//for (auto& [name, instance] : _assetManager.getInstances()) {
+	//	instance.draw(glm::mat4{ 1.f }, _drawContext);
+	//}
 }

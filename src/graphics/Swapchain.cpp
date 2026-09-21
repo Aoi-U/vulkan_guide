@@ -1,11 +1,11 @@
-#include "SwapchainManager.h"
+#include "Swapchain.h"
 
 #include <utils/vk_initializers.h>
 
 // bootstrap library
 #include "VkBootstrap.h"
 
-void SwapchainManager::init(VkPhysicalDevice chosenGPU, VkDevice device, VkSurfaceKHR surface, uint32_t width, uint32_t height)
+void Swapchain::init(VkPhysicalDevice chosenGPU, VkDevice device, VkSurfaceKHR surface, uint32_t width, uint32_t height)
 {
 	// store vulkan handles
 	_chosenGPU = chosenGPU;
@@ -15,13 +15,17 @@ void SwapchainManager::init(VkPhysicalDevice chosenGPU, VkDevice device, VkSurfa
 	create_swapchain(width, height);
 }
 
-void SwapchainManager::cleanup(VkDevice device)
+void Swapchain::cleanup(VkDevice device)
 {
 	destroy_swapchain();
 }
 
-void SwapchainManager::destroy_swapchain()
+void Swapchain::destroy_swapchain()
 {
+	if (_swapchain == VK_NULL_HANDLE) {
+		return;
+	}
+
 	// destroy semaphores
 	for (VkSemaphore semaphore : _renderSemaphores) {
 		vkDestroySemaphore(_device, semaphore, nullptr);
@@ -36,7 +40,7 @@ void SwapchainManager::destroy_swapchain()
 	}
 }
 
-void SwapchainManager::create_swapchain(uint32_t width, uint32_t height)
+void Swapchain::create_swapchain(uint32_t width, uint32_t height)
 {
 	vkb::SwapchainBuilder swapchainBuilder{ _chosenGPU, _device, _surface };
 	_swapchainImageFormat = VK_FORMAT_B8G8R8A8_UNORM;

@@ -3,7 +3,7 @@ add_library(core INTERFACE)
 
 target_include_directories(core INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}/src
+    ${PROJECT_SOURCE_DIR}
 )
 
 target_compile_definitions(core INTERFACE GLM_FORCE_DEPTH_ZERO_TO_ONE)
@@ -13,6 +13,7 @@ target_link_libraries(core INTERFACE
     fmt::fmt
     Vulkan::Vulkan
     vma
+	entt
 )
 
 # 2. Visual Studio target that displays vk_types.h without compiling anything

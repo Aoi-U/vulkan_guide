@@ -1,13 +1,14 @@
 ﻿#pragma once
 
 #include <core/vk_types.h>
+#include <utils/vk_descriptors.h>
 #include <unordered_map>
 #include <filesystem>
-
-#include "utils/vk_descriptors.h"
+#include <memory>
 
 // forward declaration
-class VulkanEngine;
+class VulkanCore;
+class GLTFMetallic_Roughness;
 
 // represents a gltf material
 struct GLTFMaterial
@@ -15,15 +16,7 @@ struct GLTFMaterial
 	MaterialInstance data;
 };
 
-// the bounding volume of a mesh used for frustum culling
-struct Bounds
-{
-	glm::vec3 origin;
-	float sphereRadius;
-	glm::vec3 extents;
-};
-
-// a single surface of a mesh
+// a single submesh of a mesh
 struct GeoSurface
 {
 	uint32_t startIndex;
@@ -41,7 +34,13 @@ struct MeshAsset
 	GPUMeshBuffers meshBuffers;
 };
 
-struct LoadedGLTF : public IRenderable
+// scene graph node for a renderable mesh
+struct MeshNode : public Node
+{
+	std::shared_ptr<MeshAsset> mesh;
+};
+
+struct LoadedGLTF 
 {
 	// storage for all the data on a given glTF file
 	std::unordered_map<std::string, std::shared_ptr<MeshAsset>> meshes;
@@ -58,14 +57,12 @@ struct LoadedGLTF : public IRenderable
 
 	AllocatedBuffer materialDataBuffer{};
 
-	VulkanEngine* creator = nullptr;
+	VulkanCore* creator = nullptr;
 
 	~LoadedGLTF() { clearAll(); };
-
-	virtual void draw(const glm::mat4& topMatrix, DrawContext& ctx);
 
 private:
 	void clearAll();
 };
 
-std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanEngine* engine, std::string_view filePath);
+std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTFMetallic_Roughness& materialSystem, std::string_view filePath);

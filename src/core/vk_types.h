@@ -20,7 +20,31 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 
-// represents an image that has been allocated on the GPU
+// NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
+// and delete them from a loop
+struct DeletionQueue
+{
+	std::deque<std::function<void()>> deletors;
+
+	// adds a function to the deletion queue
+	void push_function(std::function<void()>&& function)
+	{
+		deletors.push_back(function);
+	}
+
+	// flushes the deletion queue
+	void flush()
+	{
+		// reverse iterate the deletion queue to execute all functions
+		for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
+			(*it)(); // call the function
+		}
+
+		deletors.clear();
+	}
+};
+
+// an image that has been allocated on the GPU
 struct AllocatedImage
 {
 	VkImage image;
@@ -30,7 +54,7 @@ struct AllocatedImage
 	VkFormat imageFormat;
 };
 
-// represents a buffer that has been allocated on the GPU
+// a buffer that has been allocated on the GPU
 struct AllocatedBuffer
 {
 	VkBuffer buffer;
@@ -67,14 +91,14 @@ enum class MaterialPass : uint8_t
 	Other
 };
 
-// represents a pipeline and its layout 
+// a pipeline and its layout 
 struct MaterialPipeline
 {
 	VkPipeline pipeline;
 	VkPipelineLayout layout;
 };
 
-// represents a single instance of a material with its own resources and pipeline
+// a single instance of a material with its own resources and pipeline
 struct MaterialInstance
 {
 	MaterialPipeline* pipeline;
@@ -82,33 +106,48 @@ struct MaterialInstance
 	MaterialPass passType;
 };
 
-// holds the resources needed for a mesh
+// resources needed for a mesh
 struct GPUMeshBuffers
 {
 	AllocatedBuffer indexBuffer;
 	AllocatedBuffer vertexBuffer;
-	VkDeviceAddress vertexBufferAddress;
+	VkDeviceAddress vertexBufferAddress; 
 };
 
-// holds the data that is pushed to the GPU for a draw call
+// data that is pushed to the GPU for a draw call
 struct GPUDrawPushConstants
 {
 	glm::mat4 worldMatrix;
 	VkDeviceAddress vertexBufferAddress;
 };
 
-struct DrawContext; 
-
-// base class for a renderable dynamic object 
-class IRenderable
+// bounding volume of a mesh used for frustum culling
+struct Bounds
 {
-	virtual void draw(const glm::mat4& topMatrix, DrawContext& ctx) = 0;
+	glm::vec3 origin{ 0.0f };
+	float sphereRadius{ 0.0f };
+	glm::vec3 extents{ 0.0f };
 };
 
-// implementation of a drawable scene node
-// scene nodes can hold children and will also keep a transform to propagate to them
-struct Node : public IRenderable
+// a single renderable object in the scene
+struct RenderObject
 {
+	uint32_t indexCount;
+	uint32_t firstIndex;
+	VkBuffer indexBuffer;
+
+	MaterialInstance* material;
+	Bounds bounds;
+	glm::mat4 transform;
+	VkDeviceAddress vertexBufferAddress;
+};
+
+// implementation of a scene node
+// scene nodes can hold children and will also keep a transform to propagate to them
+struct Node
+{
+	virtual ~Node() = default;
+
 	// parent pointer must be a weak pointer to avoid circular dependencies
 	std::weak_ptr<Node> parent;
 	std::vector<std::shared_ptr<Node>> children;
@@ -121,16 +160,6 @@ struct Node : public IRenderable
 		worldTransform = parentMatrix * localTransform;
 		for (auto c : children) {
 			c->refreshTransform(worldTransform);
-		}
-	}
-
-	virtual void draw(const glm::mat4& topMatrix, DrawContext& ctx)
-	{
-		glm::mat4 nodeMatrix = topMatrix * localTransform;
-
-		// draw children
-		for (auto& c : children) {
-			c->draw(nodeMatrix, ctx);
 		}
 	}
 };

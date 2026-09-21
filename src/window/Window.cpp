@@ -3,7 +3,9 @@
 #include <SDL_vulkan.h>
 #include <imgui_impl_sdl2.h>
 
-Window::Window(const std::string& name, uint32_t width, uint32_t height) {
+void Window::init(const std::string& name, uint32_t width, uint32_t height)
+{
+
 	// We initialize SDL and create a window with it
 	SDL_Init(SDL_INIT_VIDEO);
 
@@ -53,9 +55,6 @@ void Window::poll_events(const std::function<void(const SDL_Event&)>& eventCallb
 				_extent.height = static_cast<uint32_t>(h);
 			}
 		}
-
-		// process event for imgui
-		ImGui_ImplSDL2_ProcessEvent(&e);
 
 		if (eventCallback) {
 			eventCallback(e);

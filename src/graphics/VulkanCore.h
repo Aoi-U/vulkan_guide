@@ -1,3 +1,4 @@
+#pragma once
 #include <core/vk_types.h>
 #include <window/window.h>
 
@@ -7,6 +8,20 @@ public:
 	void init(Window& window);
 
 	void cleanup();
+
+	// submits a function to be executed immediately on the gpu
+	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+
+	// creates a buffer 
+	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
+	void destroy_buffer(const AllocatedBuffer& buffer);
+
+	// creates an image
+	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+
+	// creates an image with data
+	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+	void destroy_image(const AllocatedImage& image);
 
 	VkInstance get_instance() const { return _instance; }
 	VkPhysicalDevice get_physical_device() const { return _chosenGPU; }
@@ -18,7 +33,22 @@ public:
 
 	VmaAllocator& get_allocator() { return _allocator; }
 
+	// default samplers and images
+	// Default samplers and fallback images
+	AllocatedImage _whiteImage;
+	AllocatedImage _blackImage;
+	AllocatedImage _greyImage;
+	AllocatedImage _errorCheckerboardImage;
+	VkSampler _defaultSamplerLinear{ VK_NULL_HANDLE };
+	VkSampler _defaultSamplerNearest{ VK_NULL_HANDLE };
+
+	// uploads a mesh to the gpu and returns the buffers for it
+	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+
 private:
+	void init_immediate_submit();
+	void init_default_data();
+
 	// vulkan instance handles
 	VkInstance _instance; // vulkan library handle
 	VkDebugUtilsMessengerEXT _debug_messenger; // vulkan debug output handle
@@ -30,5 +60,9 @@ private:
 	uint32_t _graphicsQueueFamily;
 
 	VmaAllocator _allocator;
+
+	VkFence _immFence;
+	VkCommandBuffer _immCommandBuffer;
+	VkCommandPool _immCommandPool;
 
 };
