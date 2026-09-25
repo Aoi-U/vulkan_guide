@@ -3,7 +3,8 @@
 #include <utils/vk_utils.h>
 #include <cmath>
 #include <algorithm>
-
+#include <resources/vk_loader.h>
+#include <core/Components.h>
 
 
 void Renderer::init(Window* window, VulkanCore* vulkanCore)
@@ -15,15 +16,24 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore)
 	create_command_buffers();
 	create_sync_structures();
 
-	_meshRenderer = std::make_unique<MeshRenderer>();
-	_meshRenderer->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
+	//_meshRenderer = std::make_unique<MeshRenderer>();
+	//_meshRenderer->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
+
+	std::unique_ptr<ForwardPass> forwardPass = std::make_unique<ForwardPass>();
+	forwardPass->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
+
+	_renderPasses.push_back(std::move(forwardPass));
+	_forwardPass = static_cast<ForwardPass*>(_renderPasses.back().get());
 }
 
 void Renderer::cleanup()
 {
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
-	_meshRenderer->cleanup();
+	//_meshRenderer->cleanup();
+	for (auto& pass : _renderPasses) {
+		pass->cleanup();
+	}
 
 	destroy_render_targets();
 
@@ -39,6 +49,7 @@ void Renderer::cleanup()
 	_swapchain.cleanup(_vulkanCore->get_device());
 }
 
+/*
 void Renderer::render_scene(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction)
 {
 	if (VkCommandBuffer cmd = begin_frame()) {
@@ -60,6 +71,34 @@ void Renderer::render_scene(const entt::registry& registry, const GPUSceneData& 
 		end_frame();
 	}
 }
+*/
+
+void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction)
+{
+	DrawContext ctx;
+	extract_scene_data(registry, ctx);
+
+	if (VkCommandBuffer cmd = begin_frame()) {
+		begin_rendering(cmd);
+		
+		// forward main pass
+		//_forwardPass->render(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
+		for (auto& pass : _renderPasses) {
+			pass->render(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
+		}
+
+		end_rendering(cmd);
+
+		blit_to_swapchain(cmd);
+		// render gui
+		if (guiDrawFunction) {
+			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
+			guiDrawFunction(cmd, swapchainImageView, _drawExtent);
+		}
+		end_frame();
+	}
+}
+
 
 VkCommandBuffer Renderer::begin_frame()
 {
@@ -207,6 +246,62 @@ void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 	vkutil::transition_image(cmd, swapchainImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
 
+void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
+{
+	ctx.clear();
+
+	auto view = registry.view<const MeshComponent>();
+	for (auto [entity, mesh] : view.each()) {
+		if (!mesh.visible || !mesh.mesh) {
+			continue;
+		}
+
+		glm::mat4 worldMatrix(1.0f);
+		
+		if (const auto* tc = registry.try_get<TransformComponent>(entity)) {
+			worldMatrix = tc->get_transform();
+		}
+
+		for (const auto& topNode : mesh.mesh->topNodes) {
+			collect_draw_nodes(topNode, worldMatrix, ctx);
+		}
+	}
+}
+
+void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, DrawContext& ctx)
+{
+	glm::mat4 nodeMatrix = parentMatrix * node->localTransform;
+
+	auto meshNode = std::dynamic_pointer_cast<MeshNode>(node);
+
+	if (meshNode && meshNode->mesh) {
+		// collect all surfaces of the mesh
+		// mesh can have multiple surfaces, each with its own material
+		for (auto& surface : meshNode->mesh->surfaces) {
+			RenderObject def;
+			def.indexCount = surface.count;
+			def.firstIndex = surface.startIndex;
+			def.indexBuffer = meshNode->mesh->meshBuffers.indexBuffer.buffer;
+			def.material = &surface.material->data;
+			def.bounds = surface.bounds;
+			def.transform = nodeMatrix;
+			def.vertexBufferAddress = meshNode->mesh->meshBuffers.vertexBufferAddress;
+
+			if (surface.material->data.passType == MaterialPass::Transparent) {
+				ctx.transparentObjects.push_back(def);
+			}
+			else {
+				ctx.opaqueObjects.push_back(def);
+			}
+		}
+	}
+
+	// recurse down
+	for (auto& child : node->children) {
+		collect_draw_nodes(child, nodeMatrix, ctx);
+	}
+}
+
 void Renderer::recreate_swapchain()
 {
 	// wait until the window is not minimized
@@ -224,6 +319,17 @@ void Renderer::recreate_swapchain()
 	destroy_render_targets();
 	create_render_targets();
 }
+
+const std::vector<PassStats> Renderer::get_stats() const
+{
+	std::vector<PassStats> stats;
+	for (auto& pass : _renderPasses) {
+		stats.push_back(pass->get_stats());
+	}
+	
+	return stats;
+}
+
 
 void Renderer::create_command_buffers()
 {

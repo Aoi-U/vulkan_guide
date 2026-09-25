@@ -2,6 +2,7 @@
 
 #include <graphics/utils/UIWidgets.h>
 #include <core/Components.h>
+#include <graphics/pass/RenderPass.h>
 
 void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats)
 {
@@ -204,9 +205,18 @@ void Editor::draw_performance_panel(const EngineStats& stats)
 	ImGui::Text("Framerate:  %.1f FPS", stats.fps);
 	ImGui::Separator();
 
-	ImGui::Text("Draw Calls:     %d", stats.renderStats.drawcallCount);
-	ImGui::Text("Triangles:      %d", stats.renderStats.triangleCount);
-	ImGui::Text("Mesh Pass Time: %.2f ms", stats.renderStats.meshDrawTime);
+
+	//ImGui::Text("Draw Calls:     %d", stats.renderStats.drawcallCount);
+	//ImGui::Text("Triangles:      %d", stats.renderStats.triangleCount);
+	//ImGui::Text("Mesh Pass Time: %.2f ms", stats.renderStats.passTime);
+	
+	for (const auto& passStats : stats.renderStats) {
+		ImGui::Text("%s", passStats.name.c_str());
+		ImGui::Text("  Draw Calls:     %d", passStats.drawcallCount);
+		ImGui::Text("  Triangles:      %d", passStats.triangleCount);
+		ImGui::Text("  Pass Time:      %.2f ms", passStats.passTime);
+		ImGui::Separator();
+	}
 
 	ImGui::End();
 }

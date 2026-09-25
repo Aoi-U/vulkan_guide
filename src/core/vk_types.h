@@ -142,6 +142,18 @@ struct RenderObject
 	VkDeviceAddress vertexBufferAddress;
 };
 
+struct DrawContext
+{
+	std::vector<RenderObject> opaqueObjects;
+	std::vector<RenderObject> transparentObjects;
+
+	void clear()
+	{
+		opaqueObjects.clear();
+		transparentObjects.clear();
+	}
+};
+
 // implementation of a scene node
 // scene nodes can hold children and will also keep a transform to propagate to them
 struct Node

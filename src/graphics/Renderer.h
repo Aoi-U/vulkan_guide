@@ -1,10 +1,14 @@
 #pragma once
 #include <graphics/VulkanCore.h>
 #include <graphics/Swapchain.h>
-#include <graphics/MeshRenderer.h>
+#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/ForwardPass.h>
 #include <window/window.h>
 #include <utils/vk_descriptors.h>
 #include <memory>
+#include <entt.hpp>
+#include <vector>
+
 
 struct FrameData
 {
@@ -28,7 +32,9 @@ public:
 	void cleanup();
 
 	using GuiDrawFunction = std::function<void(VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D drawExtent)>;
-	void render_scene(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction = nullptr);
+	//void render_scene(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction = nullptr);
+
+	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction = nullptr);
 
 	void recreate_swapchain();
 
@@ -41,8 +47,8 @@ public:
 	AllocatedImage get_draw_image() const { return _drawImage; }
 	AllocatedImage get_depth_image() const { return _depthImage; }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-	GLTFMetallic_Roughness* get_material_system() { return _meshRenderer->get_material_system(); }
-	const RenderStats& get_stats() const { return _meshRenderer->get_stats(); }
+	GLTFMetallic_Roughness* get_material_system() { return _forwardPass->get_material_system(); }
+	const std::vector<PassStats> get_stats() const;
 
 	float renderScale{ 1.0f };
 
@@ -60,7 +66,9 @@ private:
 	uint32_t _swapchainImageIndex{ 0 };
 	bool _isFrameStarted{ false };
 
-	std::unique_ptr<MeshRenderer> _meshRenderer;
+	//std::unique_ptr<MeshRenderer> _meshRenderer;
+	ForwardPass* _forwardPass;
+	std::vector<std::unique_ptr<RenderPass>> _renderPasses;
 
 	// renderer initialization functions
 	void create_command_buffers();
@@ -75,4 +83,8 @@ private:
 	void end_frame();
 
 	void blit_to_swapchain(VkCommandBuffer cmd);
+
+	void extract_scene_data(const entt::registry& registry, DrawContext& ctx);
+	void collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, DrawContext& ctx);
+
 };

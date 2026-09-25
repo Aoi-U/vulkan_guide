@@ -2,14 +2,16 @@
 
 #include <entt.hpp>
 #include <resources/AssetManager.h>
-#include <graphics/MeshRenderer.h>
+//#include <graphics/MeshRenderer.h>
+#include <graphics/pass/ForwardPass.h>
 #include <imgui_impl_sdl2.h>
 
 
 struct EngineStats {
 	float frameTimeMs{ 0.0f };
 	float fps{ 0.0f };
-	RenderStats renderStats;
+	//RenderStats renderStats;
+	std::vector<PassStats> renderStats;
 };
 
 class Editor

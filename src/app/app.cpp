@@ -28,13 +28,11 @@ void App::init()
 	_vulkanCore->init(*_window);
 	_renderer->init(_window.get(), _vulkanCore.get());
 	
+	_assetManager.init(_vulkanCore.get(), _renderer->get_material_system());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
 
-	_assetManager.init(_vulkanCore.get(), _renderer->get_material_system());
 	auto structureAsset = _assetManager.loadScene("structure", "../../assets/structure.glb");
 	auto brutalistAsset = _assetManager.loadScene("brutalist_building", "../../assets/brutalist_building.glb");
-
-	
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;
@@ -74,11 +72,10 @@ void App::run()
 
 		update_scene(_deltaTime);
 
-		_renderer->render_scene(_registry, _sceneData, 
+		_renderer->render_frame(_registry, _sceneData,
 			[&](VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D extent) {
 				_guiRenderer->render(cmd, targetImageView, extent);
 			});
-
 	}
 }
 
@@ -110,11 +107,4 @@ void App::update_scene(float deltaTime) {
 	_sceneData.ambientColor = glm::vec4(0.1f);
 	_sceneData.sunlightColor = glm::vec4(1.0f);
 	_sceneData.sunlightDirection = glm::vec4(0.f, 1.f, 0.5f, 1.f);
-
-	//_drawContext.opaqueObjects.clear();
-	//_drawContext.transparentObjects.clear();
-
-	//for (auto& [name, instance] : _assetManager.getInstances()) {
-	//	instance.draw(glm::mat4{ 1.f }, _drawContext);
-	//}
 }

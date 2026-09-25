@@ -315,7 +315,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTF
 		vertices.clear();
 
 		for (auto&& p : mesh.primitives) {
-			GeoSurface newSurface;
+			SubMesh newSurface;
 			newSurface.startIndex = (uint32_t)indices.size();
 			//newSurface.count = (uint32_t)gltf.accessors[p.indicesAccessor.value()].count;
 			fastgltf::Accessor& posAccessor = gltf.accessors[p.findAttribute("POSITION")->second];

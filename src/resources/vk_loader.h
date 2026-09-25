@@ -17,7 +17,7 @@ struct GLTFMaterial
 };
 
 // a single submesh of a mesh
-struct GeoSurface
+struct SubMesh
 {
 	uint32_t startIndex;
 	uint32_t count;
@@ -30,7 +30,7 @@ struct MeshAsset
 {
 	std::string name;
 
-	std::vector<GeoSurface> surfaces;
+	std::vector<SubMesh> surfaces;
 	GPUMeshBuffers meshBuffers;
 };
 

@@ -243,7 +243,7 @@ GPUMeshBuffers VulkanCore::upload_mesh(std::span<uint32_t> indices, std::span<Ve
 		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
 		.buffer = newMesh.vertexBuffer.buffer
 	};
-	newMesh.vertexBufferAddress = vkGetBufferDeviceAddress(get_device(), &deviceAddressInfo);
+	newMesh.vertexBufferAddress = vkGetBufferDeviceAddress(_device, &deviceAddressInfo);
 
 	// create index buffer
 	newMesh.indexBuffer = create_buffer(indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_ONLY);

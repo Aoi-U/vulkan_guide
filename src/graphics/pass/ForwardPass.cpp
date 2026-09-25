@@ -1,69 +1,61 @@
-#include "MeshRenderer.h"
-#include <graphics/Renderer.h>
-#include <graphics/VulkanCore.h>
+#pragma once
+
+#include "ForwardPass.h"
+
 #include <utils/vk_descriptors.h>
+#include <graphics/Renderer.h>
 #include <algorithm>
 #include <chrono>
 
-#include <core/Components.h>
-
-void MeshRenderer::init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat)
+void ForwardPass::init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
-
 	DescriptorLayoutBuilder builder;
 	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	_sceneDataDescriptorLayout = builder.build(vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
+	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-	_metalRoughMaterial.build_pipelines(vulkanCore->get_device(), _sceneDataDescriptorLayout, colorFormat, depthFormat);
+	_metalRoughMaterial.build_pipelines(_vulkanCore->get_device(), _sceneDataDescriptorLayout, colorFormat, depthFormat);
+
+	_stats.name = "Forward Pass";
 }
 
-void MeshRenderer::cleanup()
+void ForwardPass::cleanup()
 {
-	VkDevice device = _vulkanCore->get_device();
-	_metalRoughMaterial.clear_resources(device);
-	vkDestroyDescriptorSetLayout(device, _sceneDataDescriptorLayout, nullptr);
+	_metalRoughMaterial.clear_resources(_vulkanCore->get_device());
+	
+	vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _sceneDataDescriptorLayout, nullptr);
+
+	_vulkanCore = nullptr;
 }
 
-void MeshRenderer::render(VkCommandBuffer cmd, FrameData& frameData, const entt::registry& registry, const GPUSceneData& sceneData, VkExtent2D drawExtent)
-{
+void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, const DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
+{	
 	// reset counters
 	_stats.drawcallCount = 0;
 	_stats.triangleCount = 0;
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
-	std::vector<RenderObject> opaqueDraws;
-	std::vector<RenderObject> transparentDraws;
-
-	auto view = registry.view<const MeshComponent, const TransformComponent>();
-	for (auto [entity, mesh, transform] : view.each()) {
-		if (!mesh.visible || !mesh.mesh) {
-			continue;
-		}
-
-		glm::mat4 worldMatrix = transform.get_transform();
-		for (const auto& topNode : mesh.mesh->topNodes) {
-			collect_draw_nodes(topNode, worldMatrix, opaqueDraws, transparentDraws);
-		}
-	}
-
-	// sort the opaque surfaces by material and mesh
-	std::vector<RenderObject> visibleOpaqueDraws;
-	visibleOpaqueDraws.reserve(opaqueDraws.size());
-	for (const auto& obj : opaqueDraws) {
+	// frustum cull opaque objects
+	std::vector<RenderObject> visibleOpaque;
+	visibleOpaque.reserve(ctx.opaqueObjects.size());
+	for (const auto& obj : ctx.opaqueObjects) {
 		if (is_visible(obj, sceneData.viewproj)) {
-			visibleOpaqueDraws.push_back(obj);
+			visibleOpaque.push_back(obj);
 		}
 	}
 
-	std::sort(visibleOpaqueDraws.begin(), visibleOpaqueDraws.end(), [&](const RenderObject& a, const RenderObject& b) {
-			if (a.material == b.material) {
-				return a.indexBuffer < b.indexBuffer;
-			}
-			else {
-				return a.material < b.material;
-			}
+	// sort the opaque surfaces by material and mesh 
+	std::sort(visibleOpaque.begin(), visibleOpaque.end(), [](const RenderObject& a, const RenderObject& b) {
+		if (a.material->pipeline != b.material->pipeline) {
+			return a.material->pipeline < b.material->pipeline;
+		}
+
+		if (a.material != b.material) {
+			return a.material < b.material;
+		}
+
+		return a.indexBuffer < b.indexBuffer;
 		});
 
 	// allocate a new uniform buffer for scene data
@@ -86,20 +78,10 @@ void MeshRenderer::render(VkCommandBuffer cmd, FrameData& frameData, const entt:
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	// set dynamic viewport and scissor
-	VkViewport viewport{
-		.x = 0.f,
-		.y = 0.f,
-		.width = static_cast<float>(drawExtent.width),
-		.height = static_cast<float>(drawExtent.height),
-		.minDepth = 0.f,
-		.maxDepth = 1.f
-	};
+	VkViewport viewport{0.f, 0.f, static_cast<float>(drawExtent.width), static_cast<float>(drawExtent.height), 0.f, 1.f};
 	vkCmdSetViewport(cmd, 0, 1, &viewport);
 
-	VkRect2D scissor{
-		.offset = {0, 0},
-		.extent = drawExtent
-	};
+	VkRect2D scissor{{0, 0}, drawExtent};
 	vkCmdSetScissor(cmd, 0, 1, &scissor);
 
 	MaterialPipeline* lastPipeline = nullptr;
@@ -113,7 +95,7 @@ void MeshRenderer::render(VkCommandBuffer cmd, FrameData& frameData, const entt:
 			// rebind pipeline and descriptors if the material changed
 			if (obj.material->pipeline != lastPipeline) {
 				lastPipeline = obj.material->pipeline;
-				
+
 				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, obj.material->pipeline->pipeline);
 				// bind global scene descriptor set
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, obj.material->pipeline->layout, 0, 1, &globalDescriptor, 0, nullptr);
@@ -141,21 +123,21 @@ void MeshRenderer::render(VkCommandBuffer cmd, FrameData& frameData, const entt:
 		_stats.triangleCount += obj.indexCount / 3;
 		};
 
-	for (auto& r : visibleOpaqueDraws) {
+	for (auto& r : visibleOpaque) {
 		draw(r);
 	}
 
-	for (auto& r : transparentDraws) {
+	for (auto& r : ctx.transparentObjects) {
 		if (is_visible(r, sceneData.viewproj)) {
 			draw(r);
 		}
 	}
 
 	auto end = std::chrono::system_clock::now();
-	_stats.meshDrawTime = std::chrono::duration<float, std::milli>(end - start).count();
+	_stats.passTime = std::chrono::duration<float, std::milli>(end - start).count();
 }
 
-bool MeshRenderer::is_visible(const RenderObject& obj, const glm::mat4& viewProj)
+bool ForwardPass::is_visible(const RenderObject & obj, const glm::mat4 & viewProj)
 {
 	std::array<glm::vec3, 8> corners{
 		glm::vec3 { 1, 1, 1 },
@@ -192,38 +174,4 @@ bool MeshRenderer::is_visible(const RenderObject& obj, const glm::mat4& viewProj
 	}
 
 	return true;
-}
-
-void MeshRenderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, std::vector<RenderObject>& opaqueObjects, std::vector<RenderObject>& transparentObjects)
-{
-	glm::mat4 nodeMatrix = parentMatrix * node->localTransform;
-
-	auto meshNode = std::dynamic_pointer_cast<MeshNode>(node);
-
-	if (meshNode && meshNode->mesh) {
-		// collect all surfaces of the mesh
-		// mesh can have multiple surfaces, each with its own material
-		for (auto& surface : meshNode->mesh->surfaces) {
-			RenderObject def;
-			def.indexCount = surface.count; 
-			def.firstIndex = surface.startIndex;
-			def.indexBuffer = meshNode->mesh->meshBuffers.indexBuffer.buffer;
-			def.material = &surface.material->data;
-			def.bounds = surface.bounds;
-			def.transform = nodeMatrix;
-			def.vertexBufferAddress = meshNode->mesh->meshBuffers.vertexBufferAddress;
-
-			if (surface.material->data.passType == MaterialPass::Transparent) {
-				transparentObjects.push_back(def);
-			}
-			else {
-				opaqueObjects.push_back(def);
-			}
-		}
-	}
-
-	// recurse down
-	for (auto& child : node->children) {
-		collect_draw_nodes(child, nodeMatrix, opaqueObjects, transparentObjects);
-	}
 }
