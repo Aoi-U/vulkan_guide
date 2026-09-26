@@ -6,3 +6,4 @@
 /shaders/*.spv
 /CMakeFiles
 /CmakeCache.txt
+/assets/*
