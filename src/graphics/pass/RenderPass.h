@@ -21,7 +21,7 @@ public:
 
 	virtual void init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat) = 0;
 	virtual void cleanup() = 0;
-	virtual void render(VkCommandBuffer cmd, FrameData& frameData, const DrawContext& context, const GPUSceneData& sceneData, VkExtent2D drawExtent) = 0;
+	virtual void render(VkCommandBuffer cmd, FrameData& frameData, DrawContext& context, const GPUSceneData& sceneData, VkExtent2D drawExtent) = 0;
 
 	const PassStats get_stats() { return _stats; }
 

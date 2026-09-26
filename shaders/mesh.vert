@@ -30,16 +30,33 @@ layout (push_constant) uniform constants
   VertexBuffer vertexBuffer;
 } PushConstants;
 
+struct GPUObjectData {
+    mat4 worldMatrix;
+    vec4 sphereBounds;
+    VertexBuffer vertexBuffer;
+    uint pad0;
+    uint pad1;
+};
+
+layout(std430, set = 0, binding = 1) readonly buffer ObjectBuffer {
+    GPUObjectData objects[];
+} objectBuffer;
+
+layout(std430, set = 0, binding = 2) readonly buffer InstanceIndexBuffer {
+    uint objectIDs[];
+} instanceBuffer;
+
 void main()
 {
-  Vertex v = PushConstants.vertexBuffer.vertices[gl_VertexIndex];
+    uint objectIndex = instanceBuffer.objectIDs[gl_InstanceIndex];
+    GPUObjectData obj = objectBuffer.objects[objectIndex];
 
-  vec4 position = vec4(v.position, 1.0f);
+    Vertex v = obj.vertexBuffer.vertices[gl_VertexIndex];
+    vec4 position = vec4(v.position, 1.0f);
 
-  gl_Position = sceneData.viewproj * PushConstants.renderMatrix * position;
-
-  outNormal = (PushConstants.renderMatrix * vec4(v.normal, 0.f)).xyz;
-  outColor = v.color * materialData.colorFactors;
-  outUV.x = v.uv_x;
-  outUV.y = v.uv_y;
+    gl_Position = sceneData.viewproj * obj.worldMatrix * position;
+    outNormal = (obj.worldMatrix * vec4(v.normal, 0.f)).xyz;
+    outColor = v.color * materialData.colorFactors;
+    outUV.x = v.uv_x;
+    outUV.y = v.uv_y;
 }

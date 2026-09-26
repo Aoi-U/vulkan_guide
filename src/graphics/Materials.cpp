@@ -17,12 +17,6 @@ void GLTFMetallic_Roughness::build_pipelines(VkDevice device, VkDescriptorSetLay
 		fmt::println("Error when building the mesh vertex shader module");
 	}
 
-	// setup push constant range for transform matrix
-	VkPushConstantRange matrixRange{};
-	matrixRange.offset = 0;
-	matrixRange.size = sizeof(GPUDrawPushConstants);
-	matrixRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
-
 	// build descriptorsetlayout for material
 	DescriptorLayoutBuilder layoutBuilder;
 	layoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: uniform buffer for MaterialConstants
@@ -35,8 +29,8 @@ void GLTFMetallic_Roughness::build_pipelines(VkDevice device, VkDescriptorSetLay
 	VkPipelineLayoutCreateInfo meshLayoutInfo = vkinit::pipeline_layout_create_info();
 	meshLayoutInfo.setLayoutCount = 2;
 	meshLayoutInfo.pSetLayouts = layouts;
-	meshLayoutInfo.pPushConstantRanges = &matrixRange;
-	meshLayoutInfo.pushConstantRangeCount = 1;
+	meshLayoutInfo.pPushConstantRanges = nullptr;
+	meshLayoutInfo.pushConstantRangeCount = 0;
 
 	VkPipelineLayout meshPipelineLayout;
 	VK_CHECK(vkCreatePipelineLayout(device, &meshLayoutInfo, nullptr, &meshPipelineLayout));

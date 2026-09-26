@@ -9,6 +9,10 @@
 #include <entt.hpp>
 #include <vector>
 
+struct CullStatsData {
+	uint32_t visibleDraws{ 0 };
+	uint32_t visibleTriangles{ 0 };
+};
 
 struct FrameData
 {
@@ -20,6 +24,8 @@ struct FrameData
 
 	DeletionQueue _deletionQueue;
 	DescriptorAllocatorGrowable _frameDescriptors;
+
+	AllocatedBuffer _cullStatsBuffer;
 };
 
 class Renderer
@@ -69,6 +75,7 @@ private:
 	//std::unique_ptr<MeshRenderer> _meshRenderer;
 	ForwardPass* _forwardPass;
 	std::vector<std::unique_ptr<RenderPass>> _renderPasses;
+	std::vector<std::unique_ptr<RenderPass>> _computePasses;
 
 	// renderer initialization functions
 	void create_command_buffers();

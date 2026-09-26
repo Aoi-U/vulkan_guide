@@ -12,6 +12,8 @@ void ForwardPass::init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat de
 	_vulkanCore = vulkanCore;
 	DescriptorLayoutBuilder builder;
 	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	_metalRoughMaterial.build_pipelines(_vulkanCore->get_device(), _sceneDataDescriptorLayout, colorFormat, depthFormat);
@@ -28,35 +30,14 @@ void ForwardPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, const DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
+void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
 {	
-	// reset counters
-	_stats.drawcallCount = 0;
-	_stats.triangleCount = 0;
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
-	// frustum cull opaque objects
-	std::vector<RenderObject> visibleOpaque;
-	visibleOpaque.reserve(ctx.opaqueObjects.size());
-	for (const auto& obj : ctx.opaqueObjects) {
-		if (is_visible(obj, sceneData.viewproj)) {
-			visibleOpaque.push_back(obj);
-		}
+	if (ctx.indirectDrawCount == 0 || ctx.gpuIndirectBuffer.buffer == VK_NULL_HANDLE) {
+		return;
 	}
 
-	// sort the opaque surfaces by material and mesh 
-	std::sort(visibleOpaque.begin(), visibleOpaque.end(), [](const RenderObject& a, const RenderObject& b) {
-		if (a.material->pipeline != b.material->pipeline) {
-			return a.material->pipeline < b.material->pipeline;
-		}
-
-		if (a.material != b.material) {
-			return a.material < b.material;
-		}
-
-		return a.indexBuffer < b.indexBuffer;
-		});
+	// begin clock
+	auto start = std::chrono::system_clock::now();
 
 	// allocate a new uniform buffer for scene data
 	AllocatedBuffer gpuSceneDataBuffer = _vulkanCore->create_buffer(sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -75,6 +56,8 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, const DrawC
 
 	DescriptorWriter writer;
 	writer.write_buffer(0, gpuSceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(1, ctx.gpuObjectBuffer.buffer, sizeof(GPUObjectData) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, ctx.gpuInstanceBuffer.buffer, sizeof(uint32_t) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	// set dynamic viewport and scissor
@@ -88,7 +71,9 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, const DrawC
 	MaterialInstance* lastMaterial = nullptr;
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 
-	auto draw = [&](const RenderObject& obj) {
+	for (uint32_t i = 0; i < ctx.indirectDrawCount; i++) {
+		const RenderObject& obj = ctx.opaqueObjects[i];
+
 		if (obj.material != lastMaterial) {
 			lastMaterial = obj.material;
 
@@ -101,77 +86,20 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, const DrawC
 				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, obj.material->pipeline->layout, 0, 1, &globalDescriptor, 0, nullptr);
 			}
 			// bind material descriptor set
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, obj.material->pipeline->layout, 1, 1, &obj.material->materialSet, 0, nullptr);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->layout, 1, 1, &obj.material->materialSet, 0, nullptr);
 		}
-
+		
 		// rebind index buffer if needed
 		if (obj.indexBuffer != lastIndexBuffer) {
 			lastIndexBuffer = obj.indexBuffer;
 			vkCmdBindIndexBuffer(cmd, obj.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 		}
 
-		// set push constants for the draw call
-		GPUDrawPushConstants pushConstants;
-		pushConstants.vertexBufferAddress = obj.vertexBufferAddress;
-		pushConstants.worldMatrix = obj.transform;
-		vkCmdPushConstants(cmd, obj.material->pipeline->layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(GPUDrawPushConstants), &pushConstants);
-
-		vkCmdDrawIndexed(cmd, obj.indexCount, 1, obj.firstIndex, 0, 0);
-
-		// count drawcalls
-		_stats.drawcallCount++;
-		_stats.triangleCount += obj.indexCount / 3;
-		};
-
-	for (auto& r : visibleOpaque) {
-		draw(r);
+		VkDeviceSize indirectOffset = i * sizeof(DrawIndexedIndirectCommand);
+		vkCmdDrawIndexedIndirect(cmd, ctx.gpuIndirectBuffer.buffer, indirectOffset, 1, sizeof(DrawIndexedIndirectCommand));
 	}
 
-	for (auto& r : ctx.transparentObjects) {
-		if (is_visible(r, sceneData.viewproj)) {
-			draw(r);
-		}
-	}
 
 	auto end = std::chrono::system_clock::now();
 	_stats.passTime = std::chrono::duration<float, std::milli>(end - start).count();
-}
-
-bool ForwardPass::is_visible(const RenderObject & obj, const glm::mat4 & viewProj)
-{
-	std::array<glm::vec3, 8> corners{
-		glm::vec3 { 1, 1, 1 },
-		glm::vec3 { 1, 1, -1 },
-		glm::vec3 { 1, -1, 1 },
-		glm::vec3 { 1, -1, -1 },
-		glm::vec3 { -1, 1, 1 },
-		glm::vec3 { -1, 1, -1 },
-		glm::vec3 { -1, -1, 1 },
-		glm::vec3 { -1, -1, -1 },
-	};
-
-	glm::mat4 mvp = viewProj * obj.transform;
-
-	glm::vec3 min = { 1.5, 1.5, 1.5 };
-	glm::vec3 max = { -1.5, -1.5, -1.5 };
-
-	for (int c = 0; c < 8; c++) {
-		// project each corner into clip space
-		glm::vec4 v = mvp * glm::vec4(obj.bounds.origin + (corners[c] * obj.bounds.extents), 1.f);
-
-		// perspective correction
-		v.x = v.x / v.w;
-		v.y = v.y / v.w;
-		v.z = v.z / v.w;
-
-		min = glm::min(glm::vec3{ v.x, v.y, v.z }, min);
-		max = glm::max(glm::vec3{ v.x, v.y, v.z }, max);
-	}
-
-	// check if the clip space box is within the view
-	if (min.z > 1.f || max.z < 0.f || min.x > 1.f || max.x < -1.f || min.y > 1.f || max.y < -1.f) {
-		return false;
-	}
-
-	return true;
 }

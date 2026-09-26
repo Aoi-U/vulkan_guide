@@ -117,7 +117,6 @@ struct GPUMeshBuffers
 // data that is pushed to the GPU for a draw call
 struct GPUDrawPushConstants
 {
-	glm::mat4 worldMatrix;
 	VkDeviceAddress vertexBufferAddress;
 };
 
@@ -142,15 +141,48 @@ struct RenderObject
 	VkDeviceAddress vertexBufferAddress;
 };
 
+// object data stored in gpu contiguous buffer
+struct GPUObjectData
+{
+	glm::mat4 worldMatrix;
+	glm::vec4 sphereBounds;
+	VkDeviceAddress vertexBufferAddress;
+	uint32_t padding[2];
+};
+
+struct CullPushConstants
+{
+	glm::vec4 frustumPlanes[6];
+	uint32_t drawCount;
+	uint32_t cullMode{ 1 }; // enable or disable
+};
+
+struct DrawIndexedIndirectCommand
+{
+	uint32_t indexCount;
+	uint32_t instanceCount;
+	uint32_t firstIndex;
+	int32_t vertexOffset;
+	uint32_t firstInstance;
+};
+
 struct DrawContext
 {
 	std::vector<RenderObject> opaqueObjects;
 	std::vector<RenderObject> transparentObjects;
 
-	void clear()
-	{
+	AllocatedBuffer gpuObjectBuffer{};
+	AllocatedBuffer gpuInstanceBuffer{};
+	AllocatedBuffer gpuIndirectBuffer{};
+	uint32_t indirectDrawCount{ 0 };
+
+	void clear() {
 		opaqueObjects.clear();
 		transparentObjects.clear();
+		gpuObjectBuffer = {};
+		gpuInstanceBuffer = {};
+		gpuIndirectBuffer = {};
+		indirectDrawCount = 0;
 	}
 };
 

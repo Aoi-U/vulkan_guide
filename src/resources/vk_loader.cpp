@@ -240,6 +240,21 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTF
 	int dataIndex = 0;
 	MaterialConstants* sceneMaterialConstants = (MaterialConstants*)file.materialDataBuffer.info.pMappedData;
 
+	if (gltf.materials.empty()) {
+		std::shared_ptr<GLTFMaterial> defaultMat = std::make_shared<GLTFMaterial>();
+		MaterialResources materialResources;
+		materialResources.colorImage = vulkanCore->_whiteImage;
+		materialResources.colorSampler = vulkanCore->_defaultSamplerLinear;
+		materialResources.metalRoughImage = vulkanCore->_whiteImage;
+		materialResources.metalRoughSampler = vulkanCore->_defaultSamplerLinear;
+		materialResources.dataBuffer = file.materialDataBuffer.buffer;
+		materialResources.dataBufferOffset = 0;
+
+		defaultMat->data = materialSystem.write_material(vulkanCore->get_device(), MaterialPass::MainColor, materialResources, file.descriptorPool);
+		materials.push_back(defaultMat);
+		file.materials["default"] = defaultMat;
+	}
+
 	// load all materials
 	for (fastgltf::Material& mat : gltf.materials) {
 		std::shared_ptr<GLTFMaterial> newMat = std::make_shared<GLTFMaterial>();

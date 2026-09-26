@@ -6,6 +6,8 @@
 #include <resources/vk_loader.h>
 #include <core/Components.h>
 
+#include <graphics/pass/FrustumCullpass.h>
+
 
 void Renderer::init(Window* window, VulkanCore* vulkanCore)
 {
@@ -19,9 +21,12 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore)
 	//_meshRenderer = std::make_unique<MeshRenderer>();
 	//_meshRenderer->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
 
+	std::unique_ptr<FrustumCullPass> frustumCullPass = std::make_unique<FrustumCullPass>();
+	frustumCullPass->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
+	_computePasses.push_back(std::move(frustumCullPass));
+
 	std::unique_ptr<ForwardPass> forwardPass = std::make_unique<ForwardPass>();
 	forwardPass->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
-
 	_renderPasses.push_back(std::move(forwardPass));
 	_forwardPass = static_cast<ForwardPass*>(_renderPasses.back().get());
 }
@@ -35,9 +40,15 @@ void Renderer::cleanup()
 		pass->cleanup();
 	}
 
+	for (auto& pass : _computePasses) {
+		pass->cleanup();
+	}
+
 	destroy_render_targets();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
+		_vulkanCore->destroy_buffer(_frames[i]._cullStatsBuffer);
+
 		_frames[i]._deletionQueue.flush();
 		_frames[i]._frameDescriptors.destroy_pools(_vulkanCore->get_device());
 
@@ -79,6 +90,10 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	extract_scene_data(registry, ctx);
 
 	if (VkCommandBuffer cmd = begin_frame()) {
+		for (auto& pass : _computePasses) {
+			pass->render(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
+		}
+
 		begin_rendering(cmd);
 		
 		// forward main pass
@@ -323,10 +338,14 @@ void Renderer::recreate_swapchain()
 const std::vector<PassStats> Renderer::get_stats() const
 {
 	std::vector<PassStats> stats;
+	for (auto& pass : _computePasses) {
+		stats.push_back(pass->get_stats());
+	}
+
 	for (auto& pass : _renderPasses) {
 		stats.push_back(pass->get_stats());
 	}
-	
+
 	return stats;
 }
 
@@ -366,7 +385,13 @@ void Renderer::create_sync_structures()
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		VK_CHECK(vkCreateFence(_vulkanCore->get_device(), &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
-		VK_CHECK(vkCreateSemaphore(_vulkanCore->get_device(), &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));;
+		VK_CHECK(vkCreateSemaphore(_vulkanCore->get_device(), &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
+
+		_frames[i]._cullStatsBuffer = _vulkanCore->create_buffer(
+			sizeof(CullStatsData),
+			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
+			VMA_MEMORY_USAGE_CPU_TO_GPU
+		);
 	}
 }
 

@@ -95,12 +95,7 @@ void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);
 
 	VkExtent2D extent = _window->get_extent();
-	_sceneData.proj = glm::perspective(
-		glm::radians(70.0f),
-		(float)extent.width / (float)extent.height,
-		10000.f,
-		0.1f
-	);
+	_sceneData.proj = glm::perspective(glm::radians(70.0f) ,(float)extent.width / (float)extent.height, 10000.f, 0.1f);
 	_sceneData.proj[1][1] *= -1;
 	_sceneData.view = _camera.getViewMatrix();
 	_sceneData.viewproj = _sceneData.proj * _sceneData.view;

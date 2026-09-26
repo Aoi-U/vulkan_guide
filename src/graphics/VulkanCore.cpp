@@ -40,6 +40,9 @@ void VulkanCore::init(Window& window)
 	features12.bufferDeviceAddress = true;
 	features12.descriptorIndexing = true;
 
+	VkPhysicalDeviceFeatures standardFeatures{};
+	standardFeatures.multiDrawIndirect = true;
+
 	// use vkbootstrap to select a gpu
 	// choose gpu that can write to the SDL surface and supports vulkan 1.3 with correct features
 	vkb::PhysicalDeviceSelector selector{ vkb_inst };
@@ -47,6 +50,7 @@ void VulkanCore::init(Window& window)
 		.set_minimum_version(1, 3)
 		.set_required_features_13(features)
 		.set_required_features_12(features12)
+		.set_required_features(standardFeatures)
 		.set_surface(_surface)
 		.select()
 		.value();
