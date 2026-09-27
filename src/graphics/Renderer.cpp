@@ -281,6 +281,52 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			collect_draw_nodes(topNode, worldMatrix, ctx);
 		}
 	}
+
+	if (ctx.opaqueObjects.empty()) {
+		return;
+	}
+
+	// sort opaque objects 
+	std::sort(ctx.opaqueObjects.begin(), ctx.opaqueObjects.end(), [](const RenderObject& a, const RenderObject& b) {
+		if (a.material->pipeline != b.material->pipeline) {
+			return a.material->pipeline < b.material->pipeline;
+		}
+		if (a.material->materialSet != b.material->materialSet) {
+			return a.material->materialSet < b.material->materialSet;
+		}
+		if (a.indexBuffer != b.indexBuffer) {
+			return a.indexBuffer < b.indexBuffer;
+		}
+		if (a.firstIndex != b.firstIndex) {
+			return a.firstIndex < b.firstIndex;
+		}
+		return a.indexCount < b.indexCount;;
+		});
+
+	IndirectBatch currentBatch;
+	currentBatch.first = 0;
+	currentBatch.count = 0;
+	currentBatch.batchIndex = 0;
+	currentBatch.material = ctx.opaqueObjects[0].material;
+	currentBatch.indexBuffer = ctx.opaqueObjects[0].indexBuffer;
+
+	// compact same objects into multidraw batches
+	for (uint32_t i = 0; i < static_cast<uint32_t>(ctx.opaqueObjects.size()); i++) {
+		const RenderObject& obj = ctx.opaqueObjects[i];
+
+		bool isSameBatch = (obj.material == currentBatch.material) && (obj.indexBuffer == currentBatch.indexBuffer);
+
+		if (!isSameBatch) {
+			ctx.opaqueBatches.push_back(currentBatch);
+			currentBatch.first = i;
+			currentBatch.count = 0;
+			currentBatch.batchIndex = static_cast<uint32_t>(ctx.opaqueBatches.size());
+			currentBatch.material = obj.material;
+			currentBatch.indexBuffer = obj.indexBuffer;
+		}
+		currentBatch.count++;
+	}
+	ctx.opaqueBatches.push_back(currentBatch);
 }
 
 void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, DrawContext& ctx)

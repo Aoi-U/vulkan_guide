@@ -44,4 +44,11 @@ public:
 	void disable_depthtest();
 
 	void enable_depthtest(bool depthWriteEnable, VkCompareOp op);
+
+	// compute pipeline building
+	VkPipelineShaderStageCreateInfo _computeShaderStage;
+
+	void set_compute_shaders(VkShaderModule computeShader);
+
+	VkPipeline build_compute_pipeline(VkDevice device);
 };

@@ -34,8 +34,8 @@ struct GPUObjectData {
     mat4 worldMatrix;
     vec4 sphereBounds;
     VertexBuffer vertexBuffer;
-    uint pad0;
-    uint pad1;
+    uint batchIndex;
+    uint batchOffset;
 };
 
 layout(std430, set = 0, binding = 1) readonly buffer ObjectBuffer {

@@ -147,41 +147,49 @@ struct GPUObjectData
 	glm::mat4 worldMatrix;
 	glm::vec4 sphereBounds;
 	VkDeviceAddress vertexBufferAddress;
-	uint32_t padding[2];
+	uint32_t batchIndex;
+	uint32_t batchOffset;
 };
 
+// frustum cull push constants
 struct CullPushConstants
 {
-	glm::vec4 frustumPlanes[6];
-	uint32_t drawCount;
+	glm::vec4 frustumPlanes[6]; 
+	uint32_t drawCount; 
 	uint32_t cullMode{ 1 }; // enable or disable
 };
 
-struct DrawIndexedIndirectCommand
+struct IndirectBatch
 {
-	uint32_t indexCount;
-	uint32_t instanceCount;
-	uint32_t firstIndex;
-	int32_t vertexOffset;
-	uint32_t firstInstance;
+	VkBuffer indexBuffer;
+	MaterialInstance* material;
+	uint32_t first; // first index in the indirect buffer
+	uint32_t count; // number of indirect commands in this batch
+	uint32_t batchIndex; // index of this batch in the batch array
 };
 
 struct DrawContext
 {
-	std::vector<RenderObject> opaqueObjects;
+	std::vector<RenderObject> opaqueObjects; 
 	std::vector<RenderObject> transparentObjects;
 
-	AllocatedBuffer gpuObjectBuffer{};
-	AllocatedBuffer gpuInstanceBuffer{};
-	AllocatedBuffer gpuIndirectBuffer{};
+	std::vector<IndirectBatch> opaqueBatches;
+
+	// indirect draw buffers
+	AllocatedBuffer gpuObjectBuffer{}; // buffer for object data
+	AllocatedBuffer gpuInstanceBuffer{}; // instance ids
+	AllocatedBuffer gpuIndirectBuffer{}; // buffer for indirect draw commands
+	AllocatedBuffer gpuCountBuffer{}; // buffer for count per batch
 	uint32_t indirectDrawCount{ 0 };
 
 	void clear() {
 		opaqueObjects.clear();
 		transparentObjects.clear();
+		opaqueBatches.clear();
 		gpuObjectBuffer = {};
 		gpuInstanceBuffer = {};
 		gpuIndirectBuffer = {};
+		gpuCountBuffer = {};
 		indirectDrawCount = 0;
 	}
 };

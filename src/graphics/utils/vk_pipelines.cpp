@@ -1,7 +1,6 @@
 ﻿#include <utils/vk_pipelines.h>
 #include <fstream>
 #include <utils/vk_initializers.h>
-
 #include <utils/vk_utils.h>
 
 void PipelineBuilder::clear()
@@ -16,6 +15,8 @@ void PipelineBuilder::clear()
 	_depthStencil = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
 	_renderInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
 	_shaderStages.clear();
+
+	_computeShaderStage = {};
 }
 
 VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
@@ -189,6 +190,28 @@ void PipelineBuilder::enable_depthtest(bool depthWriteEnable, VkCompareOp op)
 	_depthStencil.back = {};
 	_depthStencil.minDepthBounds = 0.f;
 	_depthStencil.maxDepthBounds = 1.f;
+}
+
+void PipelineBuilder::set_compute_shaders(VkShaderModule computeShader)
+{
+	_computeShaderStage = vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_COMPUTE_BIT, computeShader);
+}
+
+VkPipeline PipelineBuilder::build_compute_pipeline(VkDevice device)
+{
+	VkComputePipelineCreateInfo computeInfo{
+			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			.stage = _computeShaderStage,
+			.layout = _pipelineLayout
+	};
+
+	VkPipeline computePipeline;
+	if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computeInfo, nullptr, &computePipeline) != VK_SUCCESS) {
+		fmt::println("Failed to create compute pipeline");
+		return VK_NULL_HANDLE;
+	}
+
+	return computePipeline;
 }
 
 

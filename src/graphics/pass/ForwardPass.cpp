@@ -32,7 +32,7 @@ void ForwardPass::cleanup()
 
 void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
 {	
-	if (ctx.indirectDrawCount == 0 || ctx.gpuIndirectBuffer.buffer == VK_NULL_HANDLE) {
+	if (ctx.indirectDrawCount == 0 || ctx.gpuIndirectBuffer.buffer == VK_NULL_HANDLE || ctx.opaqueBatches.empty()) {
 		return;
 	}
 
@@ -71,35 +71,43 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 	MaterialInstance* lastMaterial = nullptr;
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 
-	for (uint32_t i = 0; i < ctx.indirectDrawCount; i++) {
-		const RenderObject& obj = ctx.opaqueObjects[i];
+	uint32_t recordedBatchCommands = 0;
 
-		if (obj.material != lastMaterial) {
-			lastMaterial = obj.material;
-
-			// rebind pipeline and descriptors if the material changed
-			if (obj.material->pipeline != lastPipeline) {
-				lastPipeline = obj.material->pipeline;
-
-				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, obj.material->pipeline->pipeline);
-				// bind global scene descriptor set
-				vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, obj.material->pipeline->layout, 0, 1, &globalDescriptor, 0, nullptr);
-			}
-			// bind material descriptor set
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->layout, 1, 1, &obj.material->materialSet, 0, nullptr);
+	for (const IndirectBatch& batch : ctx.opaqueBatches) {
+		if (!batch.material || !batch.material->pipeline) {
+			continue;
 		}
-		
+
+		// rebind pipeline if needed
+		if (batch.material->pipeline != lastPipeline) {
+			lastPipeline = batch.material->pipeline;
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->pipeline);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->layout, 0, 1, &globalDescriptor, 0, nullptr);
+		}
+
+		// rebind material descriptor set if needed
+		if (batch.material != lastMaterial) {
+			lastMaterial = batch.material;
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->layout, 1, 1, &lastMaterial->materialSet, 0, nullptr);
+		}
+
 		// rebind index buffer if needed
-		if (obj.indexBuffer != lastIndexBuffer) {
-			lastIndexBuffer = obj.indexBuffer;
-			vkCmdBindIndexBuffer(cmd, obj.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
+		if (batch.indexBuffer != lastIndexBuffer) {
+			lastIndexBuffer = batch.indexBuffer;
+			vkCmdBindIndexBuffer(cmd, batch.indexBuffer, 0, VK_INDEX_TYPE_UINT32);
 		}
 
-		VkDeviceSize indirectOffset = i * sizeof(DrawIndexedIndirectCommand);
-		vkCmdDrawIndexedIndirect(cmd, ctx.gpuIndirectBuffer.buffer, indirectOffset, 1, sizeof(DrawIndexedIndirectCommand));
+		// draw batch
+		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
+		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
+
+		vkCmdDrawIndexedIndirectCount(cmd, ctx.gpuIndirectBuffer.buffer, indirectOffset, ctx.gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+		recordedBatchCommands++;
 	}
 
-
-	auto end = std::chrono::system_clock::now();
-	_stats.passTime = std::chrono::duration<float, std::milli>(end - start).count();
+	auto end = std::chrono::system_clock::now(); 
+	_stats.clear(); 
+	_stats.name = "Forward Pass"; 
+	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count(); 
+	_stats.add_metric("CPU Batches Recorded", recordedBatchCommands);
 }

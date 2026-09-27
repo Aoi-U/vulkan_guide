@@ -1,6 +1,7 @@
 #include "FrustumCullPass.h"
 #include <utils/vk_descriptors.h>
 #include <utils/vk_initializers.h>
+#include <graphics/utils/vk_pipelines.h>
 #include <utils/vk_utils.h>
 #include <graphics/Renderer.h>
 #include <chrono>
@@ -18,11 +19,13 @@ void FrustumCullPass::build_cull_pipeline() {
 		return;
 	}
 
+	// create descriptor set layout for frustum cull pass
 	DescriptorLayoutBuilder cullLayoutBuilder;
-	cullLayoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	cullLayoutBuilder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	cullLayoutBuilder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	cullLayoutBuilder.add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); 
+	cullLayoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: GPUObjectData buffer
+	cullLayoutBuilder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: final instance id buffer
+	cullLayoutBuilder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 2: indirect draw command buffer
+	cullLayoutBuilder.add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 3: cull stats buffer
+	cullLayoutBuilder.add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 4: batch count buffer
 	_cullDescriptorLayout = cullLayoutBuilder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_COMPUTE_BIT);
 
 	VkPushConstantRange cullPushRange{
@@ -31,6 +34,7 @@ void FrustumCullPass::build_cull_pipeline() {
 			.size = sizeof(CullPushConstants)
 	};
 
+	// create pipeline layout 
 	VkPipelineLayoutCreateInfo layoutInfo = vkinit::pipeline_layout_create_info();
 	layoutInfo.setLayoutCount = 1;
 	layoutInfo.pSetLayouts = &_cullDescriptorLayout;
@@ -38,13 +42,12 @@ void FrustumCullPass::build_cull_pipeline() {
 	layoutInfo.pPushConstantRanges = &cullPushRange;
 	VK_CHECK(vkCreatePipelineLayout(_vulkanCore->get_device(), &layoutInfo, nullptr, &_cullPipelineLayout));
 
-	VkComputePipelineCreateInfo computeInfo{
-			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-			.stage = vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_COMPUTE_BIT, cullShader),
-			.layout = _cullPipelineLayout
-	};
+	PipelineBuilder pipelineBuilder;
+	pipelineBuilder._pipelineLayout = _cullPipelineLayout;
+	pipelineBuilder.set_compute_shaders(cullShader);
+	_cullPipeline = pipelineBuilder.build_compute_pipeline(_vulkanCore->get_device());
 
-	VK_CHECK(vkCreateComputePipelines(_vulkanCore->get_device(), VK_NULL_HANDLE, 1, &computeInfo, nullptr, &_cullPipeline));
+	// cleanup shader module
 	vkDestroyShaderModule(_vulkanCore->get_device(), cullShader, nullptr);
 }
 
@@ -59,69 +62,103 @@ void FrustumCullPass::cleanup() {
 void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawContext& ctx, const GPUSceneData& sceneData, VkExtent2D drawExtent) {
 	if (ctx.opaqueObjects.empty()) return;
 
-	auto* statsRead = static_cast<CullStatsData*>(frameData._cullStatsBuffer.info.pMappedData);
-	_stats.drawcallCount = statsRead->visibleDraws;
-	_stats.triangleCount = statsRead->visibleTriangles;
+	// statistics
+	{
+		// read cull stats from previous frame
+		auto* statsRead = static_cast<CullStatsData*>(frameData._cullStatsBuffer.info.pMappedData);
+		uint32_t visibleDraws = statsRead->visibleDraws;
+		uint32_t visibleTriangles = statsRead->visibleTriangles;
 
-	// Clear stats buffer for the new frame
-	statsRead->visibleDraws = 0;
-	statsRead->visibleTriangles = 0;
+		// reset stats buffer for next frame
+		statsRead->visibleDraws = 0;
+		statsRead->visibleTriangles = 0;
 
+		// calculate culled meshes
+		const uint32_t totalMeshes = static_cast<uint32_t>(ctx.opaqueObjects.size());
+		visibleDraws = std::min(visibleDraws, totalMeshes);
+		uint32_t culledMeshes = totalMeshes - visibleDraws;
+
+		_stats.clear();
+		_stats.name = "Compute Frustum Cull Pass";
+		_stats.add_metric("Total Meshes", totalMeshes);
+		_stats.add_metric("Visible Meshes", visibleDraws);
+		_stats.add_metric("Culled Meshes", culledMeshes);
+		_stats.add_metric("Visible Triangles", visibleTriangles);
+	}
 	auto start = std::chrono::system_clock::now();
-	const uint32_t count = static_cast<uint32_t>(ctx.opaqueObjects.size());
-	ctx.indirectDrawCount = count;
+
+	// number of objects to draw
+	const uint32_t drawCount = static_cast<uint32_t>(ctx.opaqueObjects.size());
+	const uint32_t batchCount = static_cast<uint32_t>(ctx.opaqueBatches.size());
+	ctx.indirectDrawCount = drawCount;
 
 	// allocate GPU buffers
-	ctx.gpuObjectBuffer = _vulkanCore->create_buffer(sizeof(GPUObjectData) * count,
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	ctx.gpuInstanceBuffer = _vulkanCore->create_buffer(sizeof(uint32_t) * count,
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-	ctx.gpuIndirectBuffer = _vulkanCore->create_buffer(sizeof(DrawIndexedIndirectCommand) * count,
-		VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	ctx.gpuObjectBuffer = _vulkanCore->create_buffer(sizeof(GPUObjectData) * drawCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	ctx.gpuInstanceBuffer = _vulkanCore->create_buffer(sizeof(uint32_t) * drawCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+	ctx.gpuIndirectBuffer = _vulkanCore->create_buffer(sizeof(VkDrawIndexedIndirectCommand) * drawCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	ctx.gpuCountBuffer = _vulkanCore->create_buffer(sizeof(uint32_t) * batchCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
+	memset(ctx.gpuCountBuffer.info.pMappedData, 0, sizeof(uint32_t) * batchCount);
 
-	frameData._deletionQueue.push_function([v = _vulkanCore, obj = ctx.gpuObjectBuffer, inst = ctx.gpuInstanceBuffer, ind = ctx.gpuIndirectBuffer]() {
+	frameData._deletionQueue.push_function([v = _vulkanCore, obj = ctx.gpuObjectBuffer, inst = ctx.gpuInstanceBuffer, ind = ctx.gpuIndirectBuffer, cnt = ctx.gpuCountBuffer]() {
 		v->destroy_buffer(obj);
 		v->destroy_buffer(inst);
 		v->destroy_buffer(ind);
+		v->destroy_buffer(cnt);
 		});
 
+	// get mapped pointers to the buffers
 	auto* mappedObjects = static_cast<GPUObjectData*>(ctx.gpuObjectBuffer.info.pMappedData);
-	auto* mappedCommands = static_cast<DrawIndexedIndirectCommand*>(ctx.gpuIndirectBuffer.info.pMappedData);
+	auto* mappedCommands = static_cast<VkDrawIndexedIndirectCommand*>(ctx.gpuIndirectBuffer.info.pMappedData);
 
-	for (uint32_t i = 0; i < count; ++i) {
-		const auto& obj = ctx.opaqueObjects[i];
-		mappedObjects[i].worldMatrix = obj.transform;
-		mappedObjects[i].sphereBounds = glm::vec4(obj.bounds.origin, obj.bounds.sphereRadius);
-		mappedObjects[i].vertexBufferAddress = obj.vertexBufferAddress;
-		mappedObjects[i].padding[0] = 0;
-		mappedObjects[i].padding[1] = 0;
+	// fill the buffers with data for each batch
+	for (uint32_t b = 0; b < batchCount; ++b) {
+		const auto& batch = ctx.opaqueBatches[b];
+		const uint32_t batchEnd = batch.first + batch.count;
 
-		mappedCommands[i].indexCount = obj.indexCount;
-		mappedCommands[i].instanceCount = 0;
-		mappedCommands[i].firstIndex = obj.firstIndex;
-		mappedCommands[i].vertexOffset = 0;
-		mappedCommands[i].firstInstance = i;
+		for (uint32_t i = batch.first; i < batchEnd; ++i) {
+			const RenderObject& obj = ctx.opaqueObjects[i];
+
+			mappedObjects[i] = GPUObjectData{
+				.worldMatrix = obj.transform,
+				.sphereBounds = glm::vec4(obj.bounds.origin, obj.bounds.sphereRadius),
+				.vertexBufferAddress = obj.vertexBufferAddress,
+				.batchIndex = b,
+				.batchOffset = batch.first
+			};
+
+			mappedCommands[i] = VkDrawIndexedIndirectCommand{
+				.indexCount = obj.indexCount,
+				.instanceCount = 0,
+				.firstIndex = obj.firstIndex,
+				.vertexOffset = 0,
+				.firstInstance = i
+			};
+		}
 	}
 
 	VkDescriptorSet cullSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _cullDescriptorLayout);
+
+	// update descriptor set with the new buffers
 	DescriptorWriter writer;
-	writer.write_buffer(0, ctx.gpuObjectBuffer.buffer, sizeof(GPUObjectData) * count, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(1, ctx.gpuInstanceBuffer.buffer, sizeof(uint32_t) * count, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(2, ctx.gpuIndirectBuffer.buffer, sizeof(DrawIndexedIndirectCommand) * count, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, ctx.gpuObjectBuffer.buffer, sizeof(GPUObjectData) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(1, ctx.gpuInstanceBuffer.buffer, sizeof(uint32_t) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, ctx.gpuIndirectBuffer.buffer, sizeof(VkDrawIndexedIndirectCommand) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.write_buffer(3, frameData._cullStatsBuffer.buffer, sizeof(CullStatsData), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(4, ctx.gpuCountBuffer.buffer, sizeof(uint32_t) * batchCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), cullSet);
 
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipelineLayout, 0, 1, &cullSet, 0, nullptr);
 
+	// set push constants 
 	CullPushConstants cullPush{};
 	get_frustum_planes(sceneData.viewproj, cullPush.frustumPlanes);
-	cullPush.drawCount = count;
+	cullPush.drawCount = drawCount;
 	cullPush.cullMode = 1;
 	vkCmdPushConstants(cmd, _cullPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CullPushConstants), &cullPush);
 
-	vkCmdDispatch(cmd, (count + 255) / 256, 1, 1);
+	vkCmdDispatch(cmd, (drawCount + 255) / 256, 1, 1);
 
 	// memory barrier to guarantee compute writes are visible to indirect command dispatch and vertex shader reads
 	VkMemoryBarrier2 barrier{
@@ -139,5 +176,5 @@ void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawCont
 	vkCmdPipelineBarrier2(cmd, &depInfo);
 
 	auto end = std::chrono::system_clock::now();
-	_stats.passTime = std::chrono::duration<float, std::milli>(end - start).count();
+	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

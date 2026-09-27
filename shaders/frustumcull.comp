@@ -16,8 +16,8 @@ struct ObjectData {
     mat4 model;
     vec4 sphereBounds;
     uvec2 vertexBufferAddress;
-    uint pad0;
-    uint pad1;
+    uint batchIndex;
+    uint batchOffset;
 };
 
 // all objects in the scene
@@ -39,6 +39,11 @@ layout(std430, set = 0, binding = 3) buffer CullStatsBuffer {
     uint visibleDraws;
     uint visibleTriangles;
 } cullStats;
+
+layout(std430, set = 0, binding = 4) buffer BatchCountBuffer
+{
+    uint counts[];
+} batchCounters;
 
 layout(push_constant) uniform PushConstants {
     vec4 frustumPlanes[6];
@@ -75,14 +80,20 @@ void main() {
     if (gID >= pushConstants.drawCount) return;
 
     if (is_visible(gID)) {
-        // atomically reserve an instance slot in this batch command
-        uint batchIndex = gID; // when 1 command corresponds to 1 object
-        uint instanceIndex = atomicAdd(drawCommands.commands[batchIndex].instanceCount, 1);
+        ObjectData obj = objectBuffer.objects[gID];
 
-        uint targetIndex = drawCommands.commands[batchIndex].firstInstance + instanceIndex;
-        finalInstanceBuffer.instanceIDs[targetIndex] = gID;
+        // atomically reserve an instance slot in this batch command
+        uint countSlot = atomicAdd(batchCounters.counts[obj.batchIndex], 1);
+        uint targetCommandIdx = obj.batchOffset + countSlot;
+
+        DrawIndexedIndirectCommand cmd = drawCommands.commands[gID];
+        cmd.instanceCount = 1;
+        cmd.firstInstance = targetCommandIdx;
+        drawCommands.commands[targetCommandIdx] = cmd;
+
+        finalInstanceBuffer.instanceIDs[targetCommandIdx] = gID;
 
         atomicAdd(cullStats.visibleDraws, 1);
-        atomicAdd(cullStats.visibleTriangles, drawCommands.commands[batchIndex].indexCount / 3);
+        atomicAdd(cullStats.visibleTriangles, cmd.indexCount / 3);    
     }
 }

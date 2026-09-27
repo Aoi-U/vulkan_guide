@@ -3,6 +3,7 @@
 #include <graphics/utils/UIWidgets.h>
 #include <core/Components.h>
 #include <graphics/pass/RenderPass.h>
+#include <variant>
 
 void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats)
 {
@@ -211,10 +212,33 @@ void Editor::draw_performance_panel(const EngineStats& stats)
 	//ImGui::Text("Mesh Pass Time: %.2f ms", stats.renderStats.passTime);
 	
 	for (const auto& passStats : stats.renderStats) {
-		ImGui::Text("%s", passStats.name.c_str());
-		ImGui::Text("  Draw Calls:     %d", passStats.drawcallCount);
-		ImGui::Text("  Triangles:      %d", passStats.triangleCount);
-		ImGui::Text("  Pass Time:      %.2f ms", passStats.passTime);
+		ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s", passStats.name.c_str());
+		ImGui::Text("  Pass Time: %.2f ms", passStats.passTimeMs);
+
+		for (const auto& metric : passStats.metrics) {
+			std::visit([&](const auto& val) {
+				using T = std::decay_t<decltype(val)>;
+				if constexpr (std::is_same_v<T, uint32_t> || std::is_same_v<T, int32_t>) {
+					if (metric.unit.empty()) {
+						ImGui::Text("  %s: %d", metric.name.c_str(), val);
+					}
+					else {
+						ImGui::Text("  %s: %d %s", metric.name.c_str(), val, metric.unit.c_str());
+					}
+				}
+				else if constexpr (std::is_same_v<T, float>) {
+					if (metric.unit.empty()) {
+						ImGui::Text("  %s: %.2f", metric.name.c_str(), val);
+					}
+					else {
+						ImGui::Text("  %s: %.2f %s", metric.name.c_str(), val, metric.unit.c_str());
+					}
+				}
+				else if constexpr (std::is_same_v<T, std::string>) {
+					ImGui::Text("  %s: %s", metric.name.c_str(), val.c_str());
+				}
+				}, metric.value);
+		}
 		ImGui::Separator();
 	}
 
