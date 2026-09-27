@@ -1,4 +1,5 @@
 #pragma once
+#include <core/vk_types.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/Swapchain.h>
 #include <graphics/pass/RenderPass.h>
