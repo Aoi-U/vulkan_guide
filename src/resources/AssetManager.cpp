@@ -4,7 +4,7 @@
 #include <glm/gtx/transform.hpp>
 #include <iostream>
 
-void AssetManager::init(VulkanCore* vulkanCore, GLTFMetallic_Roughness* materialSystem)
+void AssetManager::init(VulkanCore* vulkanCore, MaterialSystem* materialSystem)
 {
 	_vulkanCore = vulkanCore;
 	_materialSystem = materialSystem;

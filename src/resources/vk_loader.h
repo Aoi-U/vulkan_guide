@@ -8,7 +8,7 @@
 
 // forward declaration
 class VulkanCore;
-class GLTFMetallic_Roughness;
+class MaterialSystem;
 
 // represents a gltf material
 struct GLTFMaterial
@@ -65,4 +65,4 @@ private:
 	void clearAll();
 };
 
-std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTFMetallic_Roughness& materialSystem, std::string_view filePath);
+std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, MaterialSystem& materialSystem, std::string_view filePath);

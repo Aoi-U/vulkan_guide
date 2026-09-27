@@ -8,12 +8,12 @@
 #include <filesystem>
 
 class VulkanCore;
-class GLTFMetallic_Roughness;
+class MaterialSystem;
 
 class AssetManager
 {
 public:
-	void init(VulkanCore* vulkanCore, GLTFMetallic_Roughness* materialSystem);
+	void init(VulkanCore* vulkanCore, MaterialSystem* materialSystem);
 	void cleanup();
 
 	std::shared_ptr<LoadedGLTF> loadScene(const std::string& name, const std::filesystem::path& filePath);
@@ -29,7 +29,7 @@ public:
 
 private:
 	VulkanCore* _vulkanCore{ nullptr };
-	GLTFMetallic_Roughness* _materialSystem{ nullptr };
+	MaterialSystem* _materialSystem{ nullptr };
 	// cache of loaded gltf files
 	std::unordered_map<std::string, std::shared_ptr<LoadedGLTF>> _loadedScenes;
 

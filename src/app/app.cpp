@@ -15,9 +15,9 @@ App::App()
 {
 	_window = std::make_unique<Window>();
 	_vulkanCore = std::make_unique<VulkanCore>();
+	_materialSystem = std::make_unique<MaterialSystem>();
 	_renderer = std::make_unique<Renderer>();
 	_editor = std::make_unique<Editor>();
-
 	_guiRenderer = std::make_unique<GuiRenderer>();
 }
 
@@ -26,9 +26,12 @@ void App::init()
 
 	_window->init("Vulkan Engine", 1280, 720);
 	_vulkanCore->init(*_window);
-	_renderer->init(_window.get(), _vulkanCore.get());
+
+	_materialSystem->init(_vulkanCore.get());
+
+	_renderer->init(_window.get(), _vulkanCore.get(), _materialSystem.get());
 	
-	_assetManager.init(_vulkanCore.get(), _renderer->get_material_system());
+	_assetManager.init(_vulkanCore.get(), _materialSystem.get());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
 
 	auto structureAsset = _assetManager.loadScene("structure", "../../assets/structure.glb");
@@ -87,6 +90,7 @@ void App::cleanup()
 	_registry.clear();
 	_assetManager.cleanup();
 	_renderer->cleanup();
+	_materialSystem->cleanup();
 	_vulkanCore->cleanup();
 	_window->cleanup();
 }

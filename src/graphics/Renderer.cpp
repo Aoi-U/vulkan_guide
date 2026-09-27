@@ -7,10 +7,11 @@
 #include <core/Components.h>
 #include <core/cvars.h>
 #include <graphics/pass/FrustumCullpass.h>
+#include <graphics/pass/ForwardPass.h>
 
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
 
-void Renderer::init(Window* window, VulkanCore* vulkanCore)
+void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem)
 {
 	_window = window;
 	_vulkanCore = vulkanCore;
@@ -23,13 +24,11 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore)
 	//_meshRenderer->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
 
 	std::unique_ptr<FrustumCullPass> frustumCullPass = std::make_unique<FrustumCullPass>();
-	frustumCullPass->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
+	frustumCullPass->init(_vulkanCore);
 	_computePasses.push_back(std::move(frustumCullPass));
 
 	std::unique_ptr<ForwardPass> forwardPass = std::make_unique<ForwardPass>();
-	forwardPass->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
-	_renderPasses.push_back(std::move(forwardPass));
-	_forwardPass = static_cast<ForwardPass*>(_renderPasses.back().get());
+	forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _drawImage.imageFormat, _depthImage.imageFormat);	_renderPasses.push_back(std::move(forwardPass));
 }
 
 void Renderer::cleanup()
@@ -99,7 +98,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 
 	if (VkCommandBuffer cmd = begin_frame()) {
 		for (auto& pass : _computePasses) {
-			pass->render(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
+			pass->dispatch(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
 		}
 
 		begin_rendering(cmd);
@@ -297,9 +296,6 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 	// sort opaque objects 
 	std::sort(ctx.opaqueObjects.begin(), ctx.opaqueObjects.end(), [](const RenderObject& a, const RenderObject& b) {
-		if (a.material->pipeline != b.material->pipeline) {
-			return a.material->pipeline < b.material->pipeline;
-		}
 		if (a.material->materialSet != b.material->materialSet) {
 			return a.material->materialSet < b.material->materialSet;
 		}
@@ -357,7 +353,7 @@ void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::
 			def.transform = nodeMatrix;
 			def.vertexBufferAddress = meshNode->mesh->meshBuffers.vertexBufferAddress;
 
-			if (surface.material->data.passType == MaterialPass::Transparent) {
+			if (surface.material->data.passType == MaterialPassType::Transparent) {
 				ctx.transparentObjects.push_back(def);
 			}
 			else {
@@ -442,11 +438,7 @@ void Renderer::create_sync_structures()
 		VK_CHECK(vkCreateFence(_vulkanCore->get_device(), &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
 		VK_CHECK(vkCreateSemaphore(_vulkanCore->get_device(), &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
 
-		_frames[i]._cullStatsBuffer = _vulkanCore->create_buffer(
-			sizeof(CullStatsData),
-			VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
-			VMA_MEMORY_USAGE_CPU_TO_GPU
-		);
+		_frames[i]._cullStatsBuffer = _vulkanCore->create_buffer(sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	}
 }
 

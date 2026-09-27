@@ -1,13 +1,26 @@
 #pragma once
-#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/ComputePass.h>
 #include <graphics/VulkanCore.h>
 
-class FrustumCullPass : public RenderPass
+// frustum cull push constants
+struct CullPushConstants
+{
+  glm::vec4 frustumPlanes[6];
+  uint32_t drawCount;
+  uint32_t cullMode{ 1 }; // enable or disable
+};
+
+struct CullStatsData {
+  uint32_t visibleDraws{ 0 };
+  uint32_t visibleTriangles{ 0 };
+};
+
+class FrustumCullPass : public ComputePass
 {
 public:
-  void init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat) override;
+  void init(VulkanCore* vulkanCore) override;
   void cleanup() override;
-  void render(VkCommandBuffer cmd, FrameData& frameData, DrawContext& ctx, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
+  void dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawContext& context, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
 
 private:
   void build_cull_pipeline();

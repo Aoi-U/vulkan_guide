@@ -62,6 +62,16 @@ struct AllocatedBuffer
 	VmaAllocationInfo info;
 };
 
+// object data stored in gpu contiguous buffer
+struct GPUObjectData
+{
+	glm::mat4 worldMatrix;
+	glm::vec4 sphereBounds;
+	VkDeviceAddress vertexBufferAddress;
+	uint32_t batchIndex;
+	uint32_t batchOffset;
+};
+
 // per frame uniform data sent to GPU
 struct GPUSceneData
 {
@@ -83,27 +93,25 @@ struct Vertex
 	glm::vec4 color;
 };
 
-// used to identify which pipeline to use for a given material instance
-enum class MaterialPass : uint8_t
+// used to identify shading models for different passes
+enum class MaterialType : uint8_t
 {
-	MainColor,
-	Transparent,
-	Other
+	MetallicRoughness,
+	Unlit
 };
 
-// a pipeline and its layout 
-struct MaterialPipeline
+// used to identify pass groups for pipeline selection
+enum class MaterialPassType : uint8_t
 {
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
+	Opaque,
+	Transparent
 };
 
-// a single instance of a material with its own resources and pipeline
 struct MaterialInstance
 {
-	MaterialPipeline* pipeline;
+	MaterialType type{ MaterialType::MetallicRoughness };
+	MaterialPassType passType{ MaterialPassType::Opaque };
 	VkDescriptorSet materialSet;
-	MaterialPass passType;
 };
 
 // resources needed for a mesh
@@ -141,52 +149,6 @@ struct RenderObject
 	VkDeviceAddress vertexBufferAddress;
 };
 
-// object data stored in gpu contiguous buffer
-struct GPUObjectData
-{
-	glm::mat4 worldMatrix;
-	glm::vec4 sphereBounds;
-	VkDeviceAddress vertexBufferAddress;
-	uint32_t batchIndex;
-	uint32_t batchOffset;
-};
-
-// frustum cull push constants
-struct CullPushConstants
-{
-	glm::vec4 frustumPlanes[6]; 
-	uint32_t drawCount; 
-	uint32_t cullMode{ 1 }; // enable or disable
-};
-
-struct IndirectBatch
-{
-	VkBuffer indexBuffer;
-	MaterialInstance* material;
-	uint32_t first; // first index in the indirect buffer
-	uint32_t count; // number of indirect commands in this batch
-	uint32_t batchIndex; // index of this batch in the batch array
-};
-
-struct DrawContext
-{
-	std::vector<RenderObject> opaqueObjects; 
-	std::vector<RenderObject> transparentObjects;
-
-	std::vector<IndirectBatch> opaqueBatches;
-
-	// indirect draw 
-	uint32_t indirectDrawCount{ 0 };
-
-	void clear() {
-		opaqueObjects.clear();
-		transparentObjects.clear();
-		opaqueBatches.clear();
-		
-		indirectDrawCount = 0;
-	}
-};
-
 // implementation of a scene node
 // scene nodes can hold children and will also keep a transform to propagate to them
 struct Node
@@ -208,7 +170,6 @@ struct Node
 		}
 	}
 };
-
 
 #define VK_CHECK(x)                                                     \
     do {                                                                \

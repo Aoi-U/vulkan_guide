@@ -9,7 +9,7 @@
 
 static AutoCVar_Int cvCullMode("cull.frustum", "Toggle frustum culling", 1, CVarFlags::EditCheckBox);
 
-void FrustumCullPass::init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat) {
+void FrustumCullPass::init(VulkanCore* vulkanCore) {
 	_vulkanCore = vulkanCore;
 	build_cull_pipeline();
 	_stats.name = "Compute Frustum Cull Pass";
@@ -62,7 +62,7 @@ void FrustumCullPass::cleanup() {
 	_vulkanCore = nullptr;
 }
 
-void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawContext& ctx, const GPUSceneData& sceneData, VkExtent2D drawExtent) {
+void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawContext& ctx, const GPUSceneData& sceneData, VkExtent2D drawExtent) {
 	if (ctx.opaqueObjects.empty()) return;
 
 	// statistics
@@ -156,7 +156,7 @@ void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawCont
 	CullPushConstants cullPush{};
 	get_frustum_planes(sceneData.viewproj, cullPush.frustumPlanes);
 	cullPush.drawCount = drawCount;
-	cullPush.cullMode = static_cast<uint32_t>(cvCullMode.Get());;
+	cullPush.cullMode = static_cast<uint32_t>(cvCullMode.Get());
 	vkCmdPushConstants(cmd, _cullPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CullPushConstants), &cullPush);
 
 	vkCmdDispatch(cmd, (drawCount + 255) / 256, 1, 1);

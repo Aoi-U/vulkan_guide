@@ -1,7 +1,7 @@
 ﻿#include <resources/vk_loader.h>
 
 #include <graphics/VulkanCore.h>
-#include <graphics/Materials.h>
+#include <graphics/MaterialSystem.h>
 #include <utils/vk_initializers.h>
 
 #include <iostream>
@@ -138,7 +138,7 @@ std::optional<AllocatedImage> load_image(VulkanCore* vulkanCore, fastgltf::Asset
 	return newImage;
 }
 
-std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTFMetallic_Roughness& materialSystem, std::string_view filePath)
+std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, MaterialSystem& materialSystem, std::string_view filePath)
 {
 	std::cout << "Loading GLTF: " << filePath << std::endl;
 
@@ -250,7 +250,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTF
 		materialResources.dataBuffer = file.materialDataBuffer.buffer;
 		materialResources.dataBufferOffset = 0;
 
-		defaultMat->data = materialSystem.write_material(vulkanCore->get_device(), MaterialPass::MainColor, materialResources, file.descriptorPool);
+		defaultMat->data = materialSystem.create_metallic_roughness_instance(MaterialPassType::Opaque, materialResources, file.descriptorPool);
 		materials.push_back(defaultMat);
 		file.materials["default"] = defaultMat;
 	}
@@ -273,9 +273,9 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTF
 		// write material parameters to buffer
 		sceneMaterialConstants[dataIndex] = constants;
 
-		MaterialPass passType = MaterialPass::MainColor;
+		MaterialPassType passType = MaterialPassType::Opaque;
 		if (mat.alphaMode == fastgltf::AlphaMode::Blend) {
-			passType = MaterialPass::Transparent;
+			passType = MaterialPassType::Transparent;
 		}
 
 		MaterialResources materialResources;
@@ -307,7 +307,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, GLTF
 		}
 
 		// build material
-		newMat->data = materialSystem.write_material(vulkanCore->get_device(), passType, materialResources, file.descriptorPool);
+		newMat->data = materialSystem.create_metallic_roughness_instance(passType, materialResources, file.descriptorPool);
 
 		dataIndex++;
 	}

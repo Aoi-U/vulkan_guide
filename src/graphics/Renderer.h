@@ -2,16 +2,40 @@
 #include <graphics/VulkanCore.h>
 #include <graphics/Swapchain.h>
 #include <graphics/pass/RenderPass.h>
-#include <graphics/pass/ForwardPass.h>
+#include <graphics/pass/ComputePass.h>
+#include <graphics/MaterialSystem.h>
 #include <window/window.h>
 #include <utils/vk_descriptors.h>
 #include <memory>
 #include <entt.hpp>
 #include <vector>
 
-struct CullStatsData {
-	uint32_t visibleDraws{ 0 };
-	uint32_t visibleTriangles{ 0 };
+struct IndirectBatch
+{
+	VkBuffer indexBuffer;
+	MaterialInstance* material;
+	uint32_t first; // first index in the indirect buffer
+	uint32_t count; // number of indirect commands in this batch
+	uint32_t batchIndex; // index of this batch in the batch array
+};
+
+struct DrawContext
+{
+	std::vector<RenderObject> opaqueObjects;
+	std::vector<RenderObject> transparentObjects;
+
+	std::vector<IndirectBatch> opaqueBatches;
+
+	// indirect draw 
+	uint32_t indirectDrawCount{ 0 };
+
+	void clear() {
+		opaqueObjects.clear();
+		transparentObjects.clear();
+		opaqueBatches.clear();
+
+		indirectDrawCount = 0;
+	}
 };
 
 struct FrameData
@@ -41,7 +65,7 @@ class Renderer
 public:
 	static constexpr unsigned int FRAME_OVERLAP = 2;
 
-	void init(Window* window, VulkanCore* vulkanCore);
+	void init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem);
 
 	void cleanup();
 
@@ -61,7 +85,6 @@ public:
 	AllocatedImage get_draw_image() const { return _drawImage; }
 	AllocatedImage get_depth_image() const { return _depthImage; }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-	GLTFMetallic_Roughness* get_material_system() { return _forwardPass->get_material_system(); }
 	const std::vector<PassStats> get_stats() const;
 
 private:
@@ -79,9 +102,8 @@ private:
 	bool _isFrameStarted{ false };
 
 	//std::unique_ptr<MeshRenderer> _meshRenderer;
-	ForwardPass* _forwardPass;
 	std::vector<std::unique_ptr<RenderPass>> _renderPasses;
-	std::vector<std::unique_ptr<RenderPass>> _computePasses;
+	std::vector<std::unique_ptr<ComputePass>> _computePasses;
 
 	// renderer initialization functions
 	void create_command_buffers();

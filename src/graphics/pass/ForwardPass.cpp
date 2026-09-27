@@ -4,29 +4,39 @@
 
 #include <utils/vk_descriptors.h>
 #include <graphics/Renderer.h>
+#include <graphics/utils/vk_pipelines.h>
+#include <graphics/utils/vk_utils.h>
+#include <graphics/utils/vk_initializers.h>
 #include <algorithm>
 #include <chrono>
 
-void ForwardPass::init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat)
+void ForwardPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
+	_materialDescriptorLayout = materialLayout;
+
 	DescriptorLayoutBuilder builder;
 	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-	_metalRoughMaterial.build_pipelines(_vulkanCore->get_device(), _sceneDataDescriptorLayout, colorFormat, depthFormat);
+	build_pipelines(colorFormat, depthFormat);
 
 	_stats.name = "Forward Pass";
 }
 
 void ForwardPass::cleanup()
 {
-	_metalRoughMaterial.clear_resources(_vulkanCore->get_device());
-	
-	vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _sceneDataDescriptorLayout, nullptr);
+	VkDevice device = _vulkanCore->get_device();
+	vkDestroyPipeline(device, _opaquePipeline.pipeline, nullptr);
+	vkDestroyPipeline(device, _transparentPipeline.pipeline, nullptr);
+	vkDestroyPipelineLayout(device, _opaquePipeline.layout, nullptr);
 
+	if (_sceneDataDescriptorLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(device, _sceneDataDescriptorLayout, nullptr);
+		_sceneDataDescriptorLayout = VK_NULL_HANDLE;
+	}
 	_vulkanCore = nullptr;
 }
 
@@ -62,28 +72,21 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 	VkRect2D scissor{{0, 0}, drawExtent};
 	vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-	MaterialPipeline* lastPipeline = nullptr;
+	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _opaquePipeline.pipeline);
+	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _opaquePipeline.layout, 0, 1, &globalDescriptor, 0, nullptr);
+
 	MaterialInstance* lastMaterial = nullptr;
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 
 	uint32_t recordedBatchCommands = 0;
 
 	for (const IndirectBatch& batch : ctx.opaqueBatches) {
-		if (!batch.material || !batch.material->pipeline) {
-			continue;
-		}
-
-		// rebind pipeline if needed
-		if (batch.material->pipeline != lastPipeline) {
-			lastPipeline = batch.material->pipeline;
-			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->pipeline);
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->layout, 0, 1, &globalDescriptor, 0, nullptr);
-		}
+		if (!batch.material) continue;	
 
 		// rebind material descriptor set if needed
 		if (batch.material != lastMaterial) {
 			lastMaterial = batch.material;
-			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, lastPipeline->layout, 1, 1, &lastMaterial->materialSet, 0, nullptr);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _opaquePipeline.layout, 1, 1, &lastMaterial->materialSet, 0, nullptr);
 		}
 
 		// rebind index buffer if needed
@@ -105,4 +108,50 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 	_stats.name = "Forward Pass"; 
 	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count(); 
 	_stats.add_metric("CPU Batches Recorded", recordedBatchCommands);
+}
+
+void ForwardPass::build_pipelines(VkFormat colorFormat, VkFormat depthFormat)
+{
+	VkDevice device = _vulkanCore->get_device();
+
+	VkShaderModule meshFragShader;
+	if (!vkutil::load_shader_module("../../shaders/mesh.frag.spv", device, &meshFragShader)) {
+		fmt::println("Error when building the mesh fragment shader module");
+	}
+	VkShaderModule meshVertexShader;
+	if (!vkutil::load_shader_module("../../shaders/mesh.vert.spv", device, &meshVertexShader)) {
+		fmt::println("Error when building the mesh vertex shader module");
+	}
+
+	// set 0 = scene data, set 1 = material data from MaterialSystem
+	VkDescriptorSetLayout layouts[] = { _sceneDataDescriptorLayout, _materialDescriptorLayout };
+	VkPipelineLayoutCreateInfo meshLayoutInfo = vkinit::pipeline_layout_create_info();
+	meshLayoutInfo.setLayoutCount = 2;
+	meshLayoutInfo.pSetLayouts = layouts;
+
+	VkPipelineLayout pipelineLayout;
+	VK_CHECK(vkCreatePipelineLayout(device, &meshLayoutInfo, nullptr, &pipelineLayout));
+	_opaquePipeline.layout = pipelineLayout;
+	_transparentPipeline.layout = pipelineLayout;
+
+	PipelineBuilder pipelineBuilder;
+	pipelineBuilder.set_shaders(meshVertexShader, meshFragShader);
+	pipelineBuilder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+	pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
+	pipelineBuilder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
+	pipelineBuilder.set_multisampling_none();
+	pipelineBuilder.disable_blending();
+	pipelineBuilder.enable_depthtest(true, VK_COMPARE_OP_GREATER_OR_EQUAL);
+	pipelineBuilder.set_color_attachment_format(colorFormat);
+	pipelineBuilder.set_depth_format(depthFormat);
+	pipelineBuilder._pipelineLayout = pipelineLayout;
+
+	_opaquePipeline.pipeline = pipelineBuilder.build_pipeline(device);
+
+	pipelineBuilder.enable_blending_additive();
+	pipelineBuilder.enable_depthtest(false, VK_COMPARE_OP_GREATER_OR_EQUAL);
+	_transparentPipeline.pipeline = pipelineBuilder.build_pipeline(device);
+
+	vkDestroyShaderModule(device, meshFragShader, nullptr);
+	vkDestroyShaderModule(device, meshVertexShader, nullptr);
 }
