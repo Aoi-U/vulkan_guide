@@ -25,7 +25,15 @@ struct FrameData
 	DeletionQueue _deletionQueue;
 	DescriptorAllocatorGrowable _frameDescriptors;
 
-	AllocatedBuffer _cullStatsBuffer;
+
+	AllocatedBuffer sceneDataBuffer; // uniform buffer for scene data
+
+	// indirect draw buffers
+	AllocatedBuffer _cullStatsBuffer; // buffer for frustum cull statistics
+	AllocatedBuffer _gpuObjectBuffer; // buffer for object data used in frustum culling
+	AllocatedBuffer _gpuInstanceBuffer; // buffer for instance ids for visible objects
+	AllocatedBuffer _gpuIndirectBuffer; // buffer for indirect draw commands
+	AllocatedBuffer _gpuCountBuffer; // buffer for draw counts per batch
 };
 
 class Renderer

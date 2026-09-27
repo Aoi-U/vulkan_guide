@@ -32,7 +32,7 @@ void ForwardPass::cleanup()
 
 void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
 {	
-	if (ctx.indirectDrawCount == 0 || ctx.gpuIndirectBuffer.buffer == VK_NULL_HANDLE || ctx.opaqueBatches.empty()) {
+	if (ctx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.buffer == VK_NULL_HANDLE || ctx.opaqueBatches.empty()) {
 		return;
 	}
 
@@ -40,24 +40,19 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 	auto start = std::chrono::system_clock::now();
 
 	// allocate a new uniform buffer for scene data
-	AllocatedBuffer gpuSceneDataBuffer = _vulkanCore->create_buffer(sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-	// add to deletion queue of this frame so it gets deleted once its been used
-	frameData._deletionQueue.push_function([vulkanCore = _vulkanCore, gpuSceneDataBuffer]() {
-		vulkanCore->destroy_buffer(gpuSceneDataBuffer);
-		});
+	_vulkanCore->check_and_resize_buffer(frameData.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	// write scene data to the buffer
-	GPUSceneData* sceneUniformData = (GPUSceneData*)gpuSceneDataBuffer.info.pMappedData;
+	GPUSceneData* sceneUniformData = (GPUSceneData*)frameData.sceneDataBuffer.info.pMappedData;
 	*sceneUniformData = sceneData;
 
 	// create a descriptor set that binds the scene data buffer and update it
 	VkDescriptorSet globalDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _sceneDataDescriptorLayout);
 
 	DescriptorWriter writer;
-	writer.write_buffer(0, gpuSceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_buffer(1, ctx.gpuObjectBuffer.buffer, sizeof(GPUObjectData) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(2, ctx.gpuInstanceBuffer.buffer, sizeof(uint32_t) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, frameData.sceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(1, frameData._gpuObjectBuffer.buffer, sizeof(GPUObjectData) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, frameData._gpuInstanceBuffer.buffer, sizeof(uint32_t) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	// set dynamic viewport and scissor
@@ -101,7 +96,7 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
 
-		vkCmdDrawIndexedIndirectCount(cmd, ctx.gpuIndirectBuffer.buffer, indirectOffset, ctx.gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+		vkCmdDrawIndexedIndirectCount(cmd, frameData._gpuIndirectBuffer.buffer, indirectOffset, frameData._gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 		recordedBatchCommands++;
 	}
 

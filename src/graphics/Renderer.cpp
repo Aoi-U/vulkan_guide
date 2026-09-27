@@ -49,6 +49,13 @@ void Renderer::cleanup()
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		_vulkanCore->destroy_buffer(_frames[i]._cullStatsBuffer);
 
+		_vulkanCore->destroy_buffer(_frames[i].sceneDataBuffer);
+		_vulkanCore->destroy_buffer(_frames[i]._gpuObjectBuffer);
+		_vulkanCore->destroy_buffer(_frames[i]._gpuInstanceBuffer);
+		_vulkanCore->destroy_buffer(_frames[i]._gpuIndirectBuffer);
+		_vulkanCore->destroy_buffer(_frames[i]._gpuCountBuffer);
+
+
 		_frames[i]._deletionQueue.flush();
 		_frames[i]._frameDescriptors.destroy_pools(_vulkanCore->get_device());
 
@@ -466,7 +473,7 @@ void Renderer::create_render_targets()
 	// create a depth image to use for depth testing
 
 	VkFormat depthImageFormat = VK_FORMAT_D32_SFLOAT;
-	VkImageUsageFlags depthImageUsages = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+	VkImageUsageFlags depthImageUsages = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
 
 	_depthImage = _vulkanCore->create_image(drawImageExtent, depthImageFormat, depthImageUsages, false);
 }

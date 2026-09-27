@@ -129,6 +129,22 @@ void VulkanCore::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& fun
 	VK_CHECK(vkWaitForFences(_device, 1, &_immFence, true, 9999999999));
 }
 
+void VulkanCore::check_and_resize_buffer(AllocatedBuffer& buffer, size_t requiredSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
+{
+	if (buffer.buffer != VK_NULL_HANDLE && buffer.info.size >= requiredSize) {
+		return;
+	}
+
+	size_t oldSize = buffer.buffer != VK_NULL_HANDLE ? buffer.info.size : 0;
+	if (buffer.buffer != VK_NULL_HANDLE) {
+		destroy_buffer(buffer);
+		buffer = {};
+	}
+
+	size_t newSize = std::max(requiredSize, static_cast<size_t>(oldSize * 1.5));
+	buffer = create_buffer(newSize, usage, memoryUsage);
+}
+
 
 AllocatedBuffer VulkanCore::create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
 {

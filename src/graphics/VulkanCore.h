@@ -10,7 +10,10 @@ public:
 	void cleanup();
 
 	// submits a function to be executed immediately on the gpu
-	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);	
+
+	// resizes buffer if needed
+	void check_and_resize_buffer(AllocatedBuffer& buffer, size_t requiredSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
 
 	// creates a buffer 
 	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);

@@ -175,21 +175,14 @@ struct DrawContext
 
 	std::vector<IndirectBatch> opaqueBatches;
 
-	// indirect draw buffers
-	AllocatedBuffer gpuObjectBuffer{}; // buffer for object data
-	AllocatedBuffer gpuInstanceBuffer{}; // instance ids
-	AllocatedBuffer gpuIndirectBuffer{}; // buffer for indirect draw commands
-	AllocatedBuffer gpuCountBuffer{}; // buffer for count per batch
+	// indirect draw 
 	uint32_t indirectDrawCount{ 0 };
 
 	void clear() {
 		opaqueObjects.clear();
 		transparentObjects.clear();
 		opaqueBatches.clear();
-		gpuObjectBuffer = {};
-		gpuInstanceBuffer = {};
-		gpuIndirectBuffer = {};
-		gpuCountBuffer = {};
+		
 		indirectDrawCount = 0;
 	}
 };

@@ -93,25 +93,23 @@ void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawCont
 	ctx.indirectDrawCount = drawCount;
 
 	// allocate GPU buffers
-	ctx.gpuObjectBuffer = _vulkanCore->create_buffer(sizeof(GPUObjectData) * drawCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	ctx.gpuInstanceBuffer = _vulkanCore->create_buffer(sizeof(uint32_t) * drawCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-	ctx.gpuIndirectBuffer = _vulkanCore->create_buffer(sizeof(VkDrawIndexedIndirectCommand) * drawCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	ctx.gpuCountBuffer = _vulkanCore->create_buffer(sizeof(uint32_t) * batchCount, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	const size_t objectBufferSize = sizeof(GPUObjectData) * drawCount;
+	const size_t instanceBufferSize = sizeof(uint32_t) * drawCount;
+	const size_t indirectBufferSize = sizeof(VkDrawIndexedIndirectCommand) * drawCount;
+	const size_t countBufferSize = sizeof(uint32_t) * batchCount;
 
-	memset(ctx.gpuCountBuffer.info.pMappedData, 0, sizeof(uint32_t) * batchCount);
+	_vulkanCore->check_and_resize_buffer(frameData._gpuObjectBuffer, objectBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	_vulkanCore->check_and_resize_buffer(frameData._gpuInstanceBuffer, instanceBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+	_vulkanCore->check_and_resize_buffer(frameData._gpuIndirectBuffer, indirectBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	_vulkanCore->check_and_resize_buffer(frameData._gpuCountBuffer, countBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-	frameData._deletionQueue.push_function([v = _vulkanCore, obj = ctx.gpuObjectBuffer, inst = ctx.gpuInstanceBuffer, ind = ctx.gpuIndirectBuffer, cnt = ctx.gpuCountBuffer]() {
-		v->destroy_buffer(obj);
-		v->destroy_buffer(inst);
-		v->destroy_buffer(ind);
-		v->destroy_buffer(cnt);
-		});
+	memset(frameData._gpuCountBuffer.info.pMappedData, 0, sizeof(uint32_t) * batchCount);
 
 	// get mapped pointers to the buffers
-	auto* mappedObjects = static_cast<GPUObjectData*>(ctx.gpuObjectBuffer.info.pMappedData);
-	auto* mappedCommands = static_cast<VkDrawIndexedIndirectCommand*>(ctx.gpuIndirectBuffer.info.pMappedData);
+	auto* mappedObjects = static_cast<GPUObjectData*>(frameData._gpuObjectBuffer.info.pMappedData);
+	auto* mappedCommands = static_cast<VkDrawIndexedIndirectCommand*>(frameData._gpuIndirectBuffer.info.pMappedData);
 
-	// fill the buffers with data for each batch
+	// fill object and indirect command buffers with data
 	for (uint32_t b = 0; b < batchCount; ++b) {
 		const auto& batch = ctx.opaqueBatches[b];
 		const uint32_t batchEnd = batch.first + batch.count;
@@ -141,11 +139,11 @@ void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawCont
 
 	// update descriptor set with the new buffers
 	DescriptorWriter writer;
-	writer.write_buffer(0, ctx.gpuObjectBuffer.buffer, sizeof(GPUObjectData) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(1, ctx.gpuInstanceBuffer.buffer, sizeof(uint32_t) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(2, ctx.gpuIndirectBuffer.buffer, sizeof(VkDrawIndexedIndirectCommand) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, frameData._gpuObjectBuffer.buffer, sizeof(GPUObjectData) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(1, frameData._gpuInstanceBuffer.buffer, sizeof(uint32_t) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, frameData._gpuIndirectBuffer.buffer, sizeof(VkDrawIndexedIndirectCommand) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.write_buffer(3, frameData._cullStatsBuffer.buffer, sizeof(CullStatsData), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(4, ctx.gpuCountBuffer.buffer, sizeof(uint32_t) * batchCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(4, frameData._gpuCountBuffer.buffer, sizeof(uint32_t) * batchCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), cullSet);
 
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
