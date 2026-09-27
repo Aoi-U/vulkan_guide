@@ -3,6 +3,7 @@
 #include <graphics/utils/UIWidgets.h>
 #include <core/Components.h>
 #include <graphics/pass/RenderPass.h>
+#include <core/cvars.h>
 #include <variant>
 
 void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats)
@@ -10,6 +11,10 @@ void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, cons
 	draw_performance_panel(stats);
 	draw_entity_hierarchy_panel(registry);
 	draw_entity_inspector_panel(registry, assetManager);
+
+	ImGui::Begin("Console Variables");
+	CVarSystem::Get()->DrawCVarEditor();
+	ImGui::End();
 }
 
 void Editor::process_event(const SDL_Event& e)

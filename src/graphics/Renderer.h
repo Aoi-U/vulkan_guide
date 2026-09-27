@@ -64,8 +64,6 @@ public:
 	GLTFMetallic_Roughness* get_material_system() { return _forwardPass->get_material_system(); }
 	const std::vector<PassStats> get_stats() const;
 
-	float renderScale{ 1.0f };
-
 private:
 	Window* _window;
 	VulkanCore* _vulkanCore;

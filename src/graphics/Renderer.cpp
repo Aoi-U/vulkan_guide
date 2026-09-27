@@ -5,9 +5,10 @@
 #include <algorithm>
 #include <resources/vk_loader.h>
 #include <core/Components.h>
-
+#include <core/cvars.h>
 #include <graphics/pass/FrustumCullpass.h>
 
+static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
 
 void Renderer::init(Window* window, VulkanCore* vulkanCore)
 {
@@ -150,8 +151,9 @@ VkCommandBuffer Renderer::begin_frame()
 	_isFrameStarted = true;
 
 	VkExtent2D swapchainExtent = _swapchain.get_extent();
-	_drawExtent.height = std::min(swapchainExtent.height, _drawImage.imageExtent.height) * renderScale;
-	_drawExtent.width = std::min(swapchainExtent.width, _drawImage.imageExtent.width) * renderScale;
+	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
+	_drawExtent.height = std::min(swapchainExtent.height, _drawImage.imageExtent.height) * scale;
+	_drawExtent.width = std::min(swapchainExtent.width, _drawImage.imageExtent.width) * scale;
 
 	// begin rendering commands
 	VkCommandBuffer cmd = currentFrame._mainCommandBuffer;

@@ -4,7 +4,10 @@
 #include <graphics/utils/vk_pipelines.h>
 #include <utils/vk_utils.h>
 #include <graphics/Renderer.h>
+#include <core/cvars.h>
 #include <chrono>
+
+static AutoCVar_Int cvCullMode("cull.frustum", "Toggle frustum culling", 1, CVarFlags::EditCheckBox);
 
 void FrustumCullPass::init(VulkanCore* vulkanCore, VkFormat colorFormat, VkFormat depthFormat) {
 	_vulkanCore = vulkanCore;
@@ -153,7 +156,7 @@ void FrustumCullPass::render(VkCommandBuffer cmd, FrameData& frameData, DrawCont
 	CullPushConstants cullPush{};
 	get_frustum_planes(sceneData.viewproj, cullPush.frustumPlanes);
 	cullPush.drawCount = drawCount;
-	cullPush.cullMode = 1;
+	cullPush.cullMode = static_cast<uint32_t>(cvCullMode.Get());;
 	vkCmdPushConstants(cmd, _cullPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CullPushConstants), &cullPush);
 
 	vkCmdDispatch(cmd, (drawCount + 255) / 256, 1, 1);
