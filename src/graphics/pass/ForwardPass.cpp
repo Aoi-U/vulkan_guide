@@ -8,7 +8,11 @@
 #include <graphics/utils/vk_utils.h>
 #include <graphics/utils/vk_initializers.h>
 #include <algorithm>
+#include <core/cvars.h>
 #include <chrono>
+
+static AutoCVar_Int cvCullMode("r.cullMode", "Face culling mode: 0 = None, 1 = Back, 2 = Front", 1);
+static AutoCVar_Int cvFrontFace("r.frontFaceCW", "Front face winding: 1 = Clockwise, 0 = Counter-Clockwise", 1, CVarFlags::EditCheckBox);
 
 void ForwardPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
@@ -71,6 +75,14 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 
 	VkRect2D scissor{{0, 0}, drawExtent};
 	vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+	VkCullModeFlags cullFlags = VK_CULL_MODE_NONE;
+	int mode = cvCullMode.Get();
+	if (mode == 1) cullFlags = VK_CULL_MODE_BACK_BIT;
+	else if (mode == 2) cullFlags = VK_CULL_MODE_FRONT_BIT;
+
+	vkCmdSetCullMode(cmd, cullFlags);
+	vkCmdSetFrontFace(cmd, cvFrontFace.Get() != 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE);
 
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _opaquePipeline.pipeline);
 	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _opaquePipeline.layout, 0, 1, &globalDescriptor, 0, nullptr);

@@ -11,7 +11,7 @@
 
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
 
-void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem)
+void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem, entt::dispatcher& dispatcher)
 {
 	_window = window;
 	_vulkanCore = vulkanCore;
@@ -20,8 +20,7 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	create_command_buffers();
 	create_sync_structures();
 
-	//_meshRenderer = std::make_unique<MeshRenderer>();
-	//_meshRenderer->init(_vulkanCore, _drawImage.imageFormat, _depthImage.imageFormat);
+	dispatcher.sink<Events::WindowResizeEvent>().connect<&Renderer::on_window_resize>(this);
 
 	std::unique_ptr<FrustumCullPass> frustumCullPass = std::make_unique<FrustumCullPass>();
 	frustumCullPass->init(_vulkanCore);
@@ -31,8 +30,10 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _drawImage.imageFormat, _depthImage.imageFormat);	_renderPasses.push_back(std::move(forwardPass));
 }
 
-void Renderer::cleanup()
+void Renderer::cleanup(entt::dispatcher& dispatcher)
 {
+	dispatcher.sink<Events::WindowResizeEvent>().disconnect(this);
+
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
 	//_meshRenderer->cleanup();
@@ -67,29 +68,11 @@ void Renderer::cleanup()
 	_swapchain.cleanup(_vulkanCore->get_device());
 }
 
-/*
-void Renderer::render_scene(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction)
+void Renderer::on_window_resize(const Events::WindowResizeEvent& event)
 {
-	if (VkCommandBuffer cmd = begin_frame()) {
-		begin_rendering(cmd);
-		// render mesh
-		_meshRenderer->render(cmd, get_current_frame(), registry, sceneData, _drawExtent);
-
-		end_rendering(cmd);
-
-		blit_to_swapchain(cmd);
-
-		// render gui
-		if (guiDrawFunction) {
-			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
-
-			guiDrawFunction(cmd, swapchainImageView, _drawExtent);
-		}
-
-		end_frame();
-	}
+	_resizeRequested = true;
+	_pendingResizeExtent = { event.width, event.height };
 }
-*/
 
 void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction)
 {
@@ -186,7 +169,7 @@ void Renderer::end_frame()
 	VK_CHECK(vkEndCommandBuffer(cmd));
 
 	VkSwapchainKHR swapchainHandle = _swapchain.get();
-	VkSemaphore renderSemaphore = _swapchain.get_render_semaphores()[_swapchainImageIndex];\
+	VkSemaphore renderSemaphore = _swapchain.get_render_semaphores()[_swapchainImageIndex];
 
 	// prepare the submission to the queue
 	// want to wait on the _presentSemaphore, as that semaphore is signaled when the swapchain is ready
@@ -220,8 +203,8 @@ void Renderer::end_frame()
 	_frameNumber++;
 
 	VkResult presentResult = vkQueuePresentKHR(_vulkanCore->get_graphics_queue(), &presentInfo);
-	if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || _window->is_resized()) {
-		_window->reset_resized_flag();
+	if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || _resizeRequested) {
+		_resizeRequested = false;
 		recreate_swapchain();
 	}
 	else {
@@ -370,17 +353,10 @@ void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::
 
 void Renderer::recreate_swapchain()
 {
-	// wait until the window is not minimized
-	VkExtent2D extent = _window->get_extent();
-	while (extent.width == 0 || extent.height == 0) {
-		extent = _window->get_extent();
-		_window->poll_events();
-	}
-
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
 	_swapchain.destroy_swapchain();
-	_swapchain.init(_vulkanCore->get_physical_device(), _vulkanCore->get_device(), _vulkanCore->get_surface(), extent.width, extent.height);
+	_swapchain.init(_vulkanCore->get_physical_device(), _vulkanCore->get_device(), _vulkanCore->get_surface(), _pendingResizeExtent.width, _pendingResizeExtent.height);
 
 	destroy_render_targets();
 	create_render_targets();

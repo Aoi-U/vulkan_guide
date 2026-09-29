@@ -11,6 +11,7 @@
 #include <core/Components.h>
 #include <app/Editor.h>
 #include <graphics/GuiRenderer.h>
+#include <core/Events.h>
 
 class App
 {
@@ -21,6 +22,7 @@ public:
 	void run(); // main loop
 	void cleanup();
 	
+	void on_window_close(const Events::WindowCloseEvent& event);
 
 private:
 	void update_scene(float deltaTime);

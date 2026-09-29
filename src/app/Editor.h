@@ -5,7 +5,7 @@
 //#include <graphics/MeshRenderer.h>
 #include <graphics/pass/ForwardPass.h>
 #include <imgui_impl_sdl2.h>
-
+#include <core/Events.h>
 
 struct EngineStats {
 	float frameTimeMs{ 0.0f };
@@ -22,7 +22,8 @@ public:
 	entt::entity get_selected_entity() const { return _selectedEntity; }
 	void set_selected_entity(entt::entity entity) { _selectedEntity = entity; }
 
-	void process_event(const SDL_Event& e);
+	void on_input_event(const Events::SDLInputEvent& event);
+	void on_entity_destroyed(const Events::EntityDestroyedEvent& event);
 
 	bool want_capture_mouse() const;
 

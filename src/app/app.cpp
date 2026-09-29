@@ -10,7 +10,6 @@
 #include <imgui_impl_vulkan.h>
 #include <glm/gtx/transform.hpp>
 
-
 App::App()
 {
 	_window = std::make_unique<Window>();
@@ -23,16 +22,23 @@ App::App()
 
 void App::init()
 {
+	auto& dispatcher = _registry.ctx().emplace<entt::dispatcher>();
 
 	_window->init("Vulkan Engine", 1280, 720);
 	_vulkanCore->init(*_window);
 
 	_materialSystem->init(_vulkanCore.get());
 
-	_renderer->init(_window.get(), _vulkanCore.get(), _materialSystem.get());
+	_renderer->init(_window.get(), _vulkanCore.get(), _materialSystem.get(), dispatcher);
 	
 	_assetManager.init(_vulkanCore.get(), _materialSystem.get());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
+
+	_registry.ctx().emplace<entt::dispatcher>();
+
+	dispatcher.sink<Events::WindowCloseEvent>().connect<&App::on_window_close>(this);
+	dispatcher.sink<Events::SDLInputEvent>().connect<&Editor::on_input_event>(_editor.get());
+	dispatcher.sink<Events::SDLInputEvent>().connect<&Camera::on_input_event>(&_camera);
 
 	auto structureAsset = _assetManager.loadScene("structure", "../../assets/structure.glb");
 	auto brutalistAsset = _assetManager.loadScene("brutalist_building", "../../assets/brutalist_building.glb");
@@ -45,6 +51,7 @@ void App::init()
 void App::run()
 {
 	auto lastTime = std::chrono::steady_clock::now();
+	auto& dispatcher = _registry.ctx().get<entt::dispatcher>();
 
 	while (!_window->should_close()) {
 		auto currentTime = std::chrono::steady_clock::now();
@@ -52,12 +59,7 @@ void App::run()
 		_frameTime = _deltaTime * 1000.f;
 		lastTime = currentTime;
 
-		_window->poll_events([&](const SDL_Event& e) {
-			_editor->process_event(e);
-			if (!_editor->want_capture_mouse() || _camera.isActive) {
-				_camera.processSDLEvent(const_cast<SDL_Event&>(e));
-			}
-			});
+		_window->poll_events(dispatcher);
 
 		// skip rendering when the window is minimized
 		if (_window->is_minimized()) {
@@ -86,14 +88,20 @@ void App::cleanup()
 {
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
+	auto& dispatcher = _registry.ctx().get<entt::dispatcher>();
+	dispatcher.disconnect(this);
+
 	_guiRenderer->cleanup();
 	_registry.clear();
 	_assetManager.cleanup();
-	_renderer->cleanup();
+	_renderer->cleanup(dispatcher);
 	_materialSystem->cleanup();
 	_vulkanCore->cleanup();
 	_window->cleanup();
 }
+
+void App::on_window_close(const Events::WindowCloseEvent& event)
+{}
 
 void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);

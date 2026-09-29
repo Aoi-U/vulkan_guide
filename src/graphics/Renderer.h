@@ -10,6 +10,7 @@
 #include <memory>
 #include <entt.hpp>
 #include <vector>
+#include <core/Events.h>
 
 struct IndirectBatch
 {
@@ -66,9 +67,11 @@ class Renderer
 public:
 	static constexpr unsigned int FRAME_OVERLAP = 2;
 
-	void init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem);
+	void init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem, entt::dispatcher& dispatcher);
 
-	void cleanup();
+	void cleanup(entt::dispatcher& dispatcher);
+
+	void on_window_resize(const Events::WindowResizeEvent& event);
 
 	using GuiDrawFunction = std::function<void(VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D drawExtent)>;
 	//void render_scene(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction = nullptr);
@@ -101,6 +104,9 @@ private:
 	uint32_t _frameNumber{ 0 };
 	uint32_t _swapchainImageIndex{ 0 };
 	bool _isFrameStarted{ false };
+
+	bool _resizeRequested{ false };
+	VkExtent2D _pendingResizeExtent{ 0, 0 };
 
 	//std::unique_ptr<MeshRenderer> _meshRenderer;
 	std::vector<std::unique_ptr<RenderPass>> _renderPasses;

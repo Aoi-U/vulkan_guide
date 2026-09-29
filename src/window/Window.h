@@ -4,6 +4,7 @@
 #include <string>
 #include <functional>
 #include <SDL_events.h>
+#include <entt.hpp>
 
 struct SDL_Window;
 
@@ -16,14 +17,11 @@ public:
 	// create a vulkan surface for the window
 	bool create_surface(VkInstance instance, VkSurfaceKHR* surface);
 
-	// process SDL events 
-	void poll_events(const std::function<void(const SDL_Event&)>& eventCallback = nullptr);
 
-	void reset_resized_flag() { _isResized = false; }
+	void poll_events(entt::dispatcher& dispatcher);
 
 	bool should_close() const { return _shouldClose; }
 	bool is_minimized() const { return _isMinimized; }
-	bool is_resized() const { return _isResized; }
 	VkExtent2D get_extent() const { return _extent; }
 	SDL_Window* get_sdl_window() const { return _window; }
 

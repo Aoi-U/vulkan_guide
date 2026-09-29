@@ -35,6 +35,7 @@ private:
     planes[4] = m[2];        // near plane for [0, 1] range
     planes[5] = m[3] - m[2]; // far plane for [0, 1] range
 
+    // normalize planes
     for (int i = 0; i < 6; ++i) {
       float len = glm::length(glm::vec3(planes[i]));
       if (len > 0.0f) {

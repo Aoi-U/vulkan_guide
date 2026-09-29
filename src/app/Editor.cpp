@@ -17,9 +17,16 @@ void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, cons
 	ImGui::End();
 }
 
-void Editor::process_event(const SDL_Event& e)
+void Editor::on_input_event(const Events::SDLInputEvent& event)
 {
-	ImGui_ImplSDL2_ProcessEvent(&e);
+	ImGui_ImplSDL2_ProcessEvent(&event.raw);
+}
+
+void Editor::on_entity_destroyed(const Events::EntityDestroyedEvent& event)
+{
+	if (_selectedEntity == event.entity) {
+		_selectedEntity = entt::null;
+	}
 }
 
 bool Editor::want_capture_mouse() const
@@ -80,9 +87,8 @@ void Editor::draw_entity_hierarchy_panel(entt::registry& registry)
 
 	// destroy the entity if marked 
 	if (entityToDestroy != entt::null && registry.valid(entityToDestroy)) {
-		if (_selectedEntity == entityToDestroy) {
-			_selectedEntity = entt::null;
-		}
+		registry.ctx().get<entt::dispatcher>().trigger<Events::EntityDestroyedEvent>({ entityToDestroy });
+
 		registry.destroy(entityToDestroy);
 	}
 

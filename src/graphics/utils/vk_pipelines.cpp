@@ -62,11 +62,16 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 
 	// setup dynamic state for viewport and scissor
 	// allows changing viewport and scissor without recreating pipeline
-	VkDynamicState state[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkDynamicState state[] = { 
+		VK_DYNAMIC_STATE_VIEWPORT, 
+		VK_DYNAMIC_STATE_SCISSOR,
+		VK_DYNAMIC_STATE_CULL_MODE,
+		VK_DYNAMIC_STATE_FRONT_FACE
+	};
 
 	VkPipelineDynamicStateCreateInfo dynamicInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
 	dynamicInfo.pDynamicStates = &state[0];
-	dynamicInfo.dynamicStateCount = 2;
+	dynamicInfo.dynamicStateCount = static_cast<uint32_t>(std::size(state));
 	
 	pipelineInfo.pDynamicState = &dynamicInfo;
 

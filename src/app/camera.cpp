@@ -26,8 +26,30 @@ glm::mat4 Camera::getRotationMatrix()
 	return glm::toMat4(yawRotation) * glm::toMat4(pitchRotation);
 }
 
-void Camera::processSDLEvent(SDL_Event& e)
+
+
+void Camera::update(float deltaTime)
 {
+  if (!isActive) return;
+
+  glm::vec3 localVelocity{ 0.f };
+  localVelocity.x = (keyStates[SDLK_d] ? 1.f : 0.f) - (keyStates[SDLK_a] ? 1.f : 0.f);
+  localVelocity.z = (keyStates[SDLK_s] ? 1.f : 0.f) - (keyStates[SDLK_w] ? 1.f : 0.f);
+
+  float worldVerticalVelocity = (keyStates[SDLK_SPACE] ? 1.f : 0.f) - (keyStates[SDLK_LCTRL] ? 1.f : 0.f);
+
+  glm::mat4 cameraRotation = getRotationMatrix();
+
+  glm::vec3 rotatedLocalVelocity = glm::vec3(cameraRotation * glm::vec4(localVelocity, 0.f));
+  glm::vec3 worldVelocity = rotatedLocalVelocity + glm::vec3(0.f, worldVerticalVelocity, 0.f);
+
+  position += worldVelocity * deltaTime * speed;
+}
+
+void Camera::on_input_event(const Events::SDLInputEvent& event)
+{
+	SDL_Event e = event.raw;
+
   if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
     isActive = true;
     setCursorLocked(true);
@@ -54,24 +76,6 @@ void Camera::processSDLEvent(SDL_Event& e)
       pitch -= (float)e.motion.yrel / 500.f;
     }
   }
-}
-
-void Camera::update(float deltaTime)
-{
-  if (!isActive) return;
-
-  glm::vec3 localVelocity{ 0.f };
-  localVelocity.x = (keyStates[SDLK_d] ? 1.f : 0.f) - (keyStates[SDLK_a] ? 1.f : 0.f);
-  localVelocity.z = (keyStates[SDLK_s] ? 1.f : 0.f) - (keyStates[SDLK_w] ? 1.f : 0.f);
-
-  float worldVerticalVelocity = (keyStates[SDLK_SPACE] ? 1.f : 0.f) - (keyStates[SDLK_LCTRL] ? 1.f : 0.f);
-
-  glm::mat4 cameraRotation = getRotationMatrix();
-
-  glm::vec3 rotatedLocalVelocity = glm::vec3(cameraRotation * glm::vec4(localVelocity, 0.f));
-  glm::vec3 worldVelocity = rotatedLocalVelocity + glm::vec3(0.f, worldVerticalVelocity, 0.f);
-
-  position += worldVelocity * deltaTime * speed;
 }
 
 void Camera::setCursorLocked(bool locked)
