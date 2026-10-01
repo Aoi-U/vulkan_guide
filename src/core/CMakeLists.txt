@@ -11,7 +11,7 @@ add_library(core STATIC
 # Keep include paths public so downstream targets (graphics, window, app) retain access
 target_include_directories(core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
-    ${PROJECT_SOURCE_DIR}
+    ${PROJECT_SOURCE_DIR}/src
 )
 
 target_compile_definitions(core PUBLIC GLM_FORCE_DEPTH_ZERO_TO_ONE)

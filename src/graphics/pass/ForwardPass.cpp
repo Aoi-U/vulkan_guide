@@ -44,7 +44,7 @@ void ForwardPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
+void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, RenderResourceManager& resources, DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
 {	
 	if (ctx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.buffer == VK_NULL_HANDLE || ctx.opaqueBatches.empty()) {
 		return;
@@ -53,9 +53,19 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
+	// transition color and depth attachments to correct state
+	resources.transition(cmd, "SceneColor", ResourceState::ColorAttachment);
+	resources.transition(cmd, "SceneDepth", ResourceState::DepthAttachment);
+
+	VkClearValue clearColor{ 0.1f, 0.1f, 0.1f, 1.0f };
+	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(resources.get_view("SceneColor"), &clearColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	VkRenderingAttachmentInfo depthAttachment = vkinit::depth_attachment_info(resources.get_view("SceneDepth"), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
+	VkRenderingInfo renderInfo = vkinit::rendering_info(drawExtent, &colorAttachment, &depthAttachment);
+
+	vkCmdBeginRendering(cmd, &renderInfo);
+
 	// allocate a new uniform buffer for scene data
 	_vulkanCore->check_and_resize_buffer(frameData.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
 	// write scene data to the buffer
 	GPUSceneData* sceneUniformData = (GPUSceneData*)frameData.sceneDataBuffer.info.pMappedData;
 	*sceneUniformData = sceneData;
@@ -72,15 +82,16 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 	// set dynamic viewport and scissor
 	VkViewport viewport{0.f, 0.f, static_cast<float>(drawExtent.width), static_cast<float>(drawExtent.height), 0.f, 1.f};
 	vkCmdSetViewport(cmd, 0, 1, &viewport);
-
 	VkRect2D scissor{{0, 0}, drawExtent};
 	vkCmdSetScissor(cmd, 0, 1, &scissor);
 
+	// set culling mode and front face winding based on cvars
 	VkCullModeFlags cullFlags = VK_CULL_MODE_NONE;
 	int mode = cvCullMode.Get();
-	if (mode == 1) cullFlags = VK_CULL_MODE_BACK_BIT;
-	else if (mode == 2) cullFlags = VK_CULL_MODE_FRONT_BIT;
-
+	if (mode == 1) 
+		cullFlags = VK_CULL_MODE_BACK_BIT;
+	else if (mode == 2) 
+		cullFlags = VK_CULL_MODE_FRONT_BIT;
 	vkCmdSetCullMode(cmd, cullFlags);
 	vkCmdSetFrontFace(cmd, cvFrontFace.Get() != 0 ? VK_FRONT_FACE_CLOCKWISE : VK_FRONT_FACE_COUNTER_CLOCKWISE);
 
@@ -114,6 +125,8 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, DrawContext
 		vkCmdDrawIndexedIndirectCount(cmd, frameData._gpuIndirectBuffer.buffer, indirectOffset, frameData._gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 		recordedBatchCommands++;
 	}
+	
+	vkCmdEndRendering(cmd);
 
 	auto end = std::chrono::system_clock::now(); 
 	_stats.clear(); 

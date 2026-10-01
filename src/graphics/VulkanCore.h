@@ -2,6 +2,18 @@
 #include <core/vk_types.h>
 #include <window/window.h>
 
+struct ImageDescription {
+	VkExtent3D extent{ 1, 1, 1 };
+	VkFormat format{ VK_FORMAT_UNDEFINED };
+	VkImageUsageFlags usage{ 0 };
+	uint32_t mipLevels{ 1 };
+	uint32_t arrayLayers{ 1 };
+	VkSampleCountFlagBits samples{ VK_SAMPLE_COUNT_1_BIT };
+	VkImageCreateFlags flags{ 0 };
+	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
+	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
+};
+
 class VulkanCore
 {
 public:
@@ -24,6 +36,10 @@ public:
 
 	// creates an image with data
 	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+
+	// creates an image 
+	AllocatedImage create_image(const ImageDescription& desc);
+
 	void destroy_image(const AllocatedImage& image);
 
 	VkInstance get_instance() const { return _instance; }

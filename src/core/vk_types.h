@@ -52,6 +52,11 @@ struct AllocatedImage
 	VmaAllocation allocation;
 	VkExtent3D imageExtent;
 	VkFormat imageFormat;
+
+	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
+	uint32_t mipLevels{ 1 };
+	uint32_t arrayLayers{ 1 };
+	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
 };
 
 // a buffer that has been allocated on the GPU

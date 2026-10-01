@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 #include <core/vk_types.h>
-#include <utils/vk_descriptors.h>
+#include <graphics/utils/vk_descriptors.h>
 #include <unordered_map>
 #include <filesystem>
 #include <memory>

@@ -16,6 +16,8 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	_window = window;
 	_vulkanCore = vulkanCore;
 
+	_resourceManager.init(_vulkanCore);
+
 	recreate_swapchain();
 	create_command_buffers();
 	create_sync_structures();
@@ -27,7 +29,8 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	_computePasses.push_back(std::move(frustumCullPass));
 
 	std::unique_ptr<ForwardPass> forwardPass = std::make_unique<ForwardPass>();
-	forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _drawImage.imageFormat, _depthImage.imageFormat);	_renderPasses.push_back(std::move(forwardPass));
+	forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));	
+	_renderPasses.push_back(std::move(forwardPass));
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -45,7 +48,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 		pass->cleanup();
 	}
 
-	destroy_render_targets();
+	_resourceManager.cleanup();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		_vulkanCore->destroy_buffer(_frames[i]._cullStatsBuffer);
@@ -83,18 +86,14 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		for (auto& pass : _computePasses) {
 			pass->dispatch(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
 		}
-
-		begin_rendering(cmd);
 		
 		// forward main pass
-		//_forwardPass->render(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
 		for (auto& pass : _renderPasses) {
-			pass->render(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
+			pass->render(cmd, get_current_frame(), _resourceManager, ctx, sceneData, _drawExtent);
 		}
 
-		end_rendering(cmd);
-
 		blit_to_swapchain(cmd);
+
 		// render gui
 		if (guiDrawFunction) {
 			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
@@ -108,7 +107,6 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 VkCommandBuffer Renderer::begin_frame()
 {
 	assert(!_isFrameStarted && "cant call begin_frame while frame is already in progress");
-
 
 	// wait until the gpu has finished rendering the last frame
 	// timeout of 1 second
@@ -130,18 +128,20 @@ VkCommandBuffer Renderer::begin_frame()
 
 	VK_CHECK(vkResetFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence));
 
-	_isFrameStarted = true;
-
-	VkExtent2D swapchainExtent = _swapchain.get_extent();
-	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
-	_drawExtent.height = std::min(swapchainExtent.height, _drawImage.imageExtent.height) * scale;
-	_drawExtent.width = std::min(swapchainExtent.width, _drawImage.imageExtent.width) * scale;
+	_isFrameStarted = true;	
 
 	// begin rendering commands
 	VkCommandBuffer cmd = currentFrame._mainCommandBuffer;
 
 	// now that we are sure the commands finished executing, we can safely reset the command buffer to begin recording again
 	VK_CHECK(vkResetCommandBuffer(cmd, 0));
+
+	VkExtent2D swapchainExtent = _swapchain.get_extent();
+	VkExtent2D sceneColorExtent = _resourceManager.get_extent("SceneColor");
+	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
+
+	_drawExtent.width = std::max(1u, static_cast<uint32_t>(std::min(swapchainExtent.width, sceneColorExtent.width) * scale));
+	_drawExtent.height = std::max(1u, static_cast<uint32_t>(std::min(swapchainExtent.height, sceneColorExtent.height) * scale));
 
 	// begin command buffer recording
 	// we will use this command buffer exactly once, so we want to let vulkan know that
@@ -162,7 +162,7 @@ void Renderer::end_frame()
 
 	// set swapchain image layout to present so we can draw it
 	VkImage currentSwapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	vkutil::transition_image(cmd, currentSwapchainImage, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	RenderSync::transition_image(cmd, currentSwapchainImage, ResourceState::ColorAttachment, ResourceState::Present);
 
 	// finalize the command buffer
 	// can no longer add commands, but can now be executed
@@ -213,43 +213,23 @@ void Renderer::end_frame()
 
 }
 
-void Renderer::begin_rendering(VkCommandBuffer cmd)
-{
-	assert(_isFrameStarted && "cant call begin_rendering while frame is not in progress");
-
-	// begin the render pass
-	vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-	vkutil::transition_image(cmd, _depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-
-	VkClearValue clearColor{ 0.1f, 0.1f, 0.1f, 1.0f };
-	//VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(_drawImage.imageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(_drawImage.imageView, &clearColor, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-	VkRenderingAttachmentInfo depthAttachment = vkinit::depth_attachment_info(_depthImage.imageView, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-	VkRenderingInfo renderInfo = vkinit::rendering_info(_drawExtent, &colorAttachment, &depthAttachment);
-
-	vkCmdBeginRendering(cmd, &renderInfo);
-}
-
-void Renderer::end_rendering(VkCommandBuffer cmd)
-{
-	assert(_isFrameStarted && "cant call end_rendering while frame is not in progress");
-	vkCmdEndRendering(cmd);
-}
-
 void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 {
 	VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
+	AllocatedImage& sceneColor = _resourceManager.get_image("SceneColor");
 
 	// transition the draw image and the swapchain image into their correct transfer layouts
 	// so we can blit from the draw image to the swapchain image
-	vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-	vkutil::transition_image(cmd, swapchainImage, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+	_resourceManager.transition(cmd, "SceneColor", ResourceState::TransferSrc);
 
-	// copy from draw image into the swapchain
-	vkutil::copy_image_to_image(cmd, _drawImage.image, swapchainImage, _drawExtent, _swapchain.get_extent());
+	// transition swapchain image to transferdst to copy into it
+	RenderSync::transition_image(cmd, swapchainImage, ResourceState::Undefined, ResourceState::TransferDst);
+
+	// copy SceneColor into the swapchain
+	vkutil::copy_image_to_image(cmd, sceneColor.image, swapchainImage, _drawExtent, _swapchain.get_extent());
 
 	// set swapchain image layout to color attachment optimal for imgui 
-	vkutil::transition_image(cmd, swapchainImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+	RenderSync::transition_image(cmd, swapchainImage, ResourceState::TransferDst, ResourceState::ColorAttachment);
 }
 
 void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
@@ -355,11 +335,24 @@ void Renderer::recreate_swapchain()
 {
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
-	_swapchain.destroy_swapchain();
-	_swapchain.init(_vulkanCore->get_physical_device(), _vulkanCore->get_device(), _vulkanCore->get_surface(), _pendingResizeExtent.width, _pendingResizeExtent.height);
+	VkExtent2D actualExtent = _pendingResizeExtent;
+	if (actualExtent.width == 0 || actualExtent.height == 0) {
+		actualExtent = _window->get_extent();
+	}
 
-	destroy_render_targets();
-	create_render_targets();
+	if (actualExtent.width == 0 || actualExtent.height == 0) {
+		return; // window minimized
+	}
+
+	_swapchain.destroy_swapchain();
+	_swapchain.init(_vulkanCore->get_physical_device(), _vulkanCore->get_device(), _vulkanCore->get_surface(), actualExtent.width, actualExtent.height);
+
+	if (!_resourceManager.has_target("SceneColor")) {
+		create_render_targets();
+	}
+	else {
+		_resourceManager.on_window_resize(_pendingResizeExtent);
+	}
 }
 
 const std::vector<PassStats> Renderer::get_stats() const
@@ -422,41 +415,24 @@ void Renderer::create_render_targets()
 {
 	VkExtent2D windowExtent = _window->get_extent();
 
-	// create a draw image that we will render into, and then blit to the swapchain image
-
-	// draw image size will match the window
-	VkExtent3D drawImageExtent = {
-		windowExtent.width,
-		windowExtent.height,
-		1
-	};
-
-	// draw image creation
-	VkFormat drawImageFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
-	VkImageUsageFlags drawImageUsages =
-		VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
-		VK_IMAGE_USAGE_STORAGE_BIT |
-		VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-	_drawImage = _vulkanCore->create_image(drawImageExtent, drawImageFormat, drawImageUsages, false);
-
-	// create a depth image to use for depth testing
-
-	VkFormat depthImageFormat = VK_FORMAT_D32_SFLOAT;
-	VkImageUsageFlags depthImageUsages = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
-
-	_depthImage = _vulkanCore->create_image(drawImageExtent, depthImageFormat, depthImageUsages, false);
+	// create primary scene color 
+	_resourceManager.register_target({
+		.name = "SceneColor",
+		.sizePolicy = TargetSizePolicy::WindowRelative,
+		.relativeScale = 1.0f,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, windowExtent);
+	
+	// create primary scene depth
+	_resourceManager.register_target({
+		.name = "SceneDepth",
+		.sizePolicy = TargetSizePolicy::WindowRelative,
+		.relativeScale = 1.0f,
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
+		}, windowExtent);
 }
 
-void Renderer::destroy_render_targets()
-{
-	if (_drawImage.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_drawImage);
-		_drawImage = {};
-	}
-
-	if (_depthImage.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_depthImage);
-		_depthImage = {};
-	}
-}

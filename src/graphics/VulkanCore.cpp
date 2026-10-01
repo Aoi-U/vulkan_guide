@@ -173,33 +173,16 @@ void VulkanCore::destroy_buffer(const AllocatedBuffer& buffer)
 
 AllocatedImage VulkanCore::create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped)
 {
-	AllocatedImage newImage;
-	newImage.imageFormat = format;
-	newImage.imageExtent = size;
+	ImageDescription desc;
+	desc.extent = size;
+	desc.format = format;
+	desc.usage = usage;
+	desc.mipLevels = mipmapped ? static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1 : 1;
+	desc.arrayLayers = 1;
+	desc.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	desc.aspectMask = (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 
-	VkImageCreateInfo imgInfo = vkinit::image_create_info(format, usage, size);
-	if (mipmapped) {
-		imgInfo.mipLevels = static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1;
-	}
-
-	// always allocate images on dedicated GPU memory
-	VmaAllocationCreateInfo allocInfo = {};
-	allocInfo.usage = VMA_MEMORY_USAGE_GPU_ONLY;
-	allocInfo.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-
-	// allocate and create the image
-	VK_CHECK(vmaCreateImage(_allocator, &imgInfo, &allocInfo, &newImage.image, &newImage.allocation, nullptr));
-
-	// if depth format, use depth aspect, color aspect otherwise
-	VkImageAspectFlags aspectFlag = format == VK_FORMAT_D32_SFLOAT ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-	// build an image view for the image
-	VkImageViewCreateInfo viewInfo = vkinit::imageview_create_info(format, newImage.image, aspectFlag);
-	viewInfo.subresourceRange.levelCount = imgInfo.mipLevels;
-
-	VK_CHECK(vkCreateImageView(_device, &viewInfo, nullptr, &newImage.imageView));
-
-	return newImage;
+	return create_image(desc);
 }
 
 AllocatedImage VulkanCore::create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped /* = false */)
@@ -240,6 +223,53 @@ AllocatedImage VulkanCore::create_image(void* data, VkExtent3D size, VkFormat fo
 	// destroy upload buffer
 	destroy_buffer(uploadBuffer);
 
+	return newImage;
+}
+
+AllocatedImage VulkanCore::create_image(const ImageDescription& desc)
+{
+	AllocatedImage newImage;
+	newImage.imageFormat = desc.format;
+	newImage.imageExtent = desc.extent;
+	newImage.aspectMask = desc.aspectMask;
+	newImage.mipLevels = desc.mipLevels;
+	newImage.arrayLayers = desc.arrayLayers;
+	newImage.viewType = desc.viewType;
+
+	// create the image
+	VkImageCreateInfo imgInfo{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.flags = desc.flags,
+		.imageType = desc.extent.depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D,
+		.format = desc.format,
+		.extent = desc.extent,
+		.mipLevels = desc.mipLevels,
+		.arrayLayers = desc.arrayLayers,
+		.samples = desc.samples,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = desc.usage
+	};
+
+	VmaAllocationCreateInfo allocInfo{
+		.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+		.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
+	};
+
+	VK_CHECK(vmaCreateImage(_allocator, &imgInfo, &allocInfo, &newImage.image, &newImage.allocation, nullptr));
+
+	// create an image view for the image
+	VkImageViewCreateInfo viewInfo{ .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+	viewInfo.viewType = desc.viewType;
+	viewInfo.image = newImage.image;
+	viewInfo.format = desc.format;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = desc.mipLevels;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = desc.arrayLayers;
+	viewInfo.subresourceRange.aspectMask = desc.aspectMask;
+
+	VK_CHECK(vkCreateImageView(_device, &viewInfo, nullptr, &newImage.imageView));
+	
 	return newImage;
 }
 
