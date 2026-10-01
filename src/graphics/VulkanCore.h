@@ -31,14 +31,11 @@ public:
 	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
 	void destroy_buffer(const AllocatedBuffer& buffer);
 
-	// creates an image
-	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+	// creates an image 
+	AllocatedImage create_image(const ImageDescription& desc);
 
 	// creates an image with data
 	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
-
-	// creates an image 
-	AllocatedImage create_image(const ImageDescription& desc);
 
 	void destroy_image(const AllocatedImage& image);
 
@@ -61,12 +58,18 @@ public:
 	VkSampler _defaultSamplerLinear{ VK_NULL_HANDLE };
 	VkSampler _defaultSamplerNearest{ VK_NULL_HANDLE };
 
+	VkSampler _shadowSampler{ VK_NULL_HANDLE };
+
 	// uploads a mesh to the gpu and returns the buffers for it
 	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
 private:
 	void init_immediate_submit();
 	void init_default_data();
+
+	// creates an image
+	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
+
 
 	// vulkan instance handles
 	VkInstance _instance; // vulkan library handle

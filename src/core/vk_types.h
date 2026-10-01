@@ -83,6 +83,8 @@ struct GPUSceneData
 	glm::mat4 view;
 	glm::mat4 proj;
 	glm::mat4 viewproj;
+	glm::mat4 sunlightViewproj;
+	glm::vec4 cameraPosition;
 	glm::vec4 ambientColor;
 	glm::vec4 sunlightDirection; // w component for sun power
 	glm::vec4 sunlightColor;

@@ -83,7 +83,8 @@ void VulkanCore::init(Window& window)
 
 void VulkanCore::cleanup()
 {
-	// destroy default samplers
+	// destroy samplers and images
+	vkDestroySampler(_device, _shadowSampler, nullptr);
 	vkDestroySampler(_device, _defaultSamplerNearest, nullptr);
 	vkDestroySampler(_device, _defaultSamplerLinear, nullptr);
 	destroy_image(_whiteImage);
@@ -145,7 +146,6 @@ void VulkanCore::check_and_resize_buffer(AllocatedBuffer& buffer, size_t require
 	buffer = create_buffer(newSize, usage, memoryUsage);
 }
 
-
 AllocatedBuffer VulkanCore::create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
 {
 	// allocate buffer
@@ -169,61 +169,6 @@ AllocatedBuffer VulkanCore::create_buffer(size_t allocSize, VkBufferUsageFlags u
 void VulkanCore::destroy_buffer(const AllocatedBuffer& buffer)
 {
 	vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
-}
-
-AllocatedImage VulkanCore::create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped)
-{
-	ImageDescription desc;
-	desc.extent = size;
-	desc.format = format;
-	desc.usage = usage;
-	desc.mipLevels = mipmapped ? static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1 : 1;
-	desc.arrayLayers = 1;
-	desc.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	desc.aspectMask = (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-	return create_image(desc);
-}
-
-AllocatedImage VulkanCore::create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped /* = false */)
-{
-	size_t dataSize = size.depth * size.width * size.height * 4;
-	AllocatedBuffer uploadBuffer = create_buffer(dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-	// copy data into upload buffer
-	memcpy(uploadBuffer.info.pMappedData, data, dataSize);
-
-	AllocatedImage newImage = create_image(size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmapped);
-
-	immediate_submit([&](VkCommandBuffer cmd) {
-		vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-		VkBufferImageCopy copyRegion = {};
-		copyRegion.bufferOffset = 0;
-		copyRegion.bufferRowLength = 0;
-		copyRegion.bufferImageHeight = 0;
-
-		copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.imageSubresource.mipLevel = 0;
-		copyRegion.imageSubresource.baseArrayLayer = 0;
-		copyRegion.imageSubresource.layerCount = 1;
-		copyRegion.imageExtent = size;
-
-		// copy from staging buffer to image
-		vkCmdCopyBufferToImage(cmd, uploadBuffer.buffer, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-
-		if (mipmapped) {
-			vkutil::generate_mipmaps(cmd, newImage.image, VkExtent2D{ newImage.imageExtent.width, newImage.imageExtent.height });
-		}
-		else {
-			vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		}
-		});
-
-	// destroy upload buffer
-	destroy_buffer(uploadBuffer);
-
-	return newImage;
 }
 
 AllocatedImage VulkanCore::create_image(const ImageDescription& desc)
@@ -270,6 +215,47 @@ AllocatedImage VulkanCore::create_image(const ImageDescription& desc)
 
 	VK_CHECK(vkCreateImageView(_device, &viewInfo, nullptr, &newImage.imageView));
 	
+	return newImage;
+}
+
+AllocatedImage VulkanCore::create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped /* = false */)
+{
+	size_t dataSize = size.depth * size.width * size.height * 4;
+	AllocatedBuffer uploadBuffer = create_buffer(dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+	// copy data into upload buffer
+	memcpy(uploadBuffer.info.pMappedData, data, dataSize);
+
+	AllocatedImage newImage = create_image(size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmapped);
+
+	immediate_submit([&](VkCommandBuffer cmd) {
+		vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+		VkBufferImageCopy copyRegion = {};
+		copyRegion.bufferOffset = 0;
+		copyRegion.bufferRowLength = 0;
+		copyRegion.bufferImageHeight = 0;
+
+		copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		copyRegion.imageSubresource.mipLevel = 0;
+		copyRegion.imageSubresource.baseArrayLayer = 0;
+		copyRegion.imageSubresource.layerCount = 1;
+		copyRegion.imageExtent = size;
+
+		// copy from staging buffer to image
+		vkCmdCopyBufferToImage(cmd, uploadBuffer.buffer, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+
+		if (mipmapped) {
+			vkutil::generate_mipmaps(cmd, newImage.image, VkExtent2D{ newImage.imageExtent.width, newImage.imageExtent.height });
+		}
+		else {
+			vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		}
+		});
+
+	// destroy upload buffer
+	destroy_buffer(uploadBuffer);
+
 	return newImage;
 }
 
@@ -376,9 +362,33 @@ void VulkanCore::init_default_data()
 	VkSamplerCreateInfo samplerInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
 	samplerInfo.magFilter = VK_FILTER_NEAREST;
 	samplerInfo.minFilter = VK_FILTER_NEAREST;
-	vkCreateSampler(get_device(), &samplerInfo, nullptr, &_defaultSamplerNearest);
+	vkCreateSampler(_device, &samplerInfo, nullptr, &_defaultSamplerNearest);
 
 	samplerInfo.magFilter = VK_FILTER_LINEAR;
 	samplerInfo.minFilter = VK_FILTER_LINEAR;
-	vkCreateSampler(get_device(), &samplerInfo, nullptr, &_defaultSamplerLinear);
+	vkCreateSampler(_device, &samplerInfo, nullptr, &_defaultSamplerLinear);
+
+	VkSamplerCreateInfo shadowSamplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+	shadowSamplerInfo.magFilter = VK_FILTER_LINEAR;
+	shadowSamplerInfo.minFilter = VK_FILTER_LINEAR;
+	shadowSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+	shadowSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	shadowSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	shadowSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+	shadowSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
+	vkCreateSampler(_device, &shadowSamplerInfo, nullptr, &_shadowSampler);
+}
+
+AllocatedImage VulkanCore::create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped)
+{
+	ImageDescription desc;
+	desc.extent = size;
+	desc.format = format;
+	desc.usage = usage;
+	desc.mipLevels = mipmapped ? static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1 : 1;
+	desc.arrayLayers = 1;
+	desc.viewType = VK_IMAGE_VIEW_TYPE_2D;
+	desc.aspectMask = (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+
+	return create_image(desc);
 }

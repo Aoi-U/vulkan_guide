@@ -8,6 +8,7 @@
 layout (location = 0) out vec3 outNormal;
 layout (location = 1) out vec4 outColor;
 layout (location = 2) out vec2 outUV;
+layout (location = 3) out vec3 outWorldPos;
 
 struct Vertex
 {
@@ -22,13 +23,6 @@ layout (buffer_reference, std430) readonly buffer VertexBuffer
 {
   Vertex vertices[];
 };
-
-// push constants block
-layout (push_constant) uniform constants
-{
-  mat4 renderMatrix;
-  VertexBuffer vertexBuffer;
-} PushConstants;
 
 struct GPUObjectData {
     mat4 worldMatrix;
@@ -52,11 +46,13 @@ void main()
     GPUObjectData obj = objectBuffer.objects[objectIndex];
 
     Vertex v = obj.vertexBuffer.vertices[gl_VertexIndex];
-    vec4 position = vec4(v.position, 1.0f);
+    vec4 worldPosition = obj.worldMatrix * vec4(v.position, 1.0);
 
-    gl_Position = sceneData.viewproj * obj.worldMatrix * position;
+    gl_Position = sceneData.viewproj * worldPosition;
+
     outNormal = (obj.worldMatrix * vec4(v.normal, 0.f)).xyz;
     outColor = v.color * materialData.colorFactors;
     outUV.x = v.uv_x;
     outUV.y = v.uv_y;
+    outWorldPos = worldPosition.xyz;
 }

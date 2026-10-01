@@ -111,7 +111,16 @@ void App::update_scene(float deltaTime) {
 	_sceneData.proj[1][1] *= -1;
 	_sceneData.view = _camera.getViewMatrix();
 	_sceneData.viewproj = _sceneData.proj * _sceneData.view;
+	_sceneData.cameraPosition = glm::vec4(_camera.position, 1.0f);
 	_sceneData.ambientColor = glm::vec4(0.1f);
 	_sceneData.sunlightColor = glm::vec4(1.0f);
 	_sceneData.sunlightDirection = glm::vec4(0.f, 1.f, 0.5f, 1.f);
+
+	glm::vec3 lightDir = glm::normalize(glm::vec3(_sceneData.sunlightDirection));
+	glm::vec3 lightPos = _camera.position + lightDir * 35.0f;
+	glm::mat4 lightView = glm::lookAt(lightPos, _camera.position, glm::vec3(0.0f, 1.0f, 0.0f));
+	float orthoSize = 35.0f;
+	glm::mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 80.0f);
+	lightProj[1][1] *= -1.0f;
+	_sceneData.sunlightViewproj = lightProj * lightView;
 }

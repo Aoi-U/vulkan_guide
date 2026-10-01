@@ -8,6 +8,8 @@
 #include <core/cvars.h>
 #include <graphics/pass/FrustumCullpass.h>
 #include <graphics/pass/ForwardPass.h>
+#include <graphics/pass/ShadowPass.h>
+#include <graphics/pass/SkyboxPass.h>
 
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
 
@@ -24,13 +26,23 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 
 	dispatcher.sink<Events::WindowResizeEvent>().connect<&Renderer::on_window_resize>(this);
 
+	// create compute passes
 	std::unique_ptr<FrustumCullPass> frustumCullPass = std::make_unique<FrustumCullPass>();
 	frustumCullPass->init(_vulkanCore);
 	_computePasses.push_back(std::move(frustumCullPass));
 
+	// create render passes
+	std::unique_ptr<ShadowPass> shadowPass = std::make_unique<ShadowPass>();
+	shadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+	_renderPasses.push_back(std::move(shadowPass));
+
 	std::unique_ptr<ForwardPass> forwardPass = std::make_unique<ForwardPass>();
 	forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));	
 	_renderPasses.push_back(std::move(forwardPass));
+
+	std::unique_ptr<SkyboxPass> skyboxPass = std::make_unique<SkyboxPass>();
+	skyboxPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+	_renderPasses.push_back(std::move(skyboxPass));
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -83,6 +95,12 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	extract_scene_data(registry, ctx);
 
 	if (VkCommandBuffer cmd = begin_frame()) {
+		FrameData& currentFrame = get_current_frame();
+		// allocate a new uniform buffer for scene data
+		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		// write scene data to the buffer
+		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
+
 		for (auto& pass : _computePasses) {
 			pass->dispatch(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
 		}
@@ -434,5 +452,31 @@ void Renderer::create_render_targets()
 		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
 		}, windowExtent);
+
+	// create shadow map target
+	_resourceManager.register_target({
+		.name = "ShadowMap",
+		.sizePolicy = TargetSizePolicy::Absolute,
+		.absoluteExtent = { 2048, 2048 },
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
+		}, windowExtent);
+
+	// create skybox target
+	_resourceManager.register_target({
+		.name = "SkyCubemap",
+		.sizePolicy = TargetSizePolicy::Absolute,
+		.absoluteExtent = { 256, 256 },
+		.format = VK_FORMAT_R8G8B8A8_UNORM,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+		.mipLevels = 1,
+		.arrayLayers = 6,
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, windowExtent);
+
+	_resourceManager.generate_procedural_cubemap("SkyCubemap");
 }
 

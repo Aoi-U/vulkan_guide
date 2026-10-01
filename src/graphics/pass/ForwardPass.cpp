@@ -20,9 +20,11 @@ void ForwardPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLay
 	_materialDescriptorLayout = materialLayout;
 
 	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: uniform buffer for scene data
+	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for object data
+	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 2: storage buffer for instance data
+	builder.add_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 3: combined image sampler for shadow map
+	builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 4: combined image sampler for cubemap
 	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	build_pipelines(colorFormat, depthFormat);
@@ -53,7 +55,9 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, RenderResou
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
-	// transition color and depth attachments to correct state
+	// transition resources to the correct states for rendering
+	resources.transition(cmd, "ShadowMap", ResourceState::ShaderReadOnly);
+	resources.transition(cmd, "SkyCubemap", ResourceState::ShaderReadOnly);
 	resources.transition(cmd, "SceneColor", ResourceState::ColorAttachment);
 	resources.transition(cmd, "SceneDepth", ResourceState::DepthAttachment);
 
@@ -64,12 +68,6 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, RenderResou
 
 	vkCmdBeginRendering(cmd, &renderInfo);
 
-	// allocate a new uniform buffer for scene data
-	_vulkanCore->check_and_resize_buffer(frameData.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	// write scene data to the buffer
-	GPUSceneData* sceneUniformData = (GPUSceneData*)frameData.sceneDataBuffer.info.pMappedData;
-	*sceneUniformData = sceneData;
-
 	// create a descriptor set that binds the scene data buffer and update it
 	VkDescriptorSet globalDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _sceneDataDescriptorLayout);
 
@@ -77,6 +75,8 @@ void ForwardPass::render(VkCommandBuffer cmd, FrameData & frameData, RenderResou
 	writer.write_buffer(0, frameData.sceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	writer.write_buffer(1, frameData._gpuObjectBuffer.buffer, sizeof(GPUObjectData) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.write_buffer(2, frameData._gpuInstanceBuffer.buffer, sizeof(uint32_t) * ctx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_image(3, resources.get_view("ShadowMap"), _vulkanCore->_shadowSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	writer.write_image(4, resources.get_view("SkyCubemap"), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	// set dynamic viewport and scissor
@@ -142,10 +142,12 @@ void ForwardPass::build_pipelines(VkFormat colorFormat, VkFormat depthFormat)
 	VkShaderModule meshFragShader;
 	if (!vkutil::load_shader_module("../../shaders/mesh.frag.spv", device, &meshFragShader)) {
 		fmt::println("Error when building the mesh fragment shader module");
+		return;
 	}
 	VkShaderModule meshVertexShader;
 	if (!vkutil::load_shader_module("../../shaders/mesh.vert.spv", device, &meshVertexShader)) {
 		fmt::println("Error when building the mesh vertex shader module");
+		return;
 	}
 
 	// set 0 = scene data, set 1 = material data from MaterialSystem

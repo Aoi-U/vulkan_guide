@@ -14,6 +14,7 @@ enum class TargetSizePolicy {
 	Absolute // fixed size
 };
 
+// description of a render target 
 struct RenderTargetDescription
 {
 	std::string name;
@@ -34,7 +35,7 @@ struct RenderTarget
 	RenderTargetDescription description;
 	AllocatedImage image;
 	ResourceState currentState{ ResourceState::Undefined };
-	std::vector<VkImageView> faceViews;
+	std::vector<VkImageView> faceViews; // used for cube maps
 };
 
 class RenderResourceManager
@@ -53,6 +54,8 @@ public:
 	void transition(VkCommandBuffer cmd, const std::string name, ResourceState newState);
 	// transition multiple render targets to new states
 	void transition_all(VkCommandBuffer cmd, std::span<const std::pair<std::string, ResourceState>> transitions);
+
+	void generate_procedural_cubemap(const std::string& name);
 
 	// getters
 	AllocatedImage& get_image(const std::string& name);
