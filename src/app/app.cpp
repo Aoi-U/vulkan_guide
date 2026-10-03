@@ -34,6 +34,8 @@ void App::init()
 	_assetManager.init(_vulkanCore.get(), _materialSystem.get());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
 
+	_renderer->set_gui_renderer(_guiRenderer.get());
+
 	_registry.ctx().emplace<entt::dispatcher>();
 
 	dispatcher.sink<Events::WindowCloseEvent>().connect<&App::on_window_close>(this);
@@ -78,10 +80,7 @@ void App::run()
 
 		update_scene(_deltaTime);
 
-		_renderer->render_frame(_registry, _sceneData,
-			[&](VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D extent) {
-				_guiRenderer->render(cmd, targetImageView, extent);
-			});
+		_renderer->render_frame(_registry, _sceneData);
 	}
 }
 
@@ -127,29 +126,56 @@ void App::update_scene(float deltaTime) {
 	_sceneData.cameraPosition = glm::vec4(_camera.position, 1.0f);
 
 	_sceneData.ambientColor = glm::vec4(0.03f, 0.03f, 0.03f, 1.0f);
-	_sceneData.sunlightColor = glm::vec4(1.0f, 0.98f, 0.90f, 1.0f);
-	_sceneData.sunlightDirection = glm::vec4(0.4f, 1.0f, 0.3f, 3.0f); // intensity 3.0
 
-	glm::vec3 lightDir = glm::normalize(glm::vec3(_sceneData.sunlightDirection));
-	glm::vec3 lightPos = _camera.position + lightDir * 35.0f;
-	glm::mat4 lightView = glm::lookAt(lightPos, _camera.position, glm::vec3(0.0f, 1.0f, 0.0f));
-	float orthoSize = 35.0f;
-	glm::mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 80.0f);
-	lightProj[1][1] *= -1.0f;
-	_sceneData.sunlightViewproj = lightProj * lightView;
+	// default fallback directional light values
+	_sceneData.sunlightColor = glm::vec4(0.0f);
+	_sceneData.sunlightDirection = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+	_sceneData.sunlightViewproj = glm::mat4(1.0f);
 
-	// pbr point lights
-	_sceneData.pointLights[0].position = glm::vec4(-10.0f, 10.0f, 10.0f, 1.0f);
-	_sceneData.pointLights[0].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+	// directional light
+	auto dirLightView = _registry.view<const DirectionalLightComponent>();
+	for (auto [entity, dirLight] : dirLightView.each()) {
+		if (!dirLight.visible) continue;
 
-	_sceneData.pointLights[1].position = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
-	_sceneData.pointLights[1].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+		_sceneData.sunlightColor = glm::vec4(dirLight.color, 1.0f);
+		_sceneData.sunlightDirection = glm::vec4(glm::normalize(dirLight.direction), dirLight.intensity);
 
-	_sceneData.pointLights[2].position = glm::vec4(-10.0f, -10.0f, 10.0f, 1.0f);
-	_sceneData.pointLights[2].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+		glm::vec3 lightDir = glm::normalize(dirLight.direction);
+		glm::vec3 lightPos = _camera.position + lightDir * dirLight.shadowExtent;
+		glm::mat4 lightView = glm::lookAt(lightPos, _camera.position, glm::vec3(0.0f, 1.0f, 0.0f));
+		float orthoSize = dirLight.shadowExtent;
+		glm::mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 80.0f);
+		lightProj[1][1] *= -1.0f;
+		_sceneData.sunlightViewproj = lightProj * lightView;
 
-	_sceneData.pointLights[3].position = glm::vec4(10.0f, -10.0f, 10.0f, 1.0f);
-	_sceneData.pointLights[3].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+		break; // Primary sun light
+	}
 
-	_sceneData.lightCount = glm::vec4(4.0f, 0.0f, 0.0f, 0.0f);
+	// point lights
+	uint32_t activePointLights = 0;
+	int shadowPointLightIndex = -1;
+	float shadowFarPlane = 1.0f;
+
+	auto pointLightView = _registry.view<const PointLightComponent>();
+	for (auto [entity, pl] : pointLightView.each()) {
+		if (!pl.visible) continue;
+		if (activePointLights >= MAX_POINT_LIGHTS) break;
+
+		glm::vec3 pos(0.0f);
+		if (const auto* tc = _registry.try_get<TransformComponent>(entity)) {
+			pos = tc->position;
+		}
+
+		_sceneData.pointLights[activePointLights].position = glm::vec4(pos, pl.radius);
+		_sceneData.pointLights[activePointLights].color = glm::vec4(pl.color, pl.intensity);
+		_sceneData.pointLights[activePointLights].params = glm::vec4(pl.castShadow ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f);
+
+		if (pl.castShadow && shadowPointLightIndex < 0) {
+			shadowPointLightIndex = static_cast<int>(activePointLights);
+			shadowFarPlane = pl.radius;
+		}
+
+		activePointLights++;
+	}
+	_sceneData.lightCount = glm::vec4(static_cast<float>(activePointLights), static_cast<float>(shadowPointLightIndex), shadowFarPlane, 0.0f);
 }

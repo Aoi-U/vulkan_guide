@@ -62,6 +62,7 @@ public:
 	VkExtent2D get_extent(const std::string& name) const;
 	VkFormat get_format(const std::string& name) const;
 	ResourceState get_state(const std::string& name) const;
+	VkImageView get_face_view(const std::string& name, uint32_t face) const { return _targets.at(name).faceViews.at(face); }
 	const RenderTargetDescription& get_description(const std::string& name) const { return _targets.at(name).description; }
 	bool has_target(const std::string& name) const;
 

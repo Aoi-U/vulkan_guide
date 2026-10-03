@@ -2,7 +2,10 @@ struct PointLight
 {
 	vec4 position;
 	vec4 color;
+	vec4 params; // x: cast shadow, yzw padding
 };
+
+const int MAX_POINT_LIGHTS = 256;
 
 layout (set = 0, binding = 0) uniform SceneData
 {
@@ -14,7 +17,7 @@ layout (set = 0, binding = 0) uniform SceneData
   vec4 ambientColor;
   vec4 sunlightDirection; // w for sun power
   vec4 sunlightColor;
-  PointLight pointLights[4];
+  PointLight pointLights[MAX_POINT_LIGHTS];
   vec4 lightCount;
 } sceneData;
 

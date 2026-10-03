@@ -32,3 +32,21 @@ struct MeshComponent
 	std::shared_ptr<LoadedGLTF> mesh;
 	bool visible{ true };
 };
+
+struct PointLightComponent
+{
+	glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+	float intensity{ 300.0f };
+	float radius{ 10.0f };
+	bool castShadow{ false };
+	bool visible{ true };
+};
+
+struct DirectionalLightComponent
+{
+	glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+	float intensity{ 3.0f };
+	glm::vec3 direction{ 0.4f, 1.0f, 0.3f };
+	float shadowExtent{ 35.0f };
+	bool visible{ true };
+};

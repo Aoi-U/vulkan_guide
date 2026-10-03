@@ -40,7 +40,7 @@ private:
 
 	AssetManager _assetManager;
 	Camera _camera;
-	GPUSceneData _sceneData{};
+	GPUSceneData _sceneData;
 
 	float _deltaTime{ 0.f };
 	float _frameTime{ 0.f };

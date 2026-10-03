@@ -87,10 +87,13 @@ struct GPUObjectData
 	uint32_t batchOffset;
 };
 
+constexpr uint32_t MAX_POINT_LIGHTS = 256;
+
 struct GPUPointLight
 {
 	glm::vec4 position; // w component for light radius
 	glm::vec4 color; // w component for light power
+	glm::vec4 params; // x: cast shadow, yzw: padding
 };
 
 // per frame uniform data sent to GPU
@@ -104,7 +107,7 @@ struct GPUSceneData
 	glm::vec4 ambientColor;
 	glm::vec4 sunlightDirection; // w component for sun power
 	glm::vec4 sunlightColor;
-	GPUPointLight pointLights[4];
+	GPUPointLight pointLights[MAX_POINT_LIGHTS];
 	glm::vec4 lightCount; // active point light count
 };
 

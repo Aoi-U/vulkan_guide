@@ -14,10 +14,21 @@ layout (set = 0, binding = 3) uniform sampler2D shadowMap;
 layout (set = 0, binding = 4) uniform samplerCube irradianceMap;
 layout (set = 0, binding = 5) uniform samplerCube prefilterMap;
 layout (set = 0, binding = 6) uniform sampler2D brdfLUT;
+layout (set = 0, binding = 7) uniform samplerCube pointShadowMap; 
 
 const float PI = 3.14159265359;
 
 // https://learnopengl.com/PBR/Lighting
+// https://learnopengl.com/Advanced-Lighting/Shadows/Point-Shadows
+
+// 20-sample spherical distribution for omnidirectional PCF 
+const vec3 sampleOffsetDirections[20] = vec3[](
+   vec3( 1,  1,  1), vec3( 1, -1,  1), vec3(-1, -1,  1), vec3(-1,  1,  1), 
+   vec3( 1,  1, -1), vec3( 1, -1, -1), vec3(-1, -1, -1), vec3(-1,  1, -1),
+   vec3( 1,  1,  0), vec3( 1, -1,  0), vec3(-1, -1,  0), vec3(-1,  1,  0),
+   vec3( 1,  0,  1), vec3(-1,  0,  1), vec3( 1,  0, -1), vec3(-1,  0, -1),
+   vec3( 0,  1,  1), vec3( 0, -1,  1), vec3( 0, -1, -1), vec3( 0,  1, -1)
+);
 
 float DistributionGGX(vec3 N, vec3 H, float roughness)
 {
@@ -76,7 +87,7 @@ float calculate_shadow(vec3 worldPos, vec3 normal, vec3 lightDir)
         return 0.0;
     }
 
-    float bias = max(0.003 * (1.0 - max(dot(normal, lightDir), 0.0)), 0.0008);
+    float bias = max(0.002 * (1.0 - max(dot(normal, lightDir), 0.0)), 0.0005);
     float shadow = 0.0;
     vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
 
@@ -87,6 +98,28 @@ float calculate_shadow(vec3 worldPos, vec3 normal, vec3 lightDir)
         }
     }
     return shadow / 9.0;
+}
+
+float calculate_point_shadow(vec3 fragPos, vec3 lightPos, vec3 normal, float farPlane) {
+    vec3 fragToLight = fragPos - lightPos;
+    float currentDepth = length(fragToLight);
+
+    // Adaptive bias based on surface angle
+    float bias = max(0.25 * (1.0 - max(dot(normal, normalize(-fragToLight)), 0.0)), 0.05);
+
+    float viewDistance = length(sceneData.cameraPosition.xyz - fragPos);
+    float diskRadius = (1.0 + (viewDistance / farPlane)) / 25.0;
+
+    float shadow = 0.0;
+    const int samples = 20;
+    for (int i = 0; i < samples; ++i) {
+        float closestDepth = texture(pointShadowMap, fragToLight + sampleOffsetDirections[i] * diskRadius).r;
+        closestDepth *= farPlane; // Undo mapping to [0, 1]
+        if (currentDepth - bias > closestDepth) {
+            shadow += 1.0;
+        }
+    }
+    return shadow / float(samples);
 }
 
 void main()
@@ -138,32 +171,55 @@ void main()
         Lo += (kD * albedo / PI + specular) * radiance * NdotL * (1.0 - shadow);
     }
 
-    // pointl lights 
+    // point lights 
     int numLights = int(sceneData.lightCount.x);
+    int shadowLightIndex = int(sceneData.lightCount.y);
+
     for (int i = 0; i < numLights; ++i) {
         vec3 lightPos = sceneData.pointLights[i].position.xyz;
-        vec3 lightColor = sceneData.pointLights[i].color.xyz * sceneData.pointLights[i].color.w;
+        float radius = sceneData.pointLights[i].position.w;
+        float distance = length(lightPos - inWorldPos);
+
+        // skip lights outside their influence radius
+        if (distance >= radius) {
+            continue;
+        }
 
         vec3 L = normalize(lightPos - inWorldPos);
-        vec3 H = normalize(V + L);
-        float distance = length(lightPos - inWorldPos);
-        float attenuation = 1.0 / (distance * distance);
+        float NdotL = max(dot(N, L), 0.0);
+
+        // skip surfaces facing away from light
+        if (NdotL <= 0.0) {
+            continue;
+        }
+
+        bool castShadow = (sceneData.pointLights[i].params.x > 0.5);
+        float shadow = 0.0;
+        if (castShadow && shadowLightIndex == i) {
+            shadow = calculate_point_shadow(inWorldPos, lightPos, N, radius);
+        }
+
+        // smooth falloff for point lights to eliminate hard edges at the lights influence radius
+        float distOverRadius = distance / radius;
+        float window = clamp(1.0 - distOverRadius * distOverRadius * distOverRadius * distOverRadius, 0.0, 1.0);
+        float attenuation = (window * window) / (distance * distance + 1.0);
+
+        vec3 lightColor = sceneData.pointLights[i].color.xyz * sceneData.pointLights[i].color.w;
         vec3 radiance = lightColor * attenuation;
 
+        vec3 H = normalize(V + L);
         float NDF = DistributionGGX(N, H, roughness);
         float G = GeometrySmith(N, V, L, roughness);
         vec3 F = fresnelSchlick(max(dot(H, V), 0.0), F0);
 
         vec3 numerator = NDF * G * F;
-        float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) + 0.0001;
+        float denominator = 4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001;
         vec3 specular = numerator / denominator;
 
         vec3 kS = F;
-        vec3 kD = vec3(1.0) - kS;
-        kD *= 1.0 - metallic;
+        vec3 kD = (vec3(1.0) - kS) * (1.0 - metallic);
 
-        float NdotL = max(dot(N, L), 0.0);
-        Lo += (kD * albedo / PI + specular) * radiance * NdotL;
+        Lo += (kD * albedo / PI + specular) * radiance * NdotL * (1.0 - shadow);
     }
 
     // IBL

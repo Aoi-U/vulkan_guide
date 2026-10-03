@@ -6,7 +6,7 @@
 #include <resources/vk_loader.h>
 #include <core/Components.h>
 #include <core/cvars.h>
-
+#include "graphics/GuiRenderer.h"
 #include "graphics/RenderGraph.h"
 
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
@@ -33,6 +33,9 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	_shadowPass = std::make_unique<ShadowPass>();
 	_shadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
 
+	_pointShadowPass = std::make_unique<PointShadowPass>();
+	_pointShadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), VK_FORMAT_D32_SFLOAT);
+
 	_forwardPass = std::make_unique<ForwardPass>();
 	_forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));	
 
@@ -49,6 +52,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	//_meshRenderer->cleanup();
 	_frustumCullPass->cleanup();
 	_forwardPass->cleanup();
+	_pointShadowPass->cleanup();
 	_shadowPass->cleanup();
 	_skyboxPass->cleanup();
 
@@ -83,7 +87,7 @@ void Renderer::on_window_resize(const Events::WindowResizeEvent& event)
 	_pendingResizeExtent = { event.width, event.height };
 }
 
-void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction)
+void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData)
 {
 	DrawContext drawCtx;
 	extract_scene_data(registry, drawCtx);
@@ -92,6 +96,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	if (VkCommandBuffer cmd = begin_frame()) {
 		RenderContext ctx(cmd);
 		FrameData& currentFrame = get_current_frame();
+
 		// upload scene data 
 		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
@@ -102,19 +107,29 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.set_execute_callback([&](RenderContext& ctx) {
 			_frustumCullPass->dispatch(ctx, currentFrame, drawCtx, sceneData, _drawExtent);
 				});
+
 		graph.add_pass("ShadowPass")
 			.set_depth_attachment("ShadowMap", VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
 			_shadowPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
 		});
+
+		graph.add_pass("PointShadowPass")
+			.write("PointShadowMap", ResourceState::DepthAttachment)
+			.set_execute_callback([&](RenderContext& ctx) {
+			_pointShadowPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+				});
+
 		graph.add_pass("ForwardPass")
 			.read("ShadowMap", ResourceState::ShaderReadOnly)
+			.read("PointShadowMap", ResourceState::ShaderReadOnly)
 			.read("SkyCubemap", ResourceState::ShaderReadOnly)
 			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
 			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
 			_forwardPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
 				});
+
 		graph.add_pass("SkyboxPass")
 			.read("SkyCubemap", ResourceState::ShaderReadOnly)
 			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_LOAD)
@@ -127,17 +142,15 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		graph.execute(ctx);
 
 		blit_to_swapchain(cmd);
-
-		// render gui
-		if (guiDrawFunction) {
+		
+		if (_guiRenderer) {
 			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
-			guiDrawFunction(cmd, swapchainImageView, _swapchain.get_extent());
+			_guiRenderer->render(cmd, swapchainImageView, _swapchain.get_extent());
 		}
 
 		end_frame();
 	}
 }
-
 
 VkCommandBuffer Renderer::begin_frame()
 {
@@ -395,6 +408,7 @@ const std::vector<PassStats> Renderer::get_stats() const
 	std::vector<PassStats> stats;
 	stats.push_back(_frustumCullPass->get_stats());
 	stats.push_back(_shadowPass->get_stats());
+	stats.push_back(_pointShadowPass->get_stats());
 	stats.push_back(_forwardPass->get_stats());
 	stats.push_back(_skyboxPass->get_stats());
 
@@ -473,6 +487,20 @@ void Renderer::create_render_targets()
 		.absoluteExtent = { 2048, 2048 },
 		.format = VK_FORMAT_D32_SFLOAT,
 		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
+		}, windowExtent);
+
+	// create point shadow target
+	_resourceManager.register_target({
+		.name = "PointShadowMap",
+		.sizePolicy = TargetSizePolicy::Absolute,
+		.absoluteExtent = { 1024, 1024 },
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.mipLevels = 1,
+		.arrayLayers = 6,
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
 		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
 		}, windowExtent);
 

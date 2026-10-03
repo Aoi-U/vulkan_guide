@@ -1,22 +1,35 @@
-#include "Editor.h"
+#include "app/Editor.h"
 
-#include <graphics/utils/UIWidgets.h>
-#include <core/Components.h>
-#include <graphics/pass/RenderPass.h>
-#include <core/cvars.h>
-#include <core/Events.h>
-#include <filesystem>
+#include "app/editor/HierarchyPanel.h"
+#include "app/editor/InspectorPanel.h"
+#include "app/editor/EnvironmentPanel.h"
+#include "app/editor/PerformancePanel.h"
+#include "app/editor/CVarPanel.h"
+#include <imgui_impl_sdl2.h>
+
+Editor::Editor()
+{
+	add_panel<HierarchyPanel>();
+	add_panel<InspectorPanel>();
+	add_panel<EnvironmentPanel>();
+	add_panel<PerformancePanel>();
+	add_panel<CVarPanel>();
+}
 
 void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats)
 {
-	draw_performance_panel(stats);
-	draw_entity_hierarchy_panel(registry);
-	draw_entity_inspector_panel(registry, assetManager);
-	draw_environment_panel(registry);
-	
-	ImGui::Begin("Console Variables");
-	CVarSystem::Get()->DrawCVarEditor();
-	ImGui::End();
+	draw_main_menu_bar();
+
+	EditorContext ctx{
+		.registry = registry,
+		.assetManager = assetManager,
+		.stats = stats,
+		.selectedEntity = _selectedEntity
+	};
+
+	for (auto& panel : _panels) {
+		panel->on_draw(ctx);
+	}
 }
 
 void Editor::on_input_event(const Events::SDLInputEvent& event)
@@ -41,271 +54,15 @@ bool Editor::want_capture_keyboard() const
 	return ImGui::GetIO().WantCaptureKeyboard;
 }
 
-void Editor::draw_entity_hierarchy_panel(entt::registry& registry)
+void Editor::draw_main_menu_bar()
 {
-	ImGui::Begin("Scene Hierarchy");
-
-	if (ImGui::Button("+ Create Entity")) {
-		entt::entity entity = registry.create();
-		registry.emplace<TagComponent>(entity, "Entity " + std::to_string(static_cast<uint32_t>(entity)));
-		_selectedEntity = entity;
-	}
-
-	ImGui::Separator();
-
-	entt::entity entityToDestroy = entt::null;
-
-	auto view = registry.view<TagComponent>();
-	for (auto entity : view) {
-		auto& tagComp = view.get<TagComponent>(entity);
-
-		ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
-		if (_selectedEntity == entity) {
-			flags |= ImGuiTreeNodeFlags_Selected;
-		}
-
-		bool opened = ImGui::TreeNodeEx(
-			reinterpret_cast<void*>(static_cast<uint64_t>(static_cast<uint32_t>(entity))),
-			flags,
-			"%s",
-			tagComp.tag.c_str()
-		);
-
-		if (ImGui::IsItemClicked()) {
-			_selectedEntity = entity;
-		}
-
-		if (ImGui::BeginPopupContextItem()) {
-			if (ImGui::MenuItem("Destroy Entity")) {
-				entityToDestroy = entity;
+	if (ImGui::BeginMainMenuBar()) {
+		if (ImGui::BeginMenu("Window")) {
+			for (auto& panel : _panels) {
+				ImGui::MenuItem(panel->get_name(), nullptr, &panel->is_open);
 			}
-			ImGui::EndPopup();
+			ImGui::EndMenu();
 		}
-
-		if (opened) {
-			ImGui::TreePop();
-		}
+		ImGui::EndMainMenuBar();
 	}
-
-	// destroy the entity if marked 
-	if (entityToDestroy != entt::null && registry.valid(entityToDestroy)) {
-		registry.ctx().get<entt::dispatcher>().trigger<Events::EntityDestroyedEvent>({ entityToDestroy });
-
-		registry.destroy(entityToDestroy);
-	}
-
-	if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered()) {
-		_selectedEntity = entt::null;
-	}
-
-	ImGui::End();
-}
-
-// renders a selectable component if the entity does not already have ComponentT.
-// emplaces ComponentT when clicked and closes the popup.
-template<typename ComponentT, typename... Args>
-void DrawComponentMenuItem(entt::registry& registry, entt::entity entity, std::string_view name, Args&&... args) {
-	if (!registry.all_of<ComponentT>(entity)) {
-		if (ImGui::MenuItem(name.data())) {
-			registry.emplace<ComponentT>(entity, std::forward<Args>(args)...);
-			ImGui::CloseCurrentPopup();
-		}
-	}
-}
-
-
-void Editor::draw_entity_inspector_panel(entt::registry& registry, AssetManager& assetManager) {
-	ImGui::Begin("Inspector");
-
-	if (_selectedEntity == entt::null || !registry.valid(_selectedEntity)) {
-		ImGui::TextDisabled("No entity selected.");
-		ImGui::End();
-		return;
-	}
-
-	// tag Component 
-	if (registry.all_of<TagComponent>(_selectedEntity)) {
-		auto& tag = registry.get<TagComponent>(_selectedEntity).tag;
-		std::array<char, 256> buffer{};
-		strncpy(buffer.data(), tag.c_str(), sizeof(buffer) - 1);
-		if (ImGui::InputText("Tag", buffer.data(), sizeof(buffer))) {
-			tag = std::string(buffer.data());
-		}
-	}
-	ImGui::Separator();
-
-	// add domponent dropdown 
-	if (ImGui::Button("Add Component")) {
-		ImGui::OpenPopup("AddComponentPopup");
-	}
-
-	if (ImGui::BeginPopup("AddComponentPopup")) {
-		DrawComponentMenuItem<TransformComponent>(registry, _selectedEntity, "Transform");
-		DrawComponentMenuItem<MeshComponent>(registry, _selectedEntity, "Mesh");
-
-		ImGui::EndPopup();
-	}
-
-	ImGui::Separator();
-
-	// component inspectors 
-
-	// transform component
-	if (registry.all_of<TransformComponent>(_selectedEntity)) {
-		if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-			auto& tc = registry.get<TransformComponent>(_selectedEntity);
-			UIWidgets::DrawVec3Control("Position", tc.position, glm::vec3(0.0f), 0.1f);
-			UIWidgets::DrawVec3Control("Rotation", tc.rotation, glm::vec3(0.0f), 0.5f);
-			UIWidgets::DrawVec3Control("Scale", tc.scale, glm::vec3(1.0f), 0.05f, &_lockScale);
-
-			if (ImGui::Button("Remove Transform")) {
-				registry.remove<TransformComponent>(_selectedEntity);
-			}
-		}
-		ImGui::Separator();
-	}
-
-	// mesh component
-	if (registry.all_of<MeshComponent>(_selectedEntity)) {
-		if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
-			auto& mc = registry.get<MeshComponent>(_selectedEntity);
-			ImGui::Checkbox("Visible", &mc.visible);
-
-			auto& assets = assetManager.getAssets();
-			std::string currentAssetName = "None";
-			for (const auto& [name, asset] : assets) {
-				if (asset == mc.mesh) {
-					currentAssetName = name;
-					break;
-				}
-			}
-
-			if (ImGui::BeginCombo("Scene Asset", currentAssetName.c_str())) {
-				bool isNoneSelected = (mc.mesh == nullptr);
-				if (ImGui::Selectable("None", isNoneSelected)) {
-					mc.mesh = nullptr;
-				}
-				if (isNoneSelected) {
-					ImGui::SetItemDefaultFocus();
-				}
-
-				for (const auto& [name, asset] : assets) {
-					bool isSelected = (asset == mc.mesh);
-					if (ImGui::Selectable(name.c_str(), isSelected)) {
-						mc.mesh = asset;
-					}
-					if (isSelected) {
-						ImGui::SetItemDefaultFocus();
-					}
-				}
-				ImGui::EndCombo();
-			}
-
-			if (ImGui::Button("Remove Mesh")) {
-				registry.remove<MeshComponent>(_selectedEntity);
-			}
-		}
-		ImGui::Separator();
-	}
-
-	ImGui::End();
-}
-
-void Editor::draw_environment_panel(entt::registry& registry)
-{
-	ImGui::Begin("Environment & IBL");
-
-	auto& dispatcher = registry.ctx().get<entt::dispatcher>();
-
-	ImGui::Text("Active Source: %s", _currentEnvLabel.c_str());
-	ImGui::Separator();
-
-	ImGui::InputText("HDR File", _hdrPathBuffer.data(), _hdrPathBuffer.size());
-
-	const std::filesystem::path targetPath(_hdrPathBuffer.data());
-	const bool fileExists = std::filesystem::exists(targetPath);
-
-	if (!fileExists && _hdrPathBuffer[0] != '\0') {
-		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Warning: File does not exist!");
-	}
-
-	// trigger LoadEnvironmentEvent
-	if (ImGui::Button("Load HDR")) {
-		if (fileExists) {
-			dispatcher.trigger<Events::LoadEnvironmentEvent>({ targetPath });
-			_currentEnvLabel = targetPath.filename().string();
-			_envStatusMessage = "Loaded: " + _currentEnvLabel;
-			_envStatusError = false;
-		}
-		else {
-			_envStatusMessage = "Failed: File path not found.";
-			_envStatusError = true;
-		}
-	}
-
-	ImGui::SameLine();
-
-	// Trigger ResetEnvironmentEvent
-	if (ImGui::Button("Reset to Procedural")) {
-		dispatcher.trigger<Events::ResetEnvironmentEvent>({});
-		_currentEnvLabel = "Procedural Sky";
-		_envStatusMessage = "Reset to procedural sky.";
-		_envStatusError = false;
-	}
-
-	// status feedback
-	if (!_envStatusMessage.empty()) {
-		ImGui::Separator();
-		ImVec4 msgColor = _envStatusError ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.3f, 0.8f, 0.3f, 1.0f);
-		ImGui::TextColored(msgColor, "%s", _envStatusMessage.c_str());
-	}
-
-	ImGui::End();
-}
-
-void Editor::draw_performance_panel(const EngineStats& stats)
-{
-	ImGui::Begin("Performance");
-
-	ImGui::Text("Frametime:  %.2f ms", stats.frameTimeMs);
-	ImGui::Text("Framerate:  %.1f FPS", stats.fps);
-	ImGui::Separator();
-
-
-	//ImGui::Text("Draw Calls:     %d", stats.renderStats.drawcallCount);
-	//ImGui::Text("Triangles:      %d", stats.renderStats.triangleCount);
-	//ImGui::Text("Mesh Pass Time: %.2f ms", stats.renderStats.passTime);
-	
-	for (const auto& passStats : stats.renderStats) {
-		ImGui::TextColored(ImVec4(0.3f, 0.7f, 1.0f, 1.0f), "%s", passStats.name.c_str());
-		ImGui::Text("  Pass Time: %.2f ms", passStats.passTimeMs);
-
-		for (const auto& metric : passStats.metrics) {
-			std::visit([&](const auto& val) {
-				using T = std::decay_t<decltype(val)>;
-				if constexpr (std::is_same_v<T, uint32_t> || std::is_same_v<T, int32_t>) {
-					if (metric.unit.empty()) {
-						ImGui::Text("  %s: %d", metric.name.c_str(), val);
-					}
-					else {
-						ImGui::Text("  %s: %d %s", metric.name.c_str(), val, metric.unit.c_str());
-					}
-				}
-				else if constexpr (std::is_same_v<T, float>) {
-					if (metric.unit.empty()) {
-						ImGui::Text("  %s: %.2f", metric.name.c_str(), val);
-					}
-					else {
-						ImGui::Text("  %s: %.2f %s", metric.name.c_str(), val, metric.unit.c_str());
-					}
-				}
-				else if constexpr (std::is_same_v<T, std::string>) {
-					ImGui::Text("  %s: %s", metric.name.c_str(), val.c_str());
-				}
-				}, metric.value);
-		}
-		ImGui::Separator();
-	}
-
-	ImGui::End();
 }

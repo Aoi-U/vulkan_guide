@@ -19,7 +19,7 @@ void ShadowPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayo
 		.pushConstants = { {.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(glm::mat4) } },
 		.depthAttachmentFormat = depthFormat,
 		.depthState = {.depthTest = true, .depthWrite = true, .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL },
-		.rasterState = {.cullMode = VK_CULL_MODE_BACK_BIT, .frontFace = VK_FRONT_FACE_CLOCKWISE }
+		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE }
 	};
 
 	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), pipeDesc);

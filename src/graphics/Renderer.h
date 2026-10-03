@@ -7,6 +7,7 @@
 #include <graphics/pass/ForwardPass.h>
 #include <graphics/pass/ShadowPass.h>
 #include <graphics/pass/SkyboxPass.h>
+#include <graphics/pass/PointShadowPass.h>
 
 #include <graphics/MaterialSystem.h>
 #include <graphics/IBLSystem.h>
@@ -17,6 +18,8 @@
 #include <entt.hpp>
 #include <vector>
 #include <core/Events.h>
+
+class GuiRenderer;
 
 struct IndirectBatch
 {
@@ -81,10 +84,10 @@ public:
 
 	void on_window_resize(const Events::WindowResizeEvent& event);
 
-	using GuiDrawFunction = std::function<void(VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D drawExtent)>;
-	//void render_scene(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction = nullptr);
+	void set_gui_renderer(GuiRenderer* guiRenderer) { _guiRenderer = guiRenderer; }
+	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
 
-	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction = nullptr);
+	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
 
 	void recreate_swapchain();
 
@@ -118,22 +121,25 @@ private:
 	bool _resizeRequested{ false };
 	VkExtent2D _pendingResizeExtent{ 0, 0 };
 
+	GuiRenderer* _guiRenderer{ nullptr };
+
 	std::unique_ptr<FrustumCullPass> _frustumCullPass;
 	std::unique_ptr<ForwardPass> _forwardPass;
 	std::unique_ptr<ShadowPass> _shadowPass;
+	std::unique_ptr<PointShadowPass> _pointShadowPass;
 	std::unique_ptr<SkyboxPass> _skyboxPass;
 
 	IBLSystem _iblSystem;
+
+	// frame rendering functions
+	VkCommandBuffer begin_frame();
+	void end_frame();
 
 	// renderer initialization functions
 	void create_command_buffers();
 	void create_sync_structures();
 	void create_render_targets();
 	
-	// frame rendering functions
-	VkCommandBuffer begin_frame();
-	void end_frame();
-
 	void blit_to_swapchain(VkCommandBuffer cmd);
 
 	void extract_scene_data(const entt::registry& registry, DrawContext& ctx);
