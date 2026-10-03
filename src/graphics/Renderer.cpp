@@ -16,6 +16,8 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	_window = window;
 	_vulkanCore = vulkanCore;
 
+	_viewportExtent = _window->get_extent();
+
 	_resourceManager.init(_vulkanCore);
 	_iblSystem.init(_vulkanCore);
 
@@ -95,6 +97,21 @@ void Renderer::on_window_resize(const Events::WindowResizeEvent& event)
 {
 	_resizeRequested = true;
 	_pendingResizeExtent = { event.width, event.height };
+}
+
+void Renderer::set_viewport_extent(VkExtent2D extent)
+{
+	if (extent.width == 0 || extent.height == 0)
+		return;
+
+	if (_viewportExtent.width == extent.width && _viewportExtent.height == extent.height)
+		return;
+
+	vkDeviceWaitIdle(_vulkanCore->get_device());
+
+	// resize swapchain and all window relative render targets
+	_viewportExtent = extent;
+	_resourceManager.on_window_resize(_viewportExtent);
 }
 
 void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData)
@@ -181,7 +198,12 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		graph.compile();
 		graph.execute(ctx);
 
-		blit_to_swapchain(cmd);
+		// transition scene color to shaderreadonly so imgui can sample it in the viewport window
+		_resourceManager.transition(cmd, "SceneColor", ResourceState::ShaderReadOnly);
+
+		// transition swapchain image to color attachment for imgui rendering
+		VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
+		RenderSync::transition_image(cmd, swapchainImage, ResourceState::Undefined, ResourceState::ColorAttachment);
 		
 		if (_guiRenderer) {
 			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
@@ -224,12 +246,11 @@ VkCommandBuffer Renderer::begin_frame()
 	// now that we are sure the commands finished executing, we can safely reset the command buffer to begin recording again
 	VK_CHECK(vkResetCommandBuffer(cmd, 0));
 
-	VkExtent2D swapchainExtent = _swapchain.get_extent();
 	VkExtent2D sceneColorExtent = _resourceManager.get_extent("SceneColor");
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
 
-	_drawExtent.width = std::max(1u, static_cast<uint32_t>(std::min(swapchainExtent.width, sceneColorExtent.width) * scale));
-	_drawExtent.height = std::max(1u, static_cast<uint32_t>(std::min(swapchainExtent.height, sceneColorExtent.height) * scale));
+	_drawExtent.width = std::max(1u, static_cast<uint32_t>(sceneColorExtent.width * scale));
+	_drawExtent.height = std::max(1u, static_cast<uint32_t>(sceneColorExtent.height * scale));
 
 	// begin command buffer recording
 	// we will use this command buffer exactly once, so we want to let vulkan know that
@@ -443,6 +464,15 @@ void Renderer::recreate_swapchain()
 	}
 }
 
+VkDescriptorSet Renderer::get_scene_color_descriptor()
+{
+	if (!_guiRenderer)
+		return VK_NULL_HANDLE;
+
+	VkImageView sceneColorView = _resourceManager.get_view("SceneColor");
+	return _guiRenderer->get_image_descriptor(sceneColorView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 const std::vector<PassStats> Renderer::get_stats() const
 {
 	std::vector<PassStats> stats;
@@ -506,6 +536,10 @@ void Renderer::create_sync_structures()
 void Renderer::create_render_targets()
 {
 	VkExtent2D windowExtent = _window->get_extent();
+	VkExtent2D targetExtent = _viewportExtent;
+	if (targetExtent.width == 0 || targetExtent.height == 0) {
+		targetExtent = _window->get_extent();
+	}
 
 	// create primary scene color 
 	_resourceManager.register_target({
@@ -515,7 +549,7 @@ void Renderer::create_render_targets()
 		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
 		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, windowExtent);
+		}, targetExtent);
 	
 	// create primary scene depth
 	_resourceManager.register_target({
@@ -525,7 +559,7 @@ void Renderer::create_render_targets()
 		.format = VK_FORMAT_D32_SFLOAT,
 		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create shadow map target
 	_resourceManager.register_target({
@@ -535,7 +569,7 @@ void Renderer::create_render_targets()
 		.format = VK_FORMAT_D32_SFLOAT,
 		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create point shadow target
 	_resourceManager.register_target({
@@ -549,7 +583,7 @@ void Renderer::create_render_targets()
 		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
 		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
 		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create skybox target
 	_resourceManager.register_target({
@@ -563,7 +597,7 @@ void Renderer::create_render_targets()
 		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
 		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create gbuffer position target
 	_resourceManager.register_target({
@@ -573,7 +607,7 @@ void Renderer::create_render_targets()
 		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
 		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create gbuffer normal target
 	_resourceManager.register_target({
@@ -583,7 +617,7 @@ void Renderer::create_render_targets()
 			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
 			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create gbuffer albedo target
 	_resourceManager.register_target({
@@ -593,7 +627,7 @@ void Renderer::create_render_targets()
 			.format = VK_FORMAT_R8G8B8A8_UNORM,
 			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, windowExtent);
+		}, targetExtent);
 
 	// create gbuffer metallic/roughness target
 	_resourceManager.register_target({
@@ -603,5 +637,5 @@ void Renderer::create_render_targets()
 			.format = VK_FORMAT_R8G8B8A8_UNORM,
 			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, windowExtent);
+		}, targetExtent);
 }

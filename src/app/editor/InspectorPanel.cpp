@@ -45,7 +45,7 @@ void InspectorPanel::on_draw(EditorContext& ctx)
   for (const auto& entry : entries) {
     if (!entry.has(ctx.registry, ctx.selectedEntity)) continue;
 
-    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowItemOverlap;
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
 
     bool headerOpen = ImGui::TreeNodeEx(entry.name.c_str(), flags);
     bool shouldRemove = false;

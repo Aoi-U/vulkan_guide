@@ -22,6 +22,9 @@ public:
 	// whether the camera is currently active and processing input
 	bool isActive{ false };
 
+	// whether the viewport is currently hovered by the mouse
+	bool isViewportHovered{ true };
+
 	glm::mat4 getViewMatrix();
 	glm::mat4 getRotationMatrix();
 

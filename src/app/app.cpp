@@ -63,6 +63,8 @@ void App::run()
 		_frameTime = _deltaTime * 1000.f;
 		lastTime = currentTime;
 
+		_camera.isViewportHovered = _editor->is_viewport_hovered();
+
 		_window->poll_events(dispatcher);
 
 		// skip rendering when the window is minimized
@@ -71,15 +73,15 @@ void App::run()
 			continue;
 		}
 
+		update_scene(_deltaTime);
+
 		EngineStats stats;
 		stats.frameTimeMs = _frameTime;
 		stats.fps = 1.0f / _deltaTime;
 		stats.renderStats = _renderer->get_stats();
 
 		_guiRenderer->new_frame();
-		_editor->draw_gui(_registry, _assetManager, stats, _sceneData);
-
-		update_scene(_deltaTime);
+		_editor->draw_gui(_registry, _assetManager, stats, _sceneData, *_renderer);
 
 		_renderer->render_frame(_registry, _sceneData);
 	}
@@ -119,8 +121,13 @@ void App::on_reset_environment(const Events::ResetEnvironmentEvent & event)
 void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);
 
-	VkExtent2D extent = _window->get_extent();
-	_sceneData.proj = glm::perspective(glm::radians(70.0f), (float)extent.width / (float)extent.height, 10000.f, 0.1f);
+	VkExtent2D extent = _renderer->get_viewport_extent();
+	if (extent.width == 0 || extent.height == 0) {
+		extent = _window->get_extent();
+	}
+	float aspect = (float)extent.width / (float)extent.height;
+
+	_sceneData.proj = glm::perspective(glm::radians(70.0f), aspect, 10000.f, 0.1f);
 	_sceneData.proj[1][1] *= -1;
 	_sceneData.view = _camera.getViewMatrix();
 	_sceneData.viewproj = _sceneData.proj * _sceneData.view;

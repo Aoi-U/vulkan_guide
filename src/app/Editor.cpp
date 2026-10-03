@@ -4,6 +4,7 @@
 #include "app/editor/InspectorPanel.h"
 #include "app/editor/EnvironmentPanel.h"
 #include "app/editor/PerformancePanel.h"
+#include "app/editor/ViewportPanel.h"
 #include "app/editor/CVarPanel.h"
 #include "app/editor/GizmoPanel.h"
 #include <core/Components.h>
@@ -17,6 +18,7 @@
 
 Editor::Editor()
 {
+	add_panel<ViewportPanel>();
 	add_panel<HierarchyPanel>();
 	add_panel<InspectorPanel>();
 	add_panel<EnvironmentPanel>();
@@ -25,8 +27,9 @@ Editor::Editor()
 	add_panel<GizmoPanel>();
 }
 
-void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats, const GPUSceneData& sceneData)
+void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer)
 {
+	draw_dockspace();
 	draw_main_menu_bar();
 
 	EditorContext ctx{
@@ -34,13 +37,15 @@ void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, cons
 		.assetManager = assetManager,
 		.stats = stats,
 		.selectedEntity = _selectedEntity,
-		.sceneData = sceneData
+		.sceneData = sceneData,
+		.renderer = renderer
 	};
 
 	for (auto& panel : _panels) {
 		panel->on_draw(ctx);
 	}
 
+	_isViewportHovered = ctx.isViewportHovered;
 	process_viewport_picking(ctx);
 }
 
@@ -79,15 +84,22 @@ void Editor::draw_main_menu_bar()
 	}
 }
 
+void Editor::draw_dockspace()
+{
+	ImGuiIO& io = ImGui::GetIO();
+	if (io.ConfigFlags & ImGuiConfigFlags_DockingEnable) {
+		ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport());
+	}
+}
 
 static bool intersect_ray_aabb(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& boxMin, const glm::vec3& boxMax, float& tOut)
 {
-	float tMin = 0.0f;
+	float tMin = -std::numeric_limits<float>::max();
 	float tMax = std::numeric_limits<float>::max();
 
 	for (int i = 0; i < 3; ++i) {
 		if (std::abs(rayDir[i]) < 1e-6f) {
-			// ray is parallel to the slab
+			// ray is parallel to slab
 			if (rayOrigin[i] < boxMin[i] || rayOrigin[i] > boxMax[i])
 				return false;
 		}
@@ -95,13 +107,11 @@ static bool intersect_ray_aabb(const glm::vec3& rayOrigin, const glm::vec3& rayD
 			float invD = 1.0f / rayDir[i];
 			float t0 = (boxMin[i] - rayOrigin[i]) * invD;
 			float t1 = (boxMax[i] - rayOrigin[i]) * invD;
-			if (t0 > t1) 
-				std::swap(t0, t1);
+			if (t0 > t1) std::swap(t0, t1);
 
 			tMin = std::max(tMin, t0);
 			tMax = std::min(tMax, t1);
-			if (tMin > tMax)
-				return false;
+			if (tMin > tMax) return false;
 		}
 	}
 
@@ -121,12 +131,11 @@ static bool intersect_ray_sphere(const glm::vec3& rayOrigin, const glm::vec3& ra
 
 	// ray origin is outside the sphere and pointing away
 	if (c > 0.0f && b > 0.0f) return false;
-
 	float discr = b * b - c;
 	if (discr < 0.0f) return false;
 
 	float t = -b - std::sqrt(discr);
-	if (t < 0.0f) t = -b + std::sqrt(discr); // if inside sphere, use exit point
+	if (t < 0.0f) t = -b + std::sqrt(discr);
 	if (t < 0.0f) return false;
 
 	tOut = t;
@@ -174,24 +183,30 @@ void Editor::process_viewport_picking(EditorContext& ctx)
 	if (!ImGui::IsMouseClicked(ImGuiMouseButton_Left)) // ignore non left click events
 		return;
 
-	if (io.WantCaptureMouse) // ignore if on imgui windows or menu bar 
+	if (!ctx.isViewportHovered)  // ignore if mouse is not over viewport
 		return;
 
-	if (ImGuizmo::IsOver() || ImGuizmo::IsUsing()) // ignore if using gizmo
+	if (ImGuizmo::IsOver() || ImGuizmo::IsUsing() || ctx.isGizmoControlsHovered) // ignore if mouse is over gizmo controls
 		return;
 
 	if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) // ignore if freelooking
 		return;
-
 	ImVec2 mousePos = io.MousePos;
-	if (mousePos.x < 0.0f || mousePos.y < 0.0f ||
-		mousePos.x > io.DisplaySize.x || mousePos.y > io.DisplaySize.y) return;
 
-	// convert screen space to normalized device coordinates [-1, 1]
-	float ndcX = (2.0f * mousePos.x) / io.DisplaySize.x - 1.0f;
-	float ndcY = (2.0f * mousePos.y) / io.DisplaySize.y - 1.0f;
+	// convert mouse screen position to viewport local coords
+	float relX = mousePos.x - ctx.viewportPos.x;
+	float relY = mousePos.y - ctx.viewportPos.y;
 
-	// unproject near and far plane coords
+	if (relX < 0.0f || relY < 0.0f || relX > ctx.viewportSize.x || relY > ctx.viewportSize.y) // ignore if mouse is outside viewport
+		return;
+	if (ctx.viewportSize.x <= 0.0f || ctx.viewportSize.y <= 0.0f) // ignore if viewport size is invalid
+		return;
+
+	// convert viewport local coords to NDC [-1, 1]
+	float ndcX = (2.0f * relX) / ctx.viewportSize.x - 1.0f;
+	float ndcY = (2.0f * relY) / ctx.viewportSize.y - 1.0f;
+
+	// unproject using scenes viewproj matrix (matching the viewport aspect ratio)
 	glm::mat4 invVP = glm::inverse(ctx.sceneData.viewproj);
 	glm::vec4 p0 = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
 	glm::vec4 p1 = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
@@ -203,14 +218,13 @@ void Editor::process_viewport_picking(EditorContext& ctx)
 	glm::vec3 rayOrigin = glm::vec3(ctx.sceneData.cameraPosition);
 	glm::vec3 p0_3 = glm::vec3(p0);
 	glm::vec3 p1_3 = glm::vec3(p1);
-
 	glm::vec3 farPoint = (glm::distance(rayOrigin, p0_3) > glm::distance(rayOrigin, p1_3)) ? p0_3 : p1_3;
 	glm::vec3 rayDir = glm::normalize(farPoint - rayOrigin);
 
 	float closestDist = std::numeric_limits<float>::max();
 	entt::entity hitEntity = entt::null;
 
-	// test all renderable mesh components
+	// test renderable mesh components
 	auto meshView = ctx.registry.view<const MeshComponent>();
 	for (auto [entity, mc] : meshView.each()) {
 		if (!mc.visible || !mc.mesh) continue;
@@ -229,6 +243,7 @@ void Editor::process_viewport_picking(EditorContext& ctx)
 	auto lightView = ctx.registry.view<const PointLightComponent>();
 	for (auto [entity, pl] : lightView.each()) {
 		if (!pl.visible) continue;
+
 		glm::vec3 lightPos(0.0f);
 		if (const auto* tc = ctx.registry.try_get<TransformComponent>(entity)) {
 			lightPos = tc->position;

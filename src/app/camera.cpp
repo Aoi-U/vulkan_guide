@@ -52,7 +52,7 @@ void Camera::on_input_event(const Events::SDLInputEvent& event)
 
   if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) { // activate freelook unless gizmo is being used
     // only activate camera if the gizmo is not being used
-    if (!ImGuizmo::IsUsing()) {
+    if (!ImGuizmo::IsUsing() && isViewportHovered) {
       isActive = true;
       setCursorLocked(true);
     }

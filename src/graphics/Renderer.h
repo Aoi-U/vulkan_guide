@@ -96,7 +96,7 @@ public:
 	void on_window_resize(const Events::WindowResizeEvent& event);
 
 	void set_gui_renderer(GuiRenderer* guiRenderer) { _guiRenderer = guiRenderer; }
-
+	void set_viewport_extent(VkExtent2D extent);
 	void set_render_path(RenderPath path) { _renderPath = path; }
 
 	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
@@ -117,6 +117,8 @@ public:
 	IBLSystem& get_ibl() { return _iblSystem; }
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
 	RenderPath get_render_path() const { return _renderPath; }
+	VkDescriptorSet get_scene_color_descriptor();
+	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
 	const std::vector<PassStats> get_stats() const;
 
 private:
@@ -126,6 +128,7 @@ private:
 	
 	RenderResourceManager _resourceManager;
 	VkExtent2D _drawExtent;
+	VkExtent2D _viewportExtent{ 1280, 720 };
 
 	FrameData _frames[FRAME_OVERLAP];
 	uint32_t _frameNumber{ 0 };

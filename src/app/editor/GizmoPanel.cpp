@@ -6,98 +6,129 @@
 
 void GizmoPanel::on_draw(EditorContext& ctx)
 {
-  ImGuiIO& io = ImGui::GetIO();
-  const bool isFreelooking = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+	if (!is_open) return;
+	if (ctx.viewportSize.x <= 0.0f || ctx.viewportSize.y <= 0.0f) return;
 
-	// process keyboard shortcuts
-  if (!io.WantTextInput && !isFreelooking) {
-    if (ImGui::IsKeyPressed(ImGuiKey_W)) _currentOp = ImGuizmo::TRANSLATE;
-    if (ImGui::IsKeyPressed(ImGuiKey_E)) _currentOp = ImGuizmo::ROTATE;
-    if (ImGui::IsKeyPressed(ImGuiKey_R)) _currentOp = ImGuizmo::SCALE;
-  }
+	ImGuiIO& io = ImGui::GetIO();
+	const bool isFreelooking = ImGui::IsMouseDown(ImGuiMouseButton_Right);
 
-  ImGuizmo::Enable(!isFreelooking);
+	// process keyboard shortcuts when not typing and not freelooking
+	if (!io.WantTextInput && !isFreelooking) {
+		if (ImGui::IsKeyPressed(ImGuiKey_W)) _currentOp = ImGuizmo::TRANSLATE;
+		if (ImGui::IsKeyPressed(ImGuiKey_E)) _currentOp = ImGuizmo::ROTATE;
+		if (ImGui::IsKeyPressed(ImGuiKey_R)) _currentOp = ImGuizmo::SCALE;
+	}
 
-  // draw floating control overlay
-  ImGui::SetNextWindowPos(ImVec2(10.0f, 30.0f), ImGuiCond_FirstUseEver);
-  ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
+	// append to "Viewport" so the controls are in the viewports window hierarchy
+	if (ImGui::Begin("Viewport")) {
 
-  if (ImGui::Begin("##GizmoControls", nullptr, flags)) {
-    if (ImGui::RadioButton("Translate (W)", _currentOp == ImGuizmo::TRANSLATE)) _currentOp = ImGuizmo::TRANSLATE;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Rotate (E)", _currentOp == ImGuizmo::ROTATE)) _currentOp = ImGuizmo::ROTATE;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("Scale (R)", _currentOp == ImGuizmo::SCALE)) _currentOp = ImGuizmo::SCALE;
+		// floating toolbar overlay
+		ImGui::SetCursorPos(ImVec2(10.0f, 25.0f));
 
-    ImGui::SameLine();
-    ImGui::Text("|");
-    ImGui::SameLine();
+		ImDrawList* drawList = ImGui::GetWindowDrawList();
+		drawList->ChannelsSplit(2);
+		drawList->ChannelsSetCurrent(1); // foreground (buttons)
 
-    if (ImGui::RadioButton("Local", _currentMode == ImGuizmo::LOCAL)) _currentMode = ImGuizmo::LOCAL;
-    ImGui::SameLine();
-    if (ImGui::RadioButton("World", _currentMode == ImGuizmo::WORLD)) _currentMode = ImGuizmo::WORLD;
+		ImGui::BeginGroup();
+		ImGui::PushID("GizmoToolbar");
 
-    ImGui::SameLine();
-    ImGui::Checkbox("Snap", &_useSnap);
-  }
-  ImGui::End();
-  
-	// check if there is a selected entity
-  if (ctx.selectedEntity == entt::null || !ctx.registry.valid(ctx.selectedEntity)) {
-    return;
-  }
+		if (ImGui::RadioButton("Translate (W)", _currentOp == ImGuizmo::TRANSLATE)) _currentOp = ImGuizmo::TRANSLATE;
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Rotate (E)", _currentOp == ImGuizmo::ROTATE)) _currentOp = ImGuizmo::ROTATE;
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Scale (R)", _currentOp == ImGuizmo::SCALE)) _currentOp = ImGuizmo::SCALE;
+		ImGui::SameLine();
+		ImGui::TextDisabled("|");
+		ImGui::SameLine();
+		if (ImGui::RadioButton("Local", _currentMode == ImGuizmo::LOCAL)) _currentMode = ImGuizmo::LOCAL;
+		ImGui::SameLine();
+		if (ImGui::RadioButton("World", _currentMode == ImGuizmo::WORLD)) _currentMode = ImGuizmo::WORLD;
+		ImGui::SameLine();
+		ImGui::Checkbox("Snap", &_useSnap);
 
-	// check if the selected entity has a TransformComponent
-  auto* tc = ctx.registry.try_get<TransformComponent>(ctx.selectedEntity);
-  if (!tc) {
-    return;
-  }
+		ImGui::PopID();
+		ImGui::EndGroup();
 
-	// setup ImGuizmo
-  ImGuizmo::SetOrthographic(false);
-  ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
-  ImGuizmo::SetRect(0.0f, 0.0f, io.DisplaySize.x, io.DisplaySize.y);
+		// check if mouse is hovering over the toolbar rectangle
+		ImVec2 tbMin = ImGui::GetItemRectMin();
+		ImVec2 tbMax = ImGui::GetItemRectMax();
+		tbMin.x -= 8.0f; tbMin.y -= 4.0f;
+		tbMax.x += 8.0f; tbMax.y += 4.0f;
 
-  // correct projection matrix for imguizmo
-  glm::mat4 view = ctx.sceneData.view;
-  glm::mat4 proj = ctx.sceneData.proj;
-  proj[1][1] *= -1.0f; // Restore OpenGL NDC for ImGuizmo
+		ctx.isGizmoControlsHovered = (io.MousePos.x >= tbMin.x && io.MousePos.x <= tbMax.x &&
+			io.MousePos.y >= tbMin.y && io.MousePos.y <= tbMax.y);
 
-  // setup transform matrix
-  glm::mat4 transformMatrix(1.0f);
-  ImGuizmo::RecomposeMatrixFromComponents(
-    &tc->position.x,
-    &tc->rotation.x,
-    &tc->scale.x,
-    glm::value_ptr(transformMatrix)
-  );
+		// draw background pill behind toolbar
+		drawList->ChannelsSetCurrent(0);
+		drawList->AddRectFilled(tbMin, tbMax, IM_COL32(20, 20, 24, 220), 4.0f);
+		drawList->AddRect(tbMin, tbMax, IM_COL32(60, 60, 72, 255), 4.0f);
+		drawList->ChannelsMerge();
 
-  // determine snap value
-  float* snapValues = nullptr;
-  if (_useSnap) {
-    if (_currentOp == ImGuizmo::TRANSLATE) snapValues = _snapTranslation;
-    else if (_currentOp == ImGuizmo::ROTATE) snapValues = &_snapRotation;
-    else if (_currentOp == ImGuizmo::SCALE) snapValues = &_snapScale;
-  }
+		// 3d imguizmo handle manipulation
+		if (ctx.selectedEntity != entt::null && ctx.registry.valid(ctx.selectedEntity)) {
+			if (auto* tc = ctx.registry.try_get<TransformComponent>(ctx.selectedEntity)) {
 
-  // perform manipulation
-  bool manipulated = ImGuizmo::Manipulate(
-    glm::value_ptr(view),
-    glm::value_ptr(proj),
-    _currentOp,
-    _currentMode,
-    glm::value_ptr(transformMatrix),
-    nullptr,
-    snapValues
-  );
+				bool enableGizmo = !isFreelooking && !ctx.isGizmoControlsHovered && (ctx.isViewportHovered || ImGuizmo::IsUsing());
+				ImGuizmo::Enable(enableGizmo);
+				ImGuizmo::SetOrthographic(false);
+				ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+				ImGuizmo::SetRect(ctx.viewportPos.x, ctx.viewportPos.y, ctx.viewportSize.x, ctx.viewportSize.y);
 
-  // update TransformComponent if manipulated
-  if (manipulated && ImGuizmo::IsUsing()) {
-    ImGuizmo::DecomposeMatrixToComponents(
-      glm::value_ptr(transformMatrix),
-      &tc->position.x,
-      &tc->rotation.x,
-      &tc->scale.x
-    );
-  }
+				// build opengl right handed perspective projection matrix
+				float aspect = ctx.viewportSize.x / ctx.viewportSize.y;
+				float tanHalfFov = std::tan(glm::radians(70.0f) * 0.5f);
+				float f = 1.0f / tanHalfFov;
+				float n = 0.1f;
+				float f_dist = 1000.0f;
+
+				glm::mat4 imguizmoProj(0.0f);
+				imguizmoProj[0][0] = f / aspect;
+				imguizmoProj[1][1] = f;
+				imguizmoProj[2][2] = -(f_dist + n) / (f_dist - n);
+				imguizmoProj[2][3] = -1.0f;
+				imguizmoProj[3][2] = -(2.0f * f_dist * n) / (f_dist - n);
+
+				glm::mat4 view = ctx.sceneData.view;
+
+				// build transform matrix from position, rotation, scale
+				glm::mat4 transformMatrix(1.0f);
+				ImGuizmo::RecomposeMatrixFromComponents(
+					&tc->position.x,
+					&tc->rotation.x,
+					&tc->scale.x,
+					glm::value_ptr(transformMatrix)
+				);
+
+				float* snapValues = nullptr;
+				if (_useSnap) {
+					if (_currentOp == ImGuizmo::TRANSLATE) snapValues = _snapTranslation;
+					else if (_currentOp == ImGuizmo::ROTATE) snapValues = &_snapRotation;
+					else if (_currentOp == ImGuizmo::SCALE) snapValues = &_snapScale;
+				}
+
+				// manipulate the transform matrix using imguizmo
+				bool manipulated = ImGuizmo::Manipulate(
+					glm::value_ptr(view),
+					glm::value_ptr(imguizmoProj),
+					_currentOp,
+					_currentMode,
+					glm::value_ptr(transformMatrix),
+					nullptr,
+					snapValues
+				);
+
+				// decompose transform matrix back into component
+				if (manipulated && ImGuizmo::IsUsing()) {
+					ImGuizmo::DecomposeMatrixToComponents(
+						glm::value_ptr(transformMatrix),
+						&tc->position.x,
+						&tc->rotation.x,
+						&tc->scale.x
+					);
+				}
+			}
+		}
+
+		ImGui::End(); 
+	}
 }
