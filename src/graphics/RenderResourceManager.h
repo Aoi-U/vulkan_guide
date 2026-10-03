@@ -51,19 +51,19 @@ public:
 	void on_window_resize(VkExtent2D newWindowExtent);
 
 	// transition a render target to a new state
-	void transition(VkCommandBuffer cmd, const std::string name, ResourceState newState);
-	// transition multiple render targets to new states
-	void transition_all(VkCommandBuffer cmd, std::span<const std::pair<std::string, ResourceState>> transitions);
+	void transition(VkCommandBuffer cmd, const std::string& name, ResourceState newState);
+
+	void set_state(const std::string& name, ResourceState state);
 
 	void generate_procedural_cubemap(const std::string& name);
 
 	// getters
 	AllocatedImage& get_image(const std::string& name);
 	VkImageView get_view(const std::string& name);
-	VkImageView get_face_view(const std::string& name, uint32_t faceIndex);
 	VkExtent2D get_extent(const std::string& name) const;
 	VkFormat get_format(const std::string& name) const;
 	ResourceState get_state(const std::string& name) const;
+	const RenderTargetDescription& get_description(const std::string& name) const { return _targets.at(name).description; }
 	bool has_target(const std::string& name) const;
 
 private:

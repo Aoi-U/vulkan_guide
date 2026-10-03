@@ -1,8 +1,5 @@
 #include "FrustumCullPass.h"
 #include <utils/vk_descriptors.h>
-#include <utils/vk_initializers.h>
-#include <graphics/utils/vk_pipelines.h>
-#include <utils/vk_utils.h>
 #include <graphics/Renderer.h>
 #include <core/cvars.h>
 #include <chrono>

@@ -21,8 +21,6 @@ public:
 
 	VkPipeline build_pipeline(VkDevice device);
 
-	void set_shaders(VkShaderModule vertexShader, VkShaderModule fragmentShader);
-
 	void set_input_topology(VkPrimitiveTopology topology);
 
 	void set_polygon_mode(VkPolygonMode mode, float lineWidth = 1.0f);
@@ -37,8 +35,6 @@ public:
 
 	void enable_blending_alphablend();
 
-	void set_color_attachment_format(VkFormat format);
-
 	void set_depth_format(VkFormat format);
 
 	void disable_depthtest();
@@ -47,8 +43,6 @@ public:
 
 	// compute pipeline building
 	VkPipelineShaderStageCreateInfo _computeShaderStage;
-
-	void set_compute_shaders(VkShaderModule computeShader);
 
 	VkPipeline build_compute_pipeline(VkDevice device);
 };

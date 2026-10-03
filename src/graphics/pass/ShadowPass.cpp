@@ -1,8 +1,5 @@
 #include "ShadowPass.h"
 #include <utils/vk_descriptors.h>
-#include <utils/vk_initializers.h>
-#include <utils/vk_pipelines.h>
-#include <utils/vk_utils.h>
 #include <graphics/Renderer.h>
 #include <chrono>
 
@@ -38,7 +35,7 @@ void ShadowPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void ShadowPass::render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent)
+void ShadowPass::render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData)
 {
 	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.buffer == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
 		return;
@@ -46,23 +43,6 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, RenderResource
 
 	// begin clock
 	auto start = std::chrono::system_clock::now();
-
-	// transition shadow map to depth attachment
-	resources.transition(ctx.get_cmd(), "ShadowMap", ResourceState::DepthAttachment);
-
-	// begin rendering to shadow map
-	VkExtent2D shadowExtent = resources.get_extent("ShadowMap");
-	ctx.begin_rendering({
-    .renderExtent = shadowExtent,
-    .depthAttachment = DepthAttachmentDesc{
-      .view = resources.get_view("ShadowMap"),
-      .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-      .clearDepth = 1.0f
-			}
-    });
-
-	// set dynamic viewport and scissor
-	ctx.set_viewport_scissor(shadowExtent);
 
 	// bind pipeline and push constants
 	ctx.bind_pipeline(_pipeline);
@@ -89,11 +69,6 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, RenderResource
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
 		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.buffer, indirectOffset, frameData._gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
-
-	ctx.end_rendering();
-
-	// transition shadow map to shader read only for sampling in forward pass
-	resources.transition(ctx.get_cmd(), "ShadowMap", ResourceState::ShaderReadOnly);
 
 	auto end = std::chrono::system_clock::now();
 	_stats.clear();

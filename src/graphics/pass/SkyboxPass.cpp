@@ -1,8 +1,5 @@
 #include "SkyboxPass.h"
 #include <utils/vk_descriptors.h>
-#include <utils/vk_initializers.h>
-#include <utils/vk_pipelines.h>
-#include <utils/vk_utils.h>
 #include <graphics/Renderer.h>
 #include <chrono>
 
@@ -43,29 +40,10 @@ void SkyboxPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent)
+void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData)
 {
 	// begin clock
 	auto start = std::chrono::system_clock::now();
-
-	// transition color, depth, and skybox attachments to correct state
-	resources.transition(ctx.get_cmd(), "SceneColor", ResourceState::ColorAttachment);
-	resources.transition(ctx.get_cmd(), "SceneDepth", ResourceState::DepthAttachment);
-	resources.transition(ctx.get_cmd(), "SkyCubemap", ResourceState::ShaderReadOnly);
-
-	// begin rendering
-	ctx.begin_rendering({
-		.renderExtent = drawExtent,
-		.colorAttachments = { ColorAttachmentDesc{
-			.view = resources.get_view("SceneColor"),
-			.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD
-			}
-		},
-		.depthAttachment = DepthAttachmentDesc{
-			.view = resources.get_view("SceneDepth"),
-			.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
-			}
-		});
 
 	// bind descriptor sets
 	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
@@ -74,17 +52,12 @@ void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, RenderResource
 	writer.write_image(4, resources.get_view("SkyCubemap"), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), skyboxSet);
 
-	// set dynamic viewport and scissor
-	ctx.set_viewport_scissor(drawExtent);
-
 	// bind pipeline and descriptor set
 	ctx.bind_pipeline(_pipeline);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, skyboxSet);
 
 	// draw full screen triangle
 	ctx.draw(3, 1, 0, 0);
-
-	ctx.end_rendering();
 
 	auto end = std::chrono::system_clock::now();
 	_stats.clear();

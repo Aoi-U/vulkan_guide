@@ -1,14 +1,7 @@
-#pragma once
-
 #include "ForwardPass.h"
 
 #include <utils/vk_descriptors.h>
 #include <graphics/Renderer.h>
-#include <graphics/utils/vk_pipelines.h>
-#include <graphics/utils/vk_utils.h>
-#include <graphics/utils/vk_initializers.h>
-#include <algorithm>
-#include <core/cvars.h>
 #include <chrono>
 
 void ForwardPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
@@ -57,7 +50,7 @@ void ForwardPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void ForwardPass::render(RenderContext& ctx, FrameData & frameData, RenderResourceManager& resources, DrawContext & drawCtx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
+void ForwardPass::render(RenderContext& ctx, FrameData & frameData, RenderResourceManager& resources, DrawContext & drawCtx, const GPUSceneData & sceneData)
 {	
 	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.buffer == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
 		return;
@@ -65,28 +58,6 @@ void ForwardPass::render(RenderContext& ctx, FrameData & frameData, RenderResour
 
 	// begin clock
 	auto start = std::chrono::system_clock::now();
-
-	// transition resources to the correct states for rendering
-	resources.transition(ctx.get_cmd(), "ShadowMap", ResourceState::ShaderReadOnly);
-	resources.transition(ctx.get_cmd(), "SkyCubemap", ResourceState::ShaderReadOnly);
-	resources.transition(ctx.get_cmd(), "SceneColor", ResourceState::ColorAttachment);
-	resources.transition(ctx.get_cmd(), "SceneDepth", ResourceState::DepthAttachment);
-
-	// begin rendering
-	ctx.begin_rendering({
-		.renderExtent = drawExtent,
-		.colorAttachments = { 
-			ColorAttachmentDesc{
-				.view = resources.get_view("SceneColor"),
-				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			}
-		},
-		.depthAttachment = DepthAttachmentDesc{
-			.view = resources.get_view("SceneDepth"),
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.clearDepth = 0.0f
-			}
-		});
 
 	// create a descriptor set that binds the scene data buffer and update it
 	VkDescriptorSet globalDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _sceneDataDescriptorLayout);
@@ -98,9 +69,6 @@ void ForwardPass::render(RenderContext& ctx, FrameData & frameData, RenderResour
 	writer.write_image(3, resources.get_view("ShadowMap"), _vulkanCore->_shadowSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.write_image(4, resources.get_view("SkyCubemap"), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
-
-	// set dynamic viewport and scissor
-	ctx.set_viewport_scissor(drawExtent);
 
 	// bind pipeline and descriptor set
 	ctx.bind_pipeline(_opaquePipeline);
@@ -131,8 +99,6 @@ void ForwardPass::render(RenderContext& ctx, FrameData & frameData, RenderResour
 		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.buffer, indirectOffset, frameData._gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
 	
-	ctx.end_rendering();
-
 	auto end = std::chrono::system_clock::now(); 
 	_stats.clear(); 
 	_stats.name = "Forward Pass"; 

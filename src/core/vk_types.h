@@ -137,12 +137,6 @@ struct GPUMeshBuffers
 	VkDeviceAddress vertexBufferAddress; 
 };
 
-// data that is pushed to the GPU for a draw call
-struct GPUDrawPushConstants
-{
-	VkDeviceAddress vertexBufferAddress;
-};
-
 // bounding volume of a mesh used for frustum culling
 struct Bounds
 {

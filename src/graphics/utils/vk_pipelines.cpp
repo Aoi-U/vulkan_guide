@@ -84,14 +84,6 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 	return newPipeline;
 }
 
-void PipelineBuilder::set_shaders(VkShaderModule vertexShader, VkShaderModule fragmentShader)
-{
-	_shaderStages.clear();
-
-	_shaderStages.push_back(vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vertexShader));
-	_shaderStages.push_back(vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentShader));
-}
-
 void PipelineBuilder::set_input_topology(VkPrimitiveTopology topology)
 {
 	_inputAssembly.topology = topology;
@@ -157,14 +149,6 @@ void PipelineBuilder::enable_blending_alphablend()
 	_colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 }
 
-void PipelineBuilder::set_color_attachment_format(VkFormat format)
-{
-	_colorAttachmentFormat = format;
-	// connect the format to the renderInfo struct
-	_renderInfo.colorAttachmentCount = 1;
-	_renderInfo.pColorAttachmentFormats = &_colorAttachmentFormat;
-}
-
 void PipelineBuilder::set_depth_format(VkFormat format)
 {
 	_renderInfo.depthAttachmentFormat = format;
@@ -193,11 +177,6 @@ void PipelineBuilder::enable_depthtest(bool depthWriteEnable, VkCompareOp op)
 	_depthStencil.back = {};
 	_depthStencil.minDepthBounds = 0.f;
 	_depthStencil.maxDepthBounds = 1.f;
-}
-
-void PipelineBuilder::set_compute_shaders(VkShaderModule computeShader)
-{
-	_computeShaderStage = vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_COMPUTE_BIT, computeShader);
 }
 
 VkPipeline PipelineBuilder::build_compute_pipeline(VkDevice device)

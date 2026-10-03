@@ -2,8 +2,12 @@
 #include <core/vk_types.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/Swapchain.h>
-#include <graphics/pass/RenderPass.h>
-#include <graphics/pass/ComputePass.h>
+
+#include <graphics/pass/FrustumCullpass.h>
+#include <graphics/pass/ForwardPass.h>
+#include <graphics/pass/ShadowPass.h>
+#include <graphics/pass/SkyboxPass.h>
+
 #include <graphics/MaterialSystem.h>
 #include <graphics/RenderResourceManager.h>
 #include <window/window.h>
@@ -87,8 +91,6 @@ public:
 		return _swapchain.get_image_views()[_swapchainImageIndex];
 	}
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
-	AllocatedImage get_draw_image() { return _resourceManager.get_image("SceneColor"); }
-	AllocatedImage get_depth_image() { return _resourceManager.get_image("SceneDepth"); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
 	RenderResourceManager& get_resources() { return _resourceManager; }
 	const std::vector<PassStats> get_stats() const;
@@ -109,9 +111,10 @@ private:
 	bool _resizeRequested{ false };
 	VkExtent2D _pendingResizeExtent{ 0, 0 };
 
-	//std::unique_ptr<MeshRenderer> _meshRenderer;
-	std::vector<std::unique_ptr<RenderPass>> _renderPasses;
-	std::vector<std::unique_ptr<ComputePass>> _computePasses;
+	std::unique_ptr<FrustumCullPass> _frustumCullPass;
+	std::unique_ptr<ForwardPass> _forwardPass;
+	std::unique_ptr<ShadowPass> _shadowPass;
+	std::unique_ptr<SkyboxPass> _skyboxPass;
 
 	// renderer initialization functions
 	void create_command_buffers();

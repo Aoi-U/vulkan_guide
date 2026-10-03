@@ -6,10 +6,8 @@
 #include <resources/vk_loader.h>
 #include <core/Components.h>
 #include <core/cvars.h>
-#include <graphics/pass/FrustumCullpass.h>
-#include <graphics/pass/ForwardPass.h>
-#include <graphics/pass/ShadowPass.h>
-#include <graphics/pass/SkyboxPass.h>
+
+#include "graphics/RenderGraph.h"
 
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
 
@@ -27,22 +25,18 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	dispatcher.sink<Events::WindowResizeEvent>().connect<&Renderer::on_window_resize>(this);
 
 	// create compute passes
-	std::unique_ptr<FrustumCullPass> frustumCullPass = std::make_unique<FrustumCullPass>();
-	frustumCullPass->init(_vulkanCore);
-	_computePasses.push_back(std::move(frustumCullPass));
+	_frustumCullPass = std::make_unique<FrustumCullPass>();
+	_frustumCullPass->init(_vulkanCore);
 
 	// create render passes
-	std::unique_ptr<ShadowPass> shadowPass = std::make_unique<ShadowPass>();
-	shadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
-	_renderPasses.push_back(std::move(shadowPass));
+	_shadowPass = std::make_unique<ShadowPass>();
+	_shadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
 
-	std::unique_ptr<ForwardPass> forwardPass = std::make_unique<ForwardPass>();
-	forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));	
-	_renderPasses.push_back(std::move(forwardPass));
+	_forwardPass = std::make_unique<ForwardPass>();
+	_forwardPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));	
 
-	std::unique_ptr<SkyboxPass> skyboxPass = std::make_unique<SkyboxPass>();
-	skyboxPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
-	_renderPasses.push_back(std::move(skyboxPass));
+	_skyboxPass = std::make_unique<SkyboxPass>();
+	_skyboxPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -52,13 +46,10 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
 	//_meshRenderer->cleanup();
-	for (auto& pass : _renderPasses) {
-		pass->cleanup();
-	}
-
-	for (auto& pass : _computePasses) {
-		pass->cleanup();
-	}
+	_frustumCullPass->cleanup();
+	_forwardPass->cleanup();
+	_shadowPass->cleanup();
+	_skyboxPass->cleanup();
 
 	_resourceManager.cleanup();
 
@@ -95,28 +86,48 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	extract_scene_data(registry, drawCtx);
 	
 	if (VkCommandBuffer cmd = begin_frame()) {
-		RenderContext renderContext(cmd);
+		RenderContext ctx(cmd);
 		FrameData& currentFrame = get_current_frame();
 		// upload scene data 
 		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
 
-		// compute passes
-		for (auto& pass : _computePasses) {
-			pass->dispatch(renderContext, currentFrame, drawCtx, sceneData, _drawExtent);
-		}
+		RenderGraph graph(_resourceManager);
 
-		// render passes
-		for (auto& pass : _renderPasses) {
-			pass->render(renderContext, currentFrame, _resourceManager, drawCtx, sceneData, _drawExtent);
-		}
+		graph.add_pass("FrustumCull")
+			.set_execute_callback([&](RenderContext& ctx) {
+			_frustumCullPass->dispatch(ctx, currentFrame, drawCtx, sceneData, _drawExtent);
+				});
+		graph.add_pass("ShadowPass")
+			.set_depth_attachment("ShadowMap", VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f)
+			.set_execute_callback([&](RenderContext& ctx) {
+			_shadowPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+		});
+		graph.add_pass("ForwardPass")
+			.read("ShadowMap", ResourceState::ShaderReadOnly)
+			.read("SkyCubemap", ResourceState::ShaderReadOnly)
+			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
+			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
+			.set_execute_callback([&](RenderContext& ctx) {
+			_forwardPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+				});
+		graph.add_pass("SkyboxPass")
+			.read("SkyCubemap", ResourceState::ShaderReadOnly)
+			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_LOAD)
+			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_LOAD)
+			.set_execute_callback([&](RenderContext& ctx) {
+			_skyboxPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+				});
+
+		graph.compile();
+		graph.execute(ctx);
 
 		blit_to_swapchain(cmd);
 
 		// render gui
 		if (guiDrawFunction) {
 			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
-			guiDrawFunction(cmd, swapchainImageView, _drawExtent);
+			guiDrawFunction(cmd, swapchainImageView, _swapchain.get_extent());
 		}
 
 		end_frame();
@@ -378,17 +389,13 @@ void Renderer::recreate_swapchain()
 const std::vector<PassStats> Renderer::get_stats() const
 {
 	std::vector<PassStats> stats;
-	for (auto& pass : _computePasses) {
-		stats.push_back(pass->get_stats());
-	}
-
-	for (auto& pass : _renderPasses) {
-		stats.push_back(pass->get_stats());
-	}
+	stats.push_back(_frustumCullPass->get_stats());
+	stats.push_back(_shadowPass->get_stats());
+	stats.push_back(_forwardPass->get_stats());
+	stats.push_back(_skyboxPass->get_stats());
 
 	return stats;
 }
-
 
 void Renderer::create_command_buffers()
 {

@@ -44,7 +44,7 @@ void RenderResourceManager::on_window_resize(VkExtent2D newWindowExtent)
 	}
 }
 
-void RenderResourceManager::transition(VkCommandBuffer cmd, const std::string name, ResourceState newState)
+void RenderResourceManager::transition(VkCommandBuffer cmd, const std::string& name, ResourceState newState)
 {
 	auto it = _targets.find(name);
 	if (it == _targets.end()) {
@@ -62,29 +62,12 @@ void RenderResourceManager::transition(VkCommandBuffer cmd, const std::string na
 	target.currentState = newState;
 }
 
-void RenderResourceManager::transition_all(VkCommandBuffer cmd, std::span<const std::pair<std::string, ResourceState>> transitions)
+void RenderResourceManager::set_state(const std::string& name, ResourceState state)
 {
-	std::vector<ImageBarrierInfo> barriers;
-	barriers.reserve(transitions.size());
-
-	// create barriers for all transitions
-	for (const auto& [name, targetState] : transitions) {
-		auto it = _targets.find(name);
-		if (it == _targets.end()) {
-			fmt::println("transition failed: target '{}' not found", name);
-			continue;
-		}
-
-		RenderTarget& target = it->second;
-		if (target.currentState == targetState)
-			continue;
-
-		barriers.push_back({ target.image.image, target.currentState, targetState, target.description.aspectMask, 0, target.description.mipLevels, 0, target.description.arrayLayers });
-		target.currentState = targetState;
+	auto it = _targets.find(name);
+	if (it != _targets.end()) {
+		it->second.currentState = state;
 	}
-
-	// transition all images
-	RenderSync::transition_images(cmd, barriers);
 }
 
 void RenderResourceManager::generate_procedural_cubemap(const std::string& name)
@@ -171,11 +154,6 @@ AllocatedImage& RenderResourceManager::get_image(const std::string & name)
 VkImageView RenderResourceManager::get_view(const std::string& name)
 {
 	return _targets.at(name).image.imageView;
-}
-
-VkImageView RenderResourceManager::get_face_view(const std::string& name, uint32_t faceIndex)
-{
-	return _targets.at(name).faceViews.at(faceIndex);
 }
 
 VkExtent2D RenderResourceManager::get_extent(const std::string& name) const
