@@ -1,9 +1,11 @@
 #pragma once
+
 #include <vulkan/vulkan.h>
 #include <SDL_events.h>
 #include <entt.hpp>
 #include <memory>
 #include <string>
+#include <filesystem>
 
 namespace Events
 {
@@ -37,4 +39,10 @@ namespace Events
 	struct SceneLoadedEvent {
 		std::string name;
 	};
+
+	struct LoadEnvironmentEvent {
+		std::filesystem::path path;
+	};
+
+	struct ResetEnvironmentEvent {};
 }

@@ -39,6 +39,8 @@ void App::init()
 	dispatcher.sink<Events::WindowCloseEvent>().connect<&App::on_window_close>(this);
 	dispatcher.sink<Events::SDLInputEvent>().connect<&Editor::on_input_event>(_editor.get());
 	dispatcher.sink<Events::SDLInputEvent>().connect<&Camera::on_input_event>(&_camera);
+	dispatcher.sink<Events::LoadEnvironmentEvent>().connect<&App::on_load_environment>(this);
+	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
 	_assetManager.loadScene("DamagedHelmet", "../../assets/DamagedHelmet.glb");
 
@@ -101,6 +103,18 @@ void App::cleanup()
 
 void App::on_window_close(const Events::WindowCloseEvent& event)
 {}
+
+void App::on_load_environment(const Events::LoadEnvironmentEvent & event)
+{
+	vkDeviceWaitIdle(_vulkanCore->get_device());
+	_renderer->load_environment(event.path);
+}
+
+void App::on_reset_environment(const Events::ResetEnvironmentEvent & event)
+{
+	vkDeviceWaitIdle(_vulkanCore->get_device());
+	_renderer->remove_environment();
+}
 
 void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);

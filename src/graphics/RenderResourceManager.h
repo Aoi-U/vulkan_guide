@@ -53,9 +53,8 @@ public:
 	// transition a render target to a new state
 	void transition(VkCommandBuffer cmd, const std::string& name, ResourceState newState);
 
+	// set the state of a render target 
 	void set_state(const std::string& name, ResourceState state);
-
-	void generate_procedural_cubemap(const std::string& name);
 
 	// getters
 	AllocatedImage& get_image(const std::string& name);

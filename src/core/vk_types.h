@@ -44,6 +44,16 @@ struct DeletionQueue
 	}
 };
 
+struct EnvironmentResources
+{
+	VkImageView environmentView{ VK_NULL_HANDLE }; // unblurred HDR/sky cubemap for background
+	VkImageView irradianceView{ VK_NULL_HANDLE }; // diffuse irradiance cubemap
+	VkImageView prefilterView{ VK_NULL_HANDLE }; // specular prefiltered cubemap 
+	VkImageView brdfLutView{ VK_NULL_HANDLE }; // brdf lut 2D texture
+	VkSampler cubemapSampler{ VK_NULL_HANDLE }; // environment and irradiance cubemap sampler
+	VkSampler lutSampler{ VK_NULL_HANDLE }; // brdf lut sampler
+};
+
 // an image that has been allocated on the GPU
 struct AllocatedImage
 {

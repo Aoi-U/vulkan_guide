@@ -9,6 +9,7 @@
 #include <graphics/pass/SkyboxPass.h>
 
 #include <graphics/MaterialSystem.h>
+#include <graphics/IBLSystem.h>
 #include <graphics/RenderResourceManager.h>
 #include <window/window.h>
 #include <utils/vk_descriptors.h>
@@ -35,6 +36,8 @@ struct DrawContext
 
 	// indirect draw 
 	uint32_t indirectDrawCount{ 0 };
+
+	EnvironmentResources environment{}; // environment resources for the scene
 
 	void clear() {
 		opaqueObjects.clear();
@@ -85,6 +88,9 @@ public:
 
 	void recreate_swapchain();
 
+	bool load_environment(const std::filesystem::path& path) { return _iblSystem.load_hdr(path); }
+	void remove_environment() { _iblSystem.load_procedural_default(); }
+
 	VkExtent2D get_swapchain_extent() const { return _swapchain.get_extent(); }
 	VkExtent2D get_draw_extent() const { return _drawExtent; }
 	VkImageView get_current_swapchain_image_view() const {
@@ -93,6 +99,7 @@ public:
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
 	RenderResourceManager& get_resources() { return _resourceManager; }
+	IBLSystem& get_ibl() { return _iblSystem; }
 	const std::vector<PassStats> get_stats() const;
 
 private:
@@ -115,6 +122,8 @@ private:
 	std::unique_ptr<ForwardPass> _forwardPass;
 	std::unique_ptr<ShadowPass> _shadowPass;
 	std::unique_ptr<SkyboxPass> _skyboxPass;
+
+	IBLSystem _iblSystem;
 
 	// renderer initialization functions
 	void create_command_buffers();

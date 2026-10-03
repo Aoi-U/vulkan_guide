@@ -23,6 +23,8 @@ public:
 	void cleanup();
 	
 	void on_window_close(const Events::WindowCloseEvent& event);
+	void on_load_environment(const Events::LoadEnvironmentEvent& event);
+	void on_reset_environment(const Events::ResetEnvironmentEvent& event);
 
 private:
 	void update_scene(float deltaTime);

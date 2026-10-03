@@ -11,7 +11,9 @@ layout (location = 3) in vec3 inWorldPos;
 layout (location = 0) out vec4 outFragColor;
 
 layout (set = 0, binding = 3) uniform sampler2D shadowMap;
-layout (set = 0, binding = 4) uniform samplerCube skyMap;
+layout (set = 0, binding = 4) uniform samplerCube irradianceMap;
+layout (set = 0, binding = 5) uniform samplerCube prefilterMap;
+layout (set = 0, binding = 6) uniform sampler2D brdfLUT;
 
 const float PI = 3.14159265359;
 
@@ -91,7 +93,7 @@ void main()
 {
     vec4 texColor = texture(colorTex, inUV);
     if (texColor.a < 0.5f) {
-    discard;
+        discard;
     }
 
     // convert srgb texture to linear color space
@@ -164,21 +166,25 @@ void main()
         Lo += (kD * albedo / PI + specular) * radiance * NdotL;
     }
 
-    // ambient / environment reflections
+    // IBL
     vec3 F_ambient = fresnelSchlickRoughness(max(dot(N, V), 0.0), F0, roughness);
-    vec3 kS_ambient = F_ambient;
-    vec3 kD_ambient = (1.0 - kS_ambient) * (1.0 - metallic);
+    vec3 kS = F_ambient;
+    vec3 kD = (1.0 - kS) * (1.0 - metallic);
 
-    vec3 envDiffuse = texture(skyMap, N).rgb;
-    vec3 envReflection = texture(skyMap, R).rgb;
+    // diffuse irradiance
+    vec3 irradiance = texture(irradianceMap, N).rgb;
+    vec3 diffuseIBL = irradiance * albedo;
 
-    vec3 diffuseAmbient = envDiffuse * albedo;
-    vec3 specularAmbient = envReflection * (F_ambient * (1.0 - roughness));
-    vec3 ambient = (kD_ambient * diffuseAmbient + specularAmbient) * ao + (sceneData.ambientColor.xyz * albedo);
+    // specular prefilter + 2d BRDF LUT
+    const float MAX_REFLECTION_LOD = 4.0;
+    vec3 prefilteredColor = textureLod(prefilterMap, R, roughness * MAX_REFLECTION_LOD).rgb;
+    vec2 envBrdf = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
+    vec3 specularIBL = prefilteredColor * (F_ambient * envBrdf.x + envBrdf.y);
 
+    vec3 ambient = (kD * diffuseIBL + specularIBL) * ao + (sceneData.ambientColor.xyz * albedo);
     vec3 color = ambient + Lo;
 
-    // hdr tone mapping and gamma correction
+    // tone mapping and gamma correction
     color = color / (color + vec3(1.0));
     color = pow(color, vec3(1.0 / 2.2));
 

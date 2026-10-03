@@ -4,14 +4,16 @@
 #include <core/Components.h>
 #include <graphics/pass/RenderPass.h>
 #include <core/cvars.h>
-#include <variant>
+#include <core/Events.h>
+#include <filesystem>
 
 void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats)
 {
 	draw_performance_panel(stats);
 	draw_entity_hierarchy_panel(registry);
 	draw_entity_inspector_panel(registry, assetManager);
-
+	draw_environment_panel(registry);
+	
 	ImGui::Begin("Console Variables");
 	CVarSystem::Get()->DrawCVarEditor();
 	ImGui::End();
@@ -204,6 +206,58 @@ void Editor::draw_entity_inspector_panel(entt::registry& registry, AssetManager&
 			}
 		}
 		ImGui::Separator();
+	}
+
+	ImGui::End();
+}
+
+void Editor::draw_environment_panel(entt::registry& registry)
+{
+	ImGui::Begin("Environment & IBL");
+
+	auto& dispatcher = registry.ctx().get<entt::dispatcher>();
+
+	ImGui::Text("Active Source: %s", _currentEnvLabel.c_str());
+	ImGui::Separator();
+
+	ImGui::InputText("HDR File", _hdrPathBuffer.data(), _hdrPathBuffer.size());
+
+	const std::filesystem::path targetPath(_hdrPathBuffer.data());
+	const bool fileExists = std::filesystem::exists(targetPath);
+
+	if (!fileExists && _hdrPathBuffer[0] != '\0') {
+		ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Warning: File does not exist!");
+	}
+
+	// trigger LoadEnvironmentEvent
+	if (ImGui::Button("Load HDR")) {
+		if (fileExists) {
+			dispatcher.trigger<Events::LoadEnvironmentEvent>({ targetPath });
+			_currentEnvLabel = targetPath.filename().string();
+			_envStatusMessage = "Loaded: " + _currentEnvLabel;
+			_envStatusError = false;
+		}
+		else {
+			_envStatusMessage = "Failed: File path not found.";
+			_envStatusError = true;
+		}
+	}
+
+	ImGui::SameLine();
+
+	// Trigger ResetEnvironmentEvent
+	if (ImGui::Button("Reset to Procedural")) {
+		dispatcher.trigger<Events::ResetEnvironmentEvent>({});
+		_currentEnvLabel = "Procedural Sky";
+		_envStatusMessage = "Reset to procedural sky.";
+		_envStatusError = false;
+	}
+
+	// status feedback
+	if (!_envStatusMessage.empty()) {
+		ImGui::Separator();
+		ImVec4 msgColor = _envStatusError ? ImVec4(1.0f, 0.3f, 0.3f, 1.0f) : ImVec4(0.3f, 0.8f, 0.3f, 1.0f);
+		ImGui::TextColored(msgColor, "%s", _envStatusMessage.c_str());
 	}
 
 	ImGui::End();

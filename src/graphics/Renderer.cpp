@@ -17,6 +17,7 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	_vulkanCore = vulkanCore;
 
 	_resourceManager.init(_vulkanCore);
+	_iblSystem.init(_vulkanCore);
 
 	recreate_swapchain();
 	create_command_buffers();
@@ -51,6 +52,8 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_shadowPass->cleanup();
 	_skyboxPass->cleanup();
 
+	_iblSystem.cleanup();
+
 	_resourceManager.cleanup();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
@@ -84,7 +87,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 {
 	DrawContext drawCtx;
 	extract_scene_data(registry, drawCtx);
-	
+	drawCtx.environment = _iblSystem.get_environment_resources();
+
 	if (VkCommandBuffer cmd = begin_frame()) {
 		RenderContext ctx(cmd);
 		FrameData& currentFrame = get_current_frame();
@@ -407,7 +411,7 @@ void Renderer::create_command_buffers()
 		{VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 3},
 		{VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 3},
 		{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 3},
-		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4}
+		{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 10}
 	};
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
@@ -485,7 +489,4 @@ void Renderer::create_render_targets()
 		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 		}, windowExtent);
-
-	_resourceManager.generate_procedural_cubemap("SkyCubemap");
 }
-
