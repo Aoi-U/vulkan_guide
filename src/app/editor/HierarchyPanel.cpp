@@ -3,6 +3,7 @@
 #include <core/Components.h>
 #include <core/Events.h>
 #include <imgui.h>
+#include <ImGuizmo.h>
 
 void HierarchyPanel::on_draw(EditorContext & ctx)
 {
@@ -42,7 +43,7 @@ void HierarchyPanel::on_draw(EditorContext & ctx)
     ctx.registry.destroy(entityToDestroy);
   }
 
-  if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered()) {
+  if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
     ctx.selectedEntity = entt::null;
   }
 

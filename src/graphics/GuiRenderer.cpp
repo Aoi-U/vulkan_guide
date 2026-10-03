@@ -6,6 +6,7 @@
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <imgui_impl_vulkan.h>
+#include <ImGuizmo.h>
 #include <array>
 
 void GuiRenderer::init(Window* window, VulkanCore* vulkanCore, VkFormat colorFormat)
@@ -79,6 +80,7 @@ void GuiRenderer::new_frame()
 	ImGui_ImplVulkan_NewFrame();
 	ImGui_ImplSDL2_NewFrame();
 	ImGui::NewFrame();
+	ImGuizmo::BeginFrame();
 }
 
 void GuiRenderer::render(VkCommandBuffer cmd, VkImageView targetImageView, VkExtent2D drawExtent)

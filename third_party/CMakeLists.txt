@@ -47,6 +47,8 @@ target_sources(imgui PRIVATE
   imgui/imgui_tables.cpp
   imgui/imgui_impl_vulkan.cpp
   imgui/imgui_impl_sdl2.cpp
+  imgui/ImGuizmo.h
+  imgui/ImGuizmo.cpp
   )
 
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan SDL2::SDL2)

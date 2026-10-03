@@ -3,6 +3,7 @@
 #include <entt.hpp>
 #include <resources/AssetManager.h>
 #include <graphics/pass/Pass.h>
+#include <core/vk_types.h>
 
 struct EngineStats
 {
@@ -17,4 +18,5 @@ struct EditorContext
 	AssetManager& assetManager;
 	const EngineStats& stats;
 	entt::entity& selectedEntity;
+	const GPUSceneData& sceneData;
 };

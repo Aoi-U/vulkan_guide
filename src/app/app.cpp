@@ -77,7 +77,7 @@ void App::run()
 		stats.renderStats = _renderer->get_stats();
 
 		_guiRenderer->new_frame();
-		_editor->draw_gui(_registry, _assetManager, stats);
+		_editor->draw_gui(_registry, _assetManager, stats, _sceneData);
 
 		update_scene(_deltaTime);
 

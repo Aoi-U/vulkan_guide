@@ -2,6 +2,7 @@
 
 #include "app/editor/EditorPanel.h"
 #include <core/Events.h>
+#include <core/vk_types.h>
 #include <vector>
 #include <memory>
 
@@ -10,7 +11,7 @@ class Editor
 public:
 	Editor();
 
-	void draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats);
+	void draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats, const GPUSceneData& sceneData);
 
 	void on_input_event(const Events::SDLInputEvent& event);
 	void on_entity_destroyed(const Events::EntityDestroyedEvent& event);
@@ -28,6 +29,7 @@ public:
 
 private:
 	void draw_main_menu_bar();
+	void process_viewport_picking(EditorContext& ctx);
 
 	std::vector<std::unique_ptr<EditorPanel>> _panels;
 	entt::entity _selectedEntity{ entt::null };

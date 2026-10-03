@@ -1,6 +1,8 @@
 #include "camera.h"
 #include <glm/gtx/transform.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <imgui.h>
+#include <ImGuizmo.h>
 
 Camera::Camera()
 {
@@ -26,8 +28,6 @@ glm::mat4 Camera::getRotationMatrix()
 	return glm::toMat4(yawRotation) * glm::toMat4(pitchRotation);
 }
 
-
-
 void Camera::update(float deltaTime)
 {
   if (!isActive) return;
@@ -50,14 +50,22 @@ void Camera::on_input_event(const Events::SDLInputEvent& event)
 {
 	SDL_Event e = event.raw;
 
-  if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
-    isActive = true;
-    setCursorLocked(true);
+  if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) { // activate freelook unless gizmo is being used
+    // only activate camera if the gizmo is not being used
+    if (!ImGuizmo::IsUsing()) {
+      isActive = true;
+      setCursorLocked(true);
+    }
   }
-  else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) {
+	else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) { // process release of right mouse button
     isActive = false;
     setCursorLocked(false);
-    keyStates.clear(); // Clear movement keys when mouse is released
+    keyStates.clear(); // clear movement keys when unpressed
+  }
+  else if (e.type == SDL_WINDOWEVENT && (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_MINIMIZED)) { // reset camera when window loses focus or is minimized
+    isActive = false;
+    setCursorLocked(false);
+    keyStates.clear();
   }
 
   if (isActive) {
