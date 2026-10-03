@@ -296,13 +296,28 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, Mate
 				size_t img = texture.imageIndex.value();
 				materialResources.colorImage = images[img];
 			}
-
 			if (texture.samplerIndex.has_value()) {
 				size_t sampler = texture.samplerIndex.value();
 				materialResources.colorSampler = file.samplers[sampler];
 			}
 			else {
 				materialResources.colorSampler = vulkanCore->_defaultSamplerLinear;
+			}
+		}
+
+		// grab metallic roughness texture
+		if (mat.pbrData.metallicRoughnessTexture.has_value()) {
+			auto& texture = gltf.textures[mat.pbrData.metallicRoughnessTexture.value().textureIndex];
+			if (texture.imageIndex.has_value()) {
+				size_t img = texture.imageIndex.value();
+				materialResources.metalRoughImage = images[img];
+			}
+			if (texture.samplerIndex.has_value()) {
+				size_t sampler = texture.samplerIndex.value();
+				materialResources.metalRoughSampler = file.samplers[sampler];
+			}
+			else {
+				materialResources.metalRoughSampler = vulkanCore->_defaultSamplerLinear;
 			}
 		}
 

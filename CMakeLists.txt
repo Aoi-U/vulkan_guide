@@ -31,6 +31,10 @@ file(GLOB_RECURSE GLSL_SOURCE_FILES
     "${PROJECT_SOURCE_DIR}/shaders/*.comp"    
 )
 
+file(GLOB_RECURSE GLSL_HEADER_FILES
+    "${PROJECT_SOURCE_DIR}/shaders/*.glsl"
+)
+
 set(SPIRV_BINARY_FILES "")
 foreach(GLSL ${GLSL_SOURCE_FILES})
     get_filename_component(FILE_NAME ${GLSL} NAME)
@@ -38,7 +42,7 @@ foreach(GLSL ${GLSL_SOURCE_FILES})
     add_custom_command(
         OUTPUT ${SPIRV}
         COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV}
-        DEPENDS ${GLSL}
+        DEPENDS ${GLSL} ${GLSL_HEADER_FILES}
     )
     list(APPEND SPIRV_BINARY_FILES ${SPIRV})
 endforeach()
@@ -46,5 +50,5 @@ endforeach()
 add_custom_target(
     Shaders
     DEPENDS ${SPIRV_BINARY_FILES}
-    SOURCES ${GLSL_SOURCE_FILES}
+    SOURCES ${GLSL_SOURCE_FILES} ${GLSL_HEADER_FILES}
 )

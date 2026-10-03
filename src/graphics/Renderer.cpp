@@ -91,23 +91,24 @@ void Renderer::on_window_resize(const Events::WindowResizeEvent& event)
 
 void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData, GuiDrawFunction guiDrawFunction)
 {
-	DrawContext ctx;
-	extract_scene_data(registry, ctx);
-
+	DrawContext drawCtx;
+	extract_scene_data(registry, drawCtx);
+	
 	if (VkCommandBuffer cmd = begin_frame()) {
+		RenderContext renderContext(cmd);
 		FrameData& currentFrame = get_current_frame();
-		// allocate a new uniform buffer for scene data
+		// upload scene data 
 		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		// write scene data to the buffer
 		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
 
+		// compute passes
 		for (auto& pass : _computePasses) {
-			pass->dispatch(cmd, get_current_frame(), ctx, sceneData, _drawExtent);
+			pass->dispatch(renderContext, currentFrame, drawCtx, sceneData, _drawExtent);
 		}
-		
-		// forward main pass
+
+		// render passes
 		for (auto& pass : _renderPasses) {
-			pass->render(cmd, get_current_frame(), _resourceManager, ctx, sceneData, _drawExtent);
+			pass->render(renderContext, currentFrame, _resourceManager, drawCtx, sceneData, _drawExtent);
 		}
 
 		blit_to_swapchain(cmd);
@@ -117,6 +118,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
 			guiDrawFunction(cmd, swapchainImageView, _drawExtent);
 		}
+
 		end_frame();
 	}
 }

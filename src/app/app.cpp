@@ -40,8 +40,7 @@ void App::init()
 	dispatcher.sink<Events::SDLInputEvent>().connect<&Editor::on_input_event>(_editor.get());
 	dispatcher.sink<Events::SDLInputEvent>().connect<&Camera::on_input_event>(&_camera);
 
-	auto structureAsset = _assetManager.loadScene("structure", "../../assets/structure.glb");
-	auto brutalistAsset = _assetManager.loadScene("brutalist_building", "../../assets/brutalist_building.glb");
+	_assetManager.loadScene("DamagedHelmet", "../../assets/DamagedHelmet.glb");
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;
@@ -107,14 +106,15 @@ void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);
 
 	VkExtent2D extent = _window->get_extent();
-	_sceneData.proj = glm::perspective(glm::radians(70.0f) ,(float)extent.width / (float)extent.height, 10000.f, 0.1f);
+	_sceneData.proj = glm::perspective(glm::radians(70.0f), (float)extent.width / (float)extent.height, 10000.f, 0.1f);
 	_sceneData.proj[1][1] *= -1;
 	_sceneData.view = _camera.getViewMatrix();
 	_sceneData.viewproj = _sceneData.proj * _sceneData.view;
 	_sceneData.cameraPosition = glm::vec4(_camera.position, 1.0f);
-	_sceneData.ambientColor = glm::vec4(0.1f);
-	_sceneData.sunlightColor = glm::vec4(1.0f);
-	_sceneData.sunlightDirection = glm::vec4(0.f, 1.f, 0.5f, 1.f);
+
+	_sceneData.ambientColor = glm::vec4(0.03f, 0.03f, 0.03f, 1.0f);
+	_sceneData.sunlightColor = glm::vec4(1.0f, 0.98f, 0.90f, 1.0f);
+	_sceneData.sunlightDirection = glm::vec4(0.4f, 1.0f, 0.3f, 3.0f); // intensity 3.0
 
 	glm::vec3 lightDir = glm::normalize(glm::vec3(_sceneData.sunlightDirection));
 	glm::vec3 lightPos = _camera.position + lightDir * 35.0f;
@@ -123,4 +123,19 @@ void App::update_scene(float deltaTime) {
 	glm::mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 80.0f);
 	lightProj[1][1] *= -1.0f;
 	_sceneData.sunlightViewproj = lightProj * lightView;
+
+	// pbr point lights
+	_sceneData.pointLights[0].position = glm::vec4(-10.0f, 10.0f, 10.0f, 1.0f);
+	_sceneData.pointLights[0].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+
+	_sceneData.pointLights[1].position = glm::vec4(10.0f, 10.0f, 10.0f, 1.0f);
+	_sceneData.pointLights[1].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+
+	_sceneData.pointLights[2].position = glm::vec4(-10.0f, -10.0f, 10.0f, 1.0f);
+	_sceneData.pointLights[2].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+
+	_sceneData.pointLights[3].position = glm::vec4(10.0f, -10.0f, 10.0f, 1.0f);
+	_sceneData.pointLights[3].color = glm::vec4(300.0f, 300.0f, 300.0f, 1.0f);
+
+	_sceneData.lightCount = glm::vec4(4.0f, 0.0f, 0.0f, 0.0f);
 }

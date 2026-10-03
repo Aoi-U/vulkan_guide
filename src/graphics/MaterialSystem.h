@@ -5,13 +5,6 @@
 
 class VulkanCore;
 
-// a pipeline and its layout 
-struct MaterialPipeline
-{
-	VkPipeline pipeline;
-	VkPipelineLayout layout;
-};
-
 // data that is sent to shader for a material instance
 struct MaterialConstants
 {

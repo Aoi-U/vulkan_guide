@@ -65,8 +65,6 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 	VkDynamicState state[] = { 
 		VK_DYNAMIC_STATE_VIEWPORT, 
 		VK_DYNAMIC_STATE_SCISSOR,
-		VK_DYNAMIC_STATE_CULL_MODE,
-		VK_DYNAMIC_STATE_FRONT_FACE
 	};
 
 	VkPipelineDynamicStateCreateInfo dynamicInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };

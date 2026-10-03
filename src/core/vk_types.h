@@ -77,6 +77,12 @@ struct GPUObjectData
 	uint32_t batchOffset;
 };
 
+struct GPUPointLight
+{
+	glm::vec4 position; // w component for light radius
+	glm::vec4 color; // w component for light power
+};
+
 // per frame uniform data sent to GPU
 struct GPUSceneData
 {
@@ -88,6 +94,8 @@ struct GPUSceneData
 	glm::vec4 ambientColor;
 	glm::vec4 sunlightDirection; // w component for sun power
 	glm::vec4 sunlightColor;
+	GPUPointLight pointLights[4];
+	glm::vec4 lightCount; // active point light count
 };
 
 // a single vertex 

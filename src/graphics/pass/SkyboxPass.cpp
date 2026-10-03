@@ -15,81 +15,57 @@ void SkyboxPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayo
 	builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 4: combined image sampler for skybox texture
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-	// create pipeline layout
-	VkPipelineLayoutCreateInfo layoutInfo = vkinit::pipeline_layout_create_info();
-	layoutInfo.setLayoutCount = 1;
-	layoutInfo.pSetLayouts = &_descriptorLayout;
-	VK_CHECK(vkCreatePipelineLayout(_vulkanCore->get_device(), &layoutInfo, nullptr, &_pipeline.layout));
+	// load shaders
+	auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/skybox.vert.spv");
+	auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/skybox.frag.spv");
 
-	// load shader
-	VkShaderModule vertShader, fragShader;
-	if (!vkutil::load_shader_module("../../shaders/skybox.vert.spv", _vulkanCore->get_device(), &vertShader)) {
-		fmt::println("Error when building the skybox vertex shader module");
-		return;
-	}
-	if (!vkutil::load_shader_module("../../shaders/skybox.frag.spv", _vulkanCore->get_device(), &fragShader)) {
-		fmt::println("Error when building the skybox fragment shader module");
-		return;
-	}
-
-	// create the pipeline
-	PipelineBuilder pipelineBuilder;
-	pipelineBuilder.set_shaders(vertShader, fragShader);
-	pipelineBuilder.set_input_topology(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-	pipelineBuilder.set_polygon_mode(VK_POLYGON_MODE_FILL);
-	pipelineBuilder.set_cull_mode(VK_CULL_MODE_NONE, VK_FRONT_FACE_CLOCKWISE);
-	pipelineBuilder.set_multisampling_none();
-	pipelineBuilder.disable_blending();
-	// test GREATER_OR_EQUAL to draw only on empty pixels without writing depth
-	pipelineBuilder.enable_depthtest(false, VK_COMPARE_OP_GREATER_OR_EQUAL);
-	pipelineBuilder.set_color_attachment_format(colorFormat);
-	pipelineBuilder.set_depth_format(depthFormat);
-	pipelineBuilder._pipelineLayout = _pipeline.layout;
-	_pipeline.pipeline = pipelineBuilder.build_pipeline(_vulkanCore->get_device());
-
-	// cleanup shader modules
-	vkDestroyShaderModule(_vulkanCore->get_device(), vertShader, nullptr);
-	vkDestroyShaderModule(_vulkanCore->get_device(), fragShader, nullptr);
+	// create pipeline
+	GraphicsPipelineDesc pipelineDesc{
+		.shaders = {vert, frag},
+		.descriptorLayouts = {_descriptorLayout},
+		.colorAttachmentFormats = {colorFormat},
+		.depthAttachmentFormat = depthFormat,
+		.depthState = {.depthTest = true, .depthWrite = false, .compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL}, // test GREATER_OR_EQUAL to draw only on empty pixels without writing depth
+		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE, .polygonMode = VK_POLYGON_MODE_FILL},
+		.blendMode = BlendMode::None
+	};
+	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), pipelineDesc);
 }
 
 void SkyboxPass::cleanup()
 {
 	VkDevice dev = _vulkanCore->get_device();
-	vkDestroyPipeline(dev, _pipeline.pipeline, nullptr);
-	vkDestroyPipelineLayout(dev, _pipeline.layout, nullptr);
-	vkDestroyDescriptorSetLayout(dev, _descriptorLayout, nullptr);
+	_pipeline.cleanup();
+	if (_descriptorLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(dev, _descriptorLayout, nullptr);
+		_descriptorLayout = VK_NULL_HANDLE;
+	}
 	_vulkanCore = nullptr;
 }
 
-void SkyboxPass::render(VkCommandBuffer cmd, FrameData & frameData, RenderResourceManager & resources, DrawContext & ctx, const GPUSceneData & sceneData, VkExtent2D drawExtent)
+void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent)
 {
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
 	// transition color, depth, and skybox attachments to correct state
-	resources.transition(cmd, "SceneColor", ResourceState::ColorAttachment);
-	resources.transition(cmd, "SceneDepth", ResourceState::DepthAttachment);
-	resources.transition(cmd, "SkyCubemap", ResourceState::ShaderReadOnly); 
+	resources.transition(ctx.get_cmd(), "SceneColor", ResourceState::ColorAttachment);
+	resources.transition(ctx.get_cmd(), "SceneDepth", ResourceState::DepthAttachment);
+	resources.transition(ctx.get_cmd(), "SkyCubemap", ResourceState::ShaderReadOnly);
 
-	// setup rendering info
-	VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(resources.get_view("SceneColor"), nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-	colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD; 
-	VkRenderingAttachmentInfo depthAttachment = vkinit::depth_attachment_info(resources.get_view("SceneDepth"), VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
-	depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
-	VkRenderingInfo renderInfo = vkinit::rendering_info(drawExtent, &colorAttachment, &depthAttachment);
-
-	vkCmdBeginRendering(cmd, &renderInfo);
-
-	// set dynamic viewport and scissor
-	VkViewport viewport{ 0.f, 0.f, static_cast<float>(drawExtent.width), static_cast<float>(drawExtent.height), 0.f, 1.f };
-	vkCmdSetViewport(cmd, 0, 1, &viewport);
-	VkRect2D scissor{ {0, 0}, drawExtent };
-	vkCmdSetScissor(cmd, 0, 1, &scissor);
-
-	vkCmdSetCullMode(cmd, VK_CULL_MODE_NONE);
-	vkCmdSetFrontFace(cmd, VK_FRONT_FACE_CLOCKWISE);
-
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.pipeline);
+	// begin rendering
+	ctx.begin_rendering({
+		.renderExtent = drawExtent,
+		.colorAttachments = { ColorAttachmentDesc{
+			.view = resources.get_view("SceneColor"),
+			.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD
+			}
+		},
+		.depthAttachment = DepthAttachmentDesc{
+			.view = resources.get_view("SceneDepth"),
+			.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+			}
+		});
 
 	// bind descriptor sets
 	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
@@ -98,10 +74,17 @@ void SkyboxPass::render(VkCommandBuffer cmd, FrameData & frameData, RenderResour
 	writer.write_image(4, resources.get_view("SkyCubemap"), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), skyboxSet);
 
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.layout, 0, 1, &skyboxSet, 0, nullptr);
-	vkCmdDraw(cmd, 3, 1, 0, 0);
+	// set dynamic viewport and scissor
+	ctx.set_viewport_scissor(drawExtent);
 
-	vkCmdEndRendering(cmd);
+	// bind pipeline and descriptor set
+	ctx.bind_pipeline(_pipeline);
+	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, skyboxSet);
+
+	// draw full screen triangle
+	ctx.draw(3, 1, 0, 0);
+
+	ctx.end_rendering();
 
 	auto end = std::chrono::system_clock::now();
 	_stats.clear();

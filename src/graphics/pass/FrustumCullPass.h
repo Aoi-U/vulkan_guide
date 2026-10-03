@@ -20,10 +20,9 @@ class FrustumCullPass : public ComputePass
 public:
   void init(VulkanCore* vulkanCore) override;
   void cleanup() override;
-  void dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawContext& context, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
+  void dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
 
 private:
-  void build_cull_pipeline();
 
   inline void get_frustum_planes(const glm::mat4& viewProj, glm::vec4 planes[6]) {
 
@@ -46,6 +45,5 @@ private:
 
   VulkanCore* _vulkanCore{ nullptr };
   VkDescriptorSetLayout _cullDescriptorLayout{ VK_NULL_HANDLE };
-  VkPipelineLayout _cullPipelineLayout{ VK_NULL_HANDLE };
-  VkPipeline _cullPipeline{ VK_NULL_HANDLE };
+  ComputePipeline _pipeline;
 };

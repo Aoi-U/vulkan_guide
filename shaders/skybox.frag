@@ -10,5 +10,8 @@ layout (set = 0, binding = 4) uniform samplerCube skyMap;
 
 void main()
 {
-	outFragColor = vec4(texture(skyMap, normalize(inViewRay)).rgb, 1.0);
+	vec3 color = texture(skyMap, normalize(inViewRay)).rgb;
+    color = color / (color + vec3(1.0));
+    color = pow(color, vec3(1.0 / 2.2));
+    outFragColor = vec4(color, 1.0);
 }

@@ -10,17 +10,14 @@ class ForwardPass : public RenderPass
 public:
   void init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
   void cleanup() override;
-  void render(VkCommandBuffer cmd, FrameData& frameData, RenderResourceManager& resources, DrawContext& ctx, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
-
+  void render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
 
 private:
-  void build_pipelines(VkFormat colorFormat, VkFormat depthFormat);
 
   VulkanCore* _vulkanCore;
   VkDescriptorSetLayout _sceneDataDescriptorLayout;
-  VkDescriptorSetLayout _materialDescriptorLayout;
 
-  MaterialPipeline _opaquePipeline;
-  MaterialPipeline _transparentPipeline;
+  GraphicsPipeline _opaquePipeline;
+  GraphicsPipeline _transparentPipeline;
 };
 

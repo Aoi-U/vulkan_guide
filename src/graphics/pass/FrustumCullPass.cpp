@@ -11,18 +11,7 @@ static AutoCVar_Int cvCullMode("cull.frustum", "Toggle frustum culling", 1, CVar
 
 void FrustumCullPass::init(VulkanCore* vulkanCore) {
 	_vulkanCore = vulkanCore;
-	build_cull_pipeline();
-	_stats.name = "Compute Frustum Cull Pass";
-}
-
-void FrustumCullPass::build_cull_pipeline() {
-	VkShaderModule cullShader;
-	if (!vkutil::load_shader_module("../../shaders/frustumcull.comp.spv", _vulkanCore->get_device(), &cullShader)) {
-		fmt::println("Error loading frustumcull.comp.spv");
-		return;
-	}
-
-	// create descriptor set layout for frustum cull pass
+	//build_cull_pipeline();
 	DescriptorLayoutBuilder cullLayoutBuilder;
 	cullLayoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: GPUObjectData buffer
 	cullLayoutBuilder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: final instance id buffer
@@ -31,39 +20,29 @@ void FrustumCullPass::build_cull_pipeline() {
 	cullLayoutBuilder.add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 4: batch count buffer
 	_cullDescriptorLayout = cullLayoutBuilder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_COMPUTE_BIT);
 
-	VkPushConstantRange cullPushRange{
-			.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT,
-			.offset = 0,
-			.size = sizeof(CullPushConstants)
+	auto cullShader = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_COMPUTE_BIT, "../../shaders/frustumcull.comp.spv");
+
+	ComputePipelineDesc pipelineDesc{
+		.computeShader = cullShader,
+		.descriptorLayouts = { _cullDescriptorLayout },
+		.pushConstants = { VkPushConstantRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CullPushConstants)} }
 	};
 
-	// create pipeline layout 
-	VkPipelineLayoutCreateInfo layoutInfo = vkinit::pipeline_layout_create_info();
-	layoutInfo.setLayoutCount = 1;
-	layoutInfo.pSetLayouts = &_cullDescriptorLayout;
-	layoutInfo.pushConstantRangeCount = 1;
-	layoutInfo.pPushConstantRanges = &cullPushRange;
-	VK_CHECK(vkCreatePipelineLayout(_vulkanCore->get_device(), &layoutInfo, nullptr, &_cullPipelineLayout));
-
-	PipelineBuilder pipelineBuilder;
-	pipelineBuilder._pipelineLayout = _cullPipelineLayout;
-	pipelineBuilder.set_compute_shaders(cullShader);
-	_cullPipeline = pipelineBuilder.build_compute_pipeline(_vulkanCore->get_device());
-
-	// cleanup shader module
-	vkDestroyShaderModule(_vulkanCore->get_device(), cullShader, nullptr);
+	_pipeline = ComputePipeline(_vulkanCore->get_device(), pipelineDesc);
 }
 
 void FrustumCullPass::cleanup() {
-	VkDevice dev = _vulkanCore->get_device();
-	vkDestroyPipeline(dev, _cullPipeline, nullptr);
-	vkDestroyPipelineLayout(dev, _cullPipelineLayout, nullptr);
-	vkDestroyDescriptorSetLayout(dev, _cullDescriptorLayout, nullptr);
+	_pipeline.cleanup();
+
+	if (_cullDescriptorLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _cullDescriptorLayout, nullptr);
+		_cullDescriptorLayout = VK_NULL_HANDLE;
+	}
 	_vulkanCore = nullptr;
 }
 
-void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawContext& ctx, const GPUSceneData& sceneData, VkExtent2D drawExtent) {
-	if (ctx.opaqueObjects.empty()) return;
+void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent) {
+	if (drawCtx.opaqueObjects.empty()) return;
 
 	// statistics
 	{
@@ -77,7 +56,7 @@ void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawCo
 		statsRead->visibleTriangles = 0;
 
 		// calculate culled meshes
-		const uint32_t totalMeshes = static_cast<uint32_t>(ctx.opaqueObjects.size());
+		const uint32_t totalMeshes = static_cast<uint32_t>(drawCtx.opaqueObjects.size());
 		visibleDraws = std::min(visibleDraws, totalMeshes);
 		uint32_t culledMeshes = totalMeshes - visibleDraws;
 
@@ -91,9 +70,9 @@ void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawCo
 	auto start = std::chrono::system_clock::now();
 
 	// number of objects to draw
-	const uint32_t drawCount = static_cast<uint32_t>(ctx.opaqueObjects.size());
-	const uint32_t batchCount = static_cast<uint32_t>(ctx.opaqueBatches.size());
-	ctx.indirectDrawCount = drawCount;
+	const uint32_t drawCount = static_cast<uint32_t>(drawCtx.opaqueObjects.size());
+	const uint32_t batchCount = static_cast<uint32_t>(drawCtx.opaqueBatches.size());
+	drawCtx.indirectDrawCount = drawCount;
 
 	// allocate GPU buffers
 	const size_t objectBufferSize = sizeof(GPUObjectData) * drawCount;
@@ -114,11 +93,11 @@ void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawCo
 
 	// fill object and indirect command buffers with data
 	for (uint32_t b = 0; b < batchCount; ++b) {
-		const auto& batch = ctx.opaqueBatches[b];
+		const auto& batch = drawCtx.opaqueBatches[b];
 		const uint32_t batchEnd = batch.first + batch.count;
 
 		for (uint32_t i = batch.first; i < batchEnd; ++i) {
-			const RenderObject& obj = ctx.opaqueObjects[i];
+			const RenderObject& obj = drawCtx.opaqueObjects[i];
 
 			mappedObjects[i] = GPUObjectData{
 				.worldMatrix = obj.transform,
@@ -149,17 +128,16 @@ void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawCo
 	writer.write_buffer(4, frameData._gpuCountBuffer.buffer, sizeof(uint32_t) * batchCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), cullSet);
 
-	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipeline);
-	vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _cullPipelineLayout, 0, 1, &cullSet, 0, nullptr);
+	ctx.bind_pipeline(_pipeline);
+	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_COMPUTE, _pipeline.get_layout(), 0, cullSet);
 
 	// set push constants 
 	CullPushConstants cullPush{};
 	get_frustum_planes(sceneData.viewproj, cullPush.frustumPlanes);
 	cullPush.drawCount = drawCount;
 	cullPush.cullMode = static_cast<uint32_t>(cvCullMode.Get());
-	vkCmdPushConstants(cmd, _cullPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CullPushConstants), &cullPush);
-
-	vkCmdDispatch(cmd, (drawCount + 255) / 256, 1, 1);
+	ctx.push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_COMPUTE_BIT, cullPush);
+	ctx.dispatch((drawCount + 255) / 256);
 
 	// memory barrier to guarantee compute writes are visible to indirect command dispatch and vertex shader reads
 	VkMemoryBarrier2 barrier{
@@ -174,7 +152,7 @@ void FrustumCullPass::dispatch(VkCommandBuffer cmd, FrameData& frameData, DrawCo
 		.memoryBarrierCount = 1,
 		.pMemoryBarriers = &barrier
 	};
-	vkCmdPipelineBarrier2(cmd, &depInfo);
+	vkCmdPipelineBarrier2(ctx.get_cmd(), &depInfo);
 
 	auto end = std::chrono::system_clock::now();
 	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();

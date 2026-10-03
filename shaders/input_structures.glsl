@@ -1,3 +1,9 @@
+struct PointLight
+{
+	vec4 position;
+	vec4 color;
+};
+
 layout (set = 0, binding = 0) uniform SceneData
 {
   mat4 view;
@@ -8,6 +14,8 @@ layout (set = 0, binding = 0) uniform SceneData
   vec4 ambientColor;
   vec4 sunlightDirection; // w for sun power
   vec4 sunlightColor;
+  PointLight pointLights[4];
+  vec4 lightCount;
 } sceneData;
 
 layout (set = 1, binding = 0) uniform GLTFMaterialData
