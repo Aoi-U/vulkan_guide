@@ -31,6 +31,8 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 
 	// setup dummy color blending. we arnt using transparent objects yet
 	// blending is just "no blend", but we do write to color attachment
+	std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(_renderInfo.colorAttachmentCount, _colorBlendAttachment);
+
 	VkPipelineColorBlendStateCreateInfo colorBlending = {};
 	colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 	colorBlending.pNext = nullptr;
@@ -38,7 +40,7 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 	colorBlending.logicOpEnable = VK_FALSE; 
 	colorBlending.logicOp = VK_LOGIC_OP_COPY;
 	colorBlending.attachmentCount = _renderInfo.colorAttachmentCount;
-	colorBlending.pAttachments = (_renderInfo.colorAttachmentCount > 0) ? &_colorBlendAttachment : nullptr;
+	colorBlending.pAttachments = blendAttachments.empty() ? nullptr : blendAttachments.data();
 
 	// completely clear VertexInputStateCreateInfo as we have no need for it 
 	VkPipelineVertexInputStateCreateInfo _vertexInputInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };

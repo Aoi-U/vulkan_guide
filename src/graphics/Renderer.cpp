@@ -5,11 +5,11 @@
 #include <algorithm>
 #include <resources/vk_loader.h>
 #include <core/Components.h>
-#include <core/cvars.h>
 #include "graphics/GuiRenderer.h"
 #include "graphics/RenderGraph.h"
 
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
+AutoCVar_Int cvRenderPath("r.renderPath", "Render Path: 0 = Forward, 1 = Deferred", 1);
 
 void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem, entt::dispatcher& dispatcher)
 {
@@ -41,6 +41,14 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 
 	_skyboxPass = std::make_unique<SkyboxPass>();
 	_skyboxPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+
+	_gbufferPass = std::make_unique<GBufferPass>();
+	_gbufferPass->init(_vulkanCore, materialSystem->get_material_layout(),
+		_resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+
+	_deferredLightingPass = std::make_unique<DeferredLightingPass>();
+	_deferredLightingPass->init(_vulkanCore, materialSystem->get_material_layout(),
+		_resourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -55,6 +63,8 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_pointShadowPass->cleanup();
 	_shadowPass->cleanup();
 	_skyboxPass->cleanup();
+	_gbufferPass->cleanup();
+	_deferredLightingPass->cleanup();
 
 	_iblSystem.cleanup();
 
@@ -101,6 +111,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
 
+		_renderPath = static_cast<RenderPath>(cvRenderPath.Get()); // set render path to forward or deferred from cvar 
+
 		RenderGraph graph(_resourceManager);
 
 		graph.add_pass("FrustumCull")
@@ -120,15 +132,43 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			_pointShadowPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
 				});
 
-		graph.add_pass("ForwardPass")
-			.read("ShadowMap", ResourceState::ShaderReadOnly)
-			.read("PointShadowMap", ResourceState::ShaderReadOnly)
-			.read("SkyCubemap", ResourceState::ShaderReadOnly)
-			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
-			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
-			.set_execute_callback([&](RenderContext& ctx) {
-			_forwardPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
-				});
+		if (_renderPath == RenderPath::Deferred) {
+			// 1. G-Buffer Geometry Pass
+			graph.add_pass("GBufferPass")
+				.set_color_attachment("GBufferPosition", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
+				.set_color_attachment("GBufferNormal", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
+				.set_color_attachment("GBufferAlbedo", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
+				.set_color_attachment("GBufferMetalRough", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
+				.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
+				.set_execute_callback([&](RenderContext& ctx) {
+				_gbufferPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+					});
+
+			// 2. Deferred Lighting Pass
+			graph.add_pass("DeferredLightingPass")
+				.read("GBufferPosition", ResourceState::ShaderReadOnly)
+				.read("GBufferNormal", ResourceState::ShaderReadOnly)
+				.read("GBufferAlbedo", ResourceState::ShaderReadOnly)
+				.read("GBufferMetalRough", ResourceState::ShaderReadOnly)
+				.read("ShadowMap", ResourceState::ShaderReadOnly)
+				.read("PointShadowMap", ResourceState::ShaderReadOnly)
+				.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
+				.set_execute_callback([&](RenderContext& ctx) {
+				_deferredLightingPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+					});
+		}
+		else {
+			// Forward Rendering Pass
+			graph.add_pass("ForwardPass")
+				.read("ShadowMap", ResourceState::ShaderReadOnly)
+				.read("PointShadowMap", ResourceState::ShaderReadOnly)
+				.read("SkyCubemap", ResourceState::ShaderReadOnly)
+				.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
+				.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
+				.set_execute_callback([&](RenderContext& ctx) {
+				_forwardPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+					});
+		}
 
 		graph.add_pass("SkyboxPass")
 			.read("SkyCubemap", ResourceState::ShaderReadOnly)
@@ -409,7 +449,14 @@ const std::vector<PassStats> Renderer::get_stats() const
 	stats.push_back(_frustumCullPass->get_stats());
 	stats.push_back(_shadowPass->get_stats());
 	stats.push_back(_pointShadowPass->get_stats());
-	stats.push_back(_forwardPass->get_stats());
+
+	if (_renderPath == RenderPath::Forward) {
+		stats.push_back(_forwardPass->get_stats());
+	}
+	else {
+		stats.push_back(_gbufferPass->get_stats());
+		stats.push_back(_deferredLightingPass->get_stats());
+	}
 	stats.push_back(_skyboxPass->get_stats());
 
 	return stats;
@@ -516,5 +563,45 @@ void Renderer::create_render_targets()
 		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
 		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, windowExtent);
+
+	// create gbuffer position target
+	_resourceManager.register_target({
+		.name = "GBufferPosition",
+		.sizePolicy = TargetSizePolicy::WindowRelative,
+		.relativeScale = 1.0f,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, windowExtent);
+
+	// create gbuffer normal target
+	_resourceManager.register_target({
+			.name = "GBufferNormal",
+			.sizePolicy = TargetSizePolicy::WindowRelative,
+			.relativeScale = 1.0f,
+			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, windowExtent);
+
+	// create gbuffer albedo target
+	_resourceManager.register_target({
+			.name = "GBufferAlbedo",
+			.sizePolicy = TargetSizePolicy::WindowRelative,
+			.relativeScale = 1.0f,
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, windowExtent);
+
+	// create gbuffer metallic/roughness target
+	_resourceManager.register_target({
+			.name = "GBufferMetalRough",
+			.sizePolicy = TargetSizePolicy::WindowRelative,
+			.relativeScale = 1.0f,
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 		}, windowExtent);
 }

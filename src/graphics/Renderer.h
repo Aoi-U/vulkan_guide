@@ -8,6 +8,8 @@
 #include <graphics/pass/ShadowPass.h>
 #include <graphics/pass/SkyboxPass.h>
 #include <graphics/pass/PointShadowPass.h>
+#include <graphics/pass/GBufferPass.h>
+#include <graphics/pass/DeferredLightingPass.h>
 
 #include <graphics/MaterialSystem.h>
 #include <graphics/IBLSystem.h>
@@ -18,6 +20,9 @@
 #include <entt.hpp>
 #include <vector>
 #include <core/Events.h>
+#include <core/cvars.h>
+
+extern AutoCVar_Int cvRenderPath;
 
 class GuiRenderer;
 
@@ -73,6 +78,12 @@ struct FrameData
 	AllocatedBuffer _gpuCountBuffer; // buffer for draw counts per batch
 };
 
+enum class RenderPath : uint32_t
+{
+	Forward = 0,
+	Deferred = 1
+};
+
 class Renderer
 {
 public:
@@ -85,7 +96,8 @@ public:
 	void on_window_resize(const Events::WindowResizeEvent& event);
 
 	void set_gui_renderer(GuiRenderer* guiRenderer) { _guiRenderer = guiRenderer; }
-	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
+
+	void set_render_path(RenderPath path) { _renderPath = path; }
 
 	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
 
@@ -103,6 +115,8 @@ public:
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
 	RenderResourceManager& get_resources() { return _resourceManager; }
 	IBLSystem& get_ibl() { return _iblSystem; }
+	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
+	RenderPath get_render_path() const { return _renderPath; }
 	const std::vector<PassStats> get_stats() const;
 
 private:
@@ -123,11 +137,15 @@ private:
 
 	GuiRenderer* _guiRenderer{ nullptr };
 
+	RenderPath _renderPath{ RenderPath::Deferred };
+
 	std::unique_ptr<FrustumCullPass> _frustumCullPass;
 	std::unique_ptr<ForwardPass> _forwardPass;
 	std::unique_ptr<ShadowPass> _shadowPass;
 	std::unique_ptr<PointShadowPass> _pointShadowPass;
 	std::unique_ptr<SkyboxPass> _skyboxPass;
+	std::unique_ptr<GBufferPass> _gbufferPass;
+	std::unique_ptr<DeferredLightingPass> _deferredLightingPass;
 
 	IBLSystem _iblSystem;
 
