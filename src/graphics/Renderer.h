@@ -117,6 +117,7 @@ public:
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
 	VkDescriptorSet get_scene_color_descriptor();
 	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
+	VkDescriptorSet get_target_descriptor(const std::string& name, uint32_t faceIndex = 0);
 	const std::vector<PassStats> get_stats() const;
 
 private:

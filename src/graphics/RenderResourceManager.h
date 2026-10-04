@@ -53,6 +53,9 @@ public:
 	// transition a render target to a new state
 	void transition(VkCommandBuffer cmd, const std::string& name, ResourceState newState);
 
+	// transition all render targets to read only (used for imgui viewing)
+	void transition_all_to_read_only(VkCommandBuffer cmd);
+
 	// set the state of a render target 
 	void set_state(const std::string& name, ResourceState state);
 
@@ -65,6 +68,8 @@ public:
 	VkImageView get_face_view(const std::string& name, uint32_t face) const { return _targets.at(name).faceViews.at(face); }
 	const RenderTargetDescription& get_description(const std::string& name) const { return _targets.at(name).description; }
 	bool has_target(const std::string& name) const;
+	const std::unordered_map<std::string, RenderTarget>& get_all_targets() const { return _targets; }
+	std::vector<std::string> get_target_names() const;
 
 private:
 	void allocate_target_resources(RenderTarget& target, VkExtent2D windowExtent);

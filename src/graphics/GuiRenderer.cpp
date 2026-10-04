@@ -108,16 +108,24 @@ VkDescriptorSet GuiRenderer::get_image_descriptor(VkImageView imageView, VkSampl
 	if (imageView == VK_NULL_HANDLE)
 		return VK_NULL_HANDLE;
 
-	if (_viewportImageView != imageView) {
-		// if the image view changed, create a new descriptor set for it
-		if (_viewportDescriptorSet != VK_NULL_HANDLE) {
-			ImGui_ImplVulkan_RemoveTexture(_viewportDescriptorSet);
-			_viewportDescriptorSet = VK_NULL_HANDLE;
-		}
-		// store new image view and create new descriptor set for it
-		_viewportImageView = imageView;
-		_viewportDescriptorSet = ImGui_ImplVulkan_AddTexture(imageView, layout);
+	// check if we already have a descriptor set for this image view
+	auto it = _imageDescriptorCache.find(imageView); 
+	if (it != _imageDescriptorCache.end()) {
+		return it->second;
 	}
 
-	return _viewportDescriptorSet;
+	// cache a new descriptor set for this image view
+	VkDescriptorSet newSet = ImGui_ImplVulkan_AddTexture(imageView, layout);
+	_imageDescriptorCache[imageView] = newSet;
+	return newSet;
+}
+
+void GuiRenderer::clear_image_descriptors()
+{
+	for (auto& [imageView, descriptorSet] : _imageDescriptorCache) {
+		if (descriptorSet != VK_NULL_HANDLE) {
+			ImGui_ImplVulkan_RemoveTexture(descriptorSet);
+		}
+	}
+	_imageDescriptorCache.clear();
 }

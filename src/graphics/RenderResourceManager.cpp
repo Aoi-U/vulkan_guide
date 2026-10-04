@@ -62,6 +62,37 @@ void RenderResourceManager::transition(VkCommandBuffer cmd, const std::string& n
 	target.currentState = newState;
 }
 
+void RenderResourceManager::transition_all_to_read_only(VkCommandBuffer cmd)
+{
+	std::vector<ImageBarrierInfo> barriers;
+	for (auto& [name, target] : _targets) {
+		// skip targets already in read only or undefined
+		if (target.currentState == ResourceState::ShaderReadOnly || target.currentState == ResourceState::Undefined) {
+			continue;
+		}
+
+		ResourceState targetState = ResourceState::ShaderReadOnly;
+		const RenderTargetDescription& desc = target.description;
+
+		ImageBarrierInfo barrier{};
+		barrier.image = target.image.image;
+		barrier.oldState = target.currentState;
+		barrier.newState = targetState;
+		barrier.aspectMask = desc.aspectMask;
+		barrier.baseMipLevel = 0;
+		barrier.levelCount = desc.mipLevels;
+		barrier.baseArrayLayer = 0;
+		barrier.layerCount = desc.arrayLayers;
+		barriers.push_back(barrier);
+		target.currentState = targetState;
+	}
+
+	// transition all images to readonly
+	if (!barriers.empty()) {
+		RenderSync::transition_images(cmd, barriers);
+	}
+}
+
 void RenderResourceManager::set_state(const std::string& name, ResourceState state)
 {
 	auto it = _targets.find(name);
@@ -99,6 +130,18 @@ ResourceState RenderResourceManager::get_state(const std::string& name) const
 bool RenderResourceManager::has_target(const std::string& name) const
 {
 	return _targets.contains(name);
+}
+
+std::vector<std::string> RenderResourceManager::get_target_names() const
+{
+	std::vector<std::string> names;
+	names.reserve(_targets.size());
+	for (const auto& [name, target] : _targets) {
+		names.push_back(name);
+	}
+
+	std::sort(names.begin(), names.end());
+	return names;
 }
 
 void RenderResourceManager::allocate_target_resources(RenderTarget& target, VkExtent2D windowExtent)

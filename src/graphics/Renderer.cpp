@@ -122,6 +122,11 @@ void Renderer::set_viewport_extent(VkExtent2D extent)
 	// wait for GPU to finish before destroying images and freeing descriptor sets
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
+	// clear cached image descriptors in gui renderer so they will be recreated with new viewport extent
+	if (_guiRenderer) {
+		_guiRenderer->clear_image_descriptors();
+	}
+
 	_viewportExtent = extent;
 	_currentRenderScale = scale;
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
@@ -224,7 +229,10 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		graph.execute(ctx);
 
 		// transition scene color to shaderreadonly so imgui can sample it in the viewport window
-		_resourceManager.transition(cmd, "SceneColor", ResourceState::ShaderReadOnly);
+		//_resourceManager.transition(cmd, "SceneColor", ResourceState::ShaderReadOnly);
+
+		// transition al render targets to shaderreadonly for viewing in imgui
+		_resourceManager.transition_all_to_read_only(cmd);
 
 		// transition swapchain image to color attachment for imgui rendering
 		VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
@@ -469,6 +477,11 @@ void Renderer::recreate_swapchain()
 {
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
+	// clear cached image descriptors in gui renderer so they will be recreated with new viewport extent
+	if (_guiRenderer) {
+		_guiRenderer->clear_image_descriptors();
+	}
+
 	VkExtent2D actualExtent = _pendingResizeExtent;
 	if (actualExtent.width == 0 || actualExtent.height == 0) {
 		actualExtent = _window->get_extent();
@@ -494,13 +507,35 @@ void Renderer::recreate_swapchain()
 	}
 }
 
+VkDescriptorSet Renderer::get_target_descriptor(const std::string& name, uint32_t faceIndex)
+{
+	if (!_guiRenderer || !_resourceManager.has_target(name)) {
+		return VK_NULL_HANDLE;
+	}
+
+	const auto& desc = _resourceManager.get_description(name);
+	VkImageView imageView = VK_NULL_HANDLE;
+
+	bool isCube = (desc.flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) || (desc.arrayLayers == 6 && desc.viewType == VK_IMAGE_VIEW_TYPE_CUBE);
+	if (isCube) {
+		if (faceIndex < 6) {
+			imageView = _resourceManager.get_face_view(name, faceIndex);
+		}
+	}
+	else {
+		imageView = _resourceManager.get_view(name);
+	}
+
+	if (imageView == VK_NULL_HANDLE) {
+		return VK_NULL_HANDLE;
+	}
+
+	return _guiRenderer->get_image_descriptor(imageView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+}
+
 VkDescriptorSet Renderer::get_scene_color_descriptor()
 {
-	if (!_guiRenderer)
-		return VK_NULL_HANDLE;
-
-	VkImageView sceneColorView = _resourceManager.get_view("SceneColor");
-	return _guiRenderer->get_image_descriptor(sceneColorView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	return get_target_descriptor("SceneColor");
 }
 
 const std::vector<PassStats> Renderer::get_stats() const

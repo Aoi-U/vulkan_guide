@@ -7,6 +7,8 @@
 #include "app/editor/ViewportPanel.h"
 #include "app/editor/CVarPanel.h"
 #include "app/editor/GizmoPanel.h"
+#include "app/editor/RenderTargetViewPanel.h"
+
 #include <core/Components.h>
 #include <resources/vk_loader.h>
 #include <imgui_impl_sdl2.h>
@@ -25,6 +27,7 @@ Editor::Editor()
 	add_panel<PerformancePanel>();
 	add_panel<CVarPanel>();
 	add_panel<GizmoPanel>();
+	add_panel<RenderTargetViewPanel>();
 }
 
 void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer)
