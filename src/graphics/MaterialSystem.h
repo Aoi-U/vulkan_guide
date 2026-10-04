@@ -10,8 +10,9 @@ struct MaterialConstants
 {
 	glm::vec4 colorFactors;
 	glm::vec4 metalRoughFactors;
+	glm::vec4 extraFactors; // x: occlusionStrength
 	// padding, needed for uniform bnuffers
-	glm::vec4 padding[14];
+	glm::vec4 padding[13];
 };
 
 // resources needed for a material instance
@@ -19,8 +20,13 @@ struct MaterialResources
 {
 	AllocatedImage colorImage;
 	VkSampler colorSampler;
+
 	AllocatedImage metalRoughImage;
 	VkSampler metalRoughSampler;
+
+	AllocatedImage occlusionImage;
+	VkSampler occlusionSampler;
+
 	VkBuffer dataBuffer;
 	uint32_t dataBufferOffset;
 };

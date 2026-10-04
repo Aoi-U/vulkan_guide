@@ -240,13 +240,20 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, Mate
 	int dataIndex = 0;
 	MaterialConstants* sceneMaterialConstants = (MaterialConstants*)file.materialDataBuffer.info.pMappedData;
 
+	// default fallback material if no materials are provided in the gltf file
 	if (gltf.materials.empty()) {
 		std::shared_ptr<GLTFMaterial> defaultMat = std::make_shared<GLTFMaterial>();
 		MaterialResources materialResources;
+
 		materialResources.colorImage = vulkanCore->_whiteImage;
 		materialResources.colorSampler = vulkanCore->_defaultSamplerLinear;
+
 		materialResources.metalRoughImage = vulkanCore->_whiteImage;
 		materialResources.metalRoughSampler = vulkanCore->_defaultSamplerLinear;
+
+		materialResources.occlusionImage = vulkanCore->_whiteImage;
+		materialResources.occlusionSampler = vulkanCore->_defaultSamplerLinear;
+
 		materialResources.dataBuffer = file.materialDataBuffer.buffer;
 		materialResources.dataBufferOffset = 0;
 
@@ -270,6 +277,7 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, Mate
 
 		constants.metalRoughFactors.x = mat.pbrData.metallicFactor;
 		constants.metalRoughFactors.y = mat.pbrData.roughnessFactor;
+		constants.extraFactors = glm::vec4(1.0, 0.0, 0.0, 0.0);
 		// write material parameters to buffer
 		sceneMaterialConstants[dataIndex] = constants;
 
@@ -284,6 +292,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, Mate
 		materialResources.colorSampler = vulkanCore->_defaultSamplerLinear;
 		materialResources.metalRoughImage = vulkanCore->_whiteImage;
 		materialResources.metalRoughSampler = vulkanCore->_defaultSamplerLinear;
+		materialResources.occlusionImage = vulkanCore->_whiteImage;
+		materialResources.occlusionSampler = vulkanCore->_defaultSamplerLinear;
 
 		// set the uniform buffer for the material data
 		materialResources.dataBuffer = file.materialDataBuffer.buffer;
@@ -293,15 +303,8 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, Mate
 		if (mat.pbrData.baseColorTexture.has_value()) {
 			auto& texture = gltf.textures[mat.pbrData.baseColorTexture.value().textureIndex];
 			if (texture.imageIndex.has_value()) {
-				size_t img = texture.imageIndex.value();
-				materialResources.colorImage = images[img];
-			}
-			if (texture.samplerIndex.has_value()) {
-				size_t sampler = texture.samplerIndex.value();
-				materialResources.colorSampler = file.samplers[sampler];
-			}
-			else {
-				materialResources.colorSampler = vulkanCore->_defaultSamplerLinear;
+				materialResources.colorImage = images[texture.imageIndex.value()];
+				materialResources.colorSampler = texture.samplerIndex.has_value() ? file.samplers[texture.samplerIndex.value()] : vulkanCore->_defaultSamplerLinear;
 			}
 		}
 
@@ -309,15 +312,17 @@ std::optional<std::shared_ptr<LoadedGLTF>> loadGltf(VulkanCore* vulkanCore, Mate
 		if (mat.pbrData.metallicRoughnessTexture.has_value()) {
 			auto& texture = gltf.textures[mat.pbrData.metallicRoughnessTexture.value().textureIndex];
 			if (texture.imageIndex.has_value()) {
-				size_t img = texture.imageIndex.value();
-				materialResources.metalRoughImage = images[img];
+				materialResources.metalRoughImage = images[texture.imageIndex.value()];
+				materialResources.metalRoughSampler = texture.samplerIndex.has_value() ? file.samplers[texture.samplerIndex.value()] : vulkanCore->_defaultSamplerLinear;
 			}
-			if (texture.samplerIndex.has_value()) {
-				size_t sampler = texture.samplerIndex.value();
-				materialResources.metalRoughSampler = file.samplers[sampler];
-			}
-			else {
-				materialResources.metalRoughSampler = vulkanCore->_defaultSamplerLinear;
+		}
+
+		// grab occlusion texture
+		if (mat.occlusionTexture.has_value()) {
+			auto& texture = gltf.textures[mat.occlusionTexture.value().textureIndex];
+			if (texture.imageIndex.has_value()) {
+				materialResources.occlusionImage = images[texture.imageIndex.value()];
+				materialResources.occlusionSampler = texture.samplerIndex.has_value() ? file.samplers[texture.samplerIndex.value()] : vulkanCore->_defaultSamplerLinear;
 			}
 		}
 

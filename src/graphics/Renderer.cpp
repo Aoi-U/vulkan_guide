@@ -11,6 +11,11 @@
 static AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0);
 AutoCVar_Int cvRenderPath("r.renderPath", "Render Path: 0 = Forward, 1 = Deferred", 1);
 
+AutoCVar_Int cvSSAO("r.ssao", "Enable Screen Space Ambient Occlusion", 1, CVarFlags::EditCheckBox);
+AutoCVar_Float cvSSAORadius("r.ssao.radius", "SSAO sample hemisphere radius", 0.5f);
+AutoCVar_Float cvSSAOBias("r.ssao.bias", "SSAO depth comparison bias", 0.025f);
+AutoCVar_Float cvSSAOPower("r.ssao.power", "SSAO occlusion power/intensity", 1.5f);
+
 void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem, entt::dispatcher& dispatcher)
 {
 	_window = window;
@@ -49,8 +54,13 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 		_resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
 
 	_deferredLightingPass = std::make_unique<DeferredLightingPass>();
-	_deferredLightingPass->init(_vulkanCore, materialSystem->get_material_layout(),
-		_resourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
+	_deferredLightingPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
+
+	_ssaoPass = std::make_unique<SSAOPass>();
+	_ssaoPass->init(_vulkanCore, nullptr, _resourceManager.get_format("SSAOColor"), VK_FORMAT_UNDEFINED);
+
+	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
+	_ssaoBlurPass->init(_vulkanCore, nullptr, _resourceManager.get_format("SSAOBlur"), VK_FORMAT_UNDEFINED);
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -67,6 +77,8 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_skyboxPass->cleanup();
 	_gbufferPass->cleanup();
 	_deferredLightingPass->cleanup();
+	_ssaoPass->cleanup();
+	_ssaoBlurPass->cleanup();
 
 	_iblSystem.cleanup();
 
@@ -150,7 +162,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 				});
 
 		if (_renderPath == RenderPath::Deferred) {
-			// 1. G-Buffer Geometry Pass
+			// gbuffer geometry pass
 			graph.add_pass("GBufferPass")
 				.set_color_attachment("GBufferPosition", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
 				.set_color_attachment("GBufferNormal", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
@@ -161,7 +173,24 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 				_gbufferPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
 					});
 
-			// 2. Deferred Lighting Pass
+			// SSAO generation pass
+			graph.add_pass("SSAOPass")
+				.read("GBufferPosition", ResourceState::ShaderReadOnly)
+				.read("GBufferNormal", ResourceState::ShaderReadOnly)
+				.set_color_attachment("SSAOColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
+				.set_execute_callback([&](RenderContext& ctx) {
+				_ssaoPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+					});
+
+			// SSAO blue pass
+			graph.add_pass("SSAOBlurPass")
+				.read("SSAOColor", ResourceState::ShaderReadOnly)
+				.set_color_attachment("SSAOBlur", VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
+				.set_execute_callback([&](RenderContext& ctx) {
+				_ssaoBlurPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+					});
+
+			// deferred lighting pass
 			graph.add_pass("DeferredLightingPass")
 				.read("GBufferPosition", ResourceState::ShaderReadOnly)
 				.read("GBufferNormal", ResourceState::ShaderReadOnly)
@@ -169,13 +198,14 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 				.read("GBufferMetalRough", ResourceState::ShaderReadOnly)
 				.read("ShadowMap", ResourceState::ShaderReadOnly)
 				.read("PointShadowMap", ResourceState::ShaderReadOnly)
+				.read("SSAOBlur", ResourceState::ShaderReadOnly)
 				.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
 				.set_execute_callback([&](RenderContext& ctx) {
 				_deferredLightingPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
 					});
 		}
 		else {
-			// Forward Rendering Pass
+			// forward rendering pass
 			graph.add_pass("ForwardPass")
 				.read("ShadowMap", ResourceState::ShaderReadOnly)
 				.read("PointShadowMap", ResourceState::ShaderReadOnly)
@@ -187,6 +217,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 					});
 		}
 
+		// skybox pass
 		graph.add_pass("SkyboxPass")
 			.read("SkyCubemap", ResourceState::ShaderReadOnly)
 			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_LOAD)
@@ -485,6 +516,8 @@ const std::vector<PassStats> Renderer::get_stats() const
 	}
 	else {
 		stats.push_back(_gbufferPass->get_stats());
+		stats.push_back(_ssaoPass->get_stats());
+		stats.push_back(_ssaoBlurPass->get_stats());
 		stats.push_back(_deferredLightingPass->get_stats());
 	}
 	stats.push_back(_skyboxPass->get_stats());
@@ -635,6 +668,26 @@ void Renderer::create_render_targets()
 			.sizePolicy = TargetSizePolicy::WindowRelative,
 			.relativeScale = 1.0f,
 			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, targetExtent);
+
+	// create ssao color target
+	_resourceManager.register_target({
+				.name = "SSAOColor",
+				.sizePolicy = TargetSizePolicy::WindowRelative,
+				.relativeScale = 1.0f,
+				.format = VK_FORMAT_R8_UNORM,
+				.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, targetExtent);
+
+	// create ssao blur target
+	_resourceManager.register_target({
+			.name = "SSAOBlur",
+			.sizePolicy = TargetSizePolicy::WindowRelative,
+			.relativeScale = 1.0f,
+			.format = VK_FORMAT_R8_UNORM,
 			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 		}, targetExtent);

@@ -10,6 +10,8 @@
 #include <graphics/pass/PointShadowPass.h>
 #include <graphics/pass/GBufferPass.h>
 #include <graphics/pass/DeferredLightingPass.h>
+#include <graphics/pass/SSAOPass.h>
+#include <graphics/pass/SSAOBlurPass.h>
 
 #include <graphics/MaterialSystem.h>
 #include <graphics/IBLSystem.h>
@@ -23,6 +25,11 @@
 #include <core/cvars.h>
 
 extern AutoCVar_Int cvRenderPath;
+
+extern AutoCVar_Int cvSSAO;
+extern AutoCVar_Float cvSSAORadius;
+extern AutoCVar_Float cvSSAOBias;
+extern AutoCVar_Float cvSSAOPower;
 
 class GuiRenderer;
 
@@ -149,6 +156,8 @@ private:
 	std::unique_ptr<SkyboxPass> _skyboxPass;
 	std::unique_ptr<GBufferPass> _gbufferPass;
 	std::unique_ptr<DeferredLightingPass> _deferredLightingPass;
+	std::unique_ptr<SSAOPass> _ssaoPass;
+	std::unique_ptr<SSAOBlurPass> _ssaoBlurPass;
 
 	IBLSystem _iblSystem;
 

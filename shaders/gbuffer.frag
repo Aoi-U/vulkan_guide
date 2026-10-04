@@ -25,7 +25,10 @@ void main()
 
 	float roughness = clamp(metalRough.g * materialData.metalRoughFactors.y, 0.05, 1.0);
 	float metallic = clamp(metalRough.b * materialData.metalRoughFactors.x, 0.0, 1.0);
-	float ao = 1.0; // no ambient occlusion texture yet
+
+	float rawAO = texture(occlusionTex, inUV).r;
+	float occlusionStrength = materialData.extraFactors.x > 0.0 ? materialData.extraFactors.x : 1.0;
+	float ao = mix(1.0, rawAO, occlusionStrength);
 
 	outPosition = vec4(inWorldPos, 1.0);
 	outNormal = vec4(normalize(inNormal), 1.0);

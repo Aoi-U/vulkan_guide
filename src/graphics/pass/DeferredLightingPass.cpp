@@ -19,6 +19,7 @@ void DeferredLightingPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout ma
   builder.add_binding(7, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 7: prefilter
   builder.add_binding(8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 8: brdf lut
   builder.add_binding(9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 9: point shadow map
+  builder.add_binding(10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 10: ssao map
   _descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT);
 
   auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/deferred_lighting.vert.spv");
@@ -27,6 +28,7 @@ void DeferredLightingPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout ma
   GraphicsPipelineDesc desc{
       .shaders = { vert, frag },
       .descriptorLayouts = { _descriptorLayout },
+      .pushConstants = {{ .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = sizeof(int) }}, // push constant for enabling ssao
       .colorAttachmentFormats = { colorFormat },
       .depthAttachmentFormat = VK_FORMAT_UNDEFINED, // no depth attachment for fullscreen pass
       .depthState = {.depthTest = false, .depthWrite = false },
@@ -65,10 +67,15 @@ void DeferredLightingPass::render(RenderContext & ctx, FrameData & frameData, Re
   writer.write_image(7, env.prefilterView, env.cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.write_image(8, env.brdfLutView, env.lutSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.write_image(9, resources.get_view("PointShadowMap"), env.cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  writer.write_image(10, resources.get_view("SSAOBlur"), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.update_set(_vulkanCore->get_device(), lightingSet);
 
   ctx.bind_pipeline(_pipeline);
   ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, lightingSet);
+  
+  int enableSSAO = cvSSAO.Get();
+  ctx.push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_FRAGMENT_BIT, enableSSAO);
+
   ctx.draw(3, 1, 0, 0); // draw fullscreen triangle
 
 	auto end = std::chrono::system_clock::now();
