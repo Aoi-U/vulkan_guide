@@ -78,13 +78,15 @@ public:
 		}
 	}
 
-	CVarParameter* CreateFloatCVar(const char* name, const char* description, double defaultValue, double currentValue, CVarFlags flags = CVarFlags::None) override
+	CVarParameter* CreateFloatCVar(const char* name, const char* description, double defaultValue, double currentValue, CVarFlags flags = CVarFlags::None, double min = 0.0, double max = 1.0) override
 	{
 		CVarParameter param;
 		param.name = name;
 		param.description = description;
 		param.type = CVarType::FLOAT;
 		param.flags = flags;
+		param.min = min;
+		param.max = max;
 		param.arrayIndex = static_cast<int32_t>(floatCVars.size());
 
 		cvars[name] = param;
@@ -156,9 +158,20 @@ public:
 			case CVarType::FLOAT:
 			{
 				float val = static_cast<float>(floatCVars[param.arrayIndex].current);
-				if (ImGui::InputFloat(name.c_str(), &val)) {
-					if (!(param.HasFlag(CVarFlags::EditReadOnly))) {
-						floatCVars[param.arrayIndex].current = val;
+				if (param.HasFlag(CVarFlags::EditFloatSlider) || (param.min < param.max)) {
+					float minVal = static_cast<float>(param.min);
+					float maxVal = static_cast<float>(param.max);
+					if (ImGui::SliderFloat(name.c_str(), &val, minVal, maxVal, "%.3f")) {
+						if (!param.HasFlag(CVarFlags::EditReadOnly)) {
+							floatCVars[param.arrayIndex].current = static_cast<double>(val);
+						}
+					}
+				}
+				else {
+					if (ImGui::DragFloat(name.c_str(), &val, 0.05f)) {
+						if (!param.HasFlag(CVarFlags::EditReadOnly)) {
+							floatCVars[param.arrayIndex].current = static_cast<double>(val);
+						}
 					}
 				}
 				break;
@@ -196,10 +209,6 @@ private:
 CVarSystem* CVarSystem::Get()
 {
 	return CVarSystemImpl::Get();
-}
-
-AutoCVar_Float::AutoCVar_Float(const char* name, const char* description, double defaultValue, CVarFlags flags) {
-	parameter = CVarSystem::Get()->CreateFloatCVar(name, description, defaultValue, defaultValue, flags);
 }
 
 double AutoCVar<double>::Get() {
@@ -244,4 +253,14 @@ std::string* AutoCVar<std::string>::GetPtr() {
 
 void AutoCVar<std::string>::Set(std::string val) {
 	CVarSystemImpl::Get()->stringCVars[parameter->arrayIndex].current = std::move(val);
+}
+
+AutoCVar_Float::AutoCVar_Float(const char* name, const char* description, double defaultValue, CVarFlags flags, double min, double max)
+{
+	parameter = CVarSystem::Get()->CreateFloatCVar(name, description, defaultValue, defaultValue, flags, min, max);
+}
+
+AutoCVar_Float::AutoCVar_Float(const char* name, const char* description, double defaultValue, double min, double max, CVarFlags flags)
+{
+	parameter = CVarSystem::Get()->CreateFloatCVar(name, description, defaultValue, defaultValue, flags | CVarFlags::EditFloatSlider, min, max);
 }

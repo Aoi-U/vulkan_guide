@@ -8,16 +8,15 @@ void PerformancePanel::on_draw(EditorContext& ctx)
   if (!is_open) return;
   ImGui::Begin(get_name(), &is_open);
 
-  // render path switcher
-  int currentPath = cvRenderPath.Get();
-  const char* pathNames[] = { "Forward Rendering", "Deferred Rendering" };
-  if (ImGui::Combo("Render Path", &currentPath, pathNames, 2)) {
-    cvRenderPath.Set(currentPath);
-  }
-  ImGui::Separator();
-
   ImGui::Text("Frametime:  %.2f ms", ctx.stats.frameTimeMs);
   ImGui::Text("Framerate:  %.1f FPS", ctx.stats.fps);
+
+  VkExtent2D vpExt = ctx.renderer.get_viewport_extent();
+  VkExtent2D drawExt = ctx.renderer.get_draw_extent();
+  float currentPercent = (vpExt.width > 0) ? ((float)drawExt.width / (float)vpExt.width) * 100.0f : 100.0f;
+  ImGui::Text("Viewport:    %u x %u", vpExt.width, vpExt.height);
+  ImGui::Text("Render Res:  %u x %u (%.0f%%)", drawExt.width, drawExt.height, currentPercent);
+
   ImGui::Separator();
 
   for (const auto& passStats : ctx.stats.renderStats) {

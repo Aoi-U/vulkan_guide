@@ -32,18 +32,14 @@ void ViewportPanel::on_draw(EditorContext& ctx)
   ctx.isViewportHovered = _isHovered;
   ctx.isViewportFocused = _isFocused;
 
-  // resize renderer if panel size changed
+  // update renderer viewport 
   if (avail.x > 0.0f && avail.y > 0.0f) {
-    VkExtent2D currentExtent = ctx.renderer.get_viewport_extent();
     uint32_t newW = static_cast<uint32_t>(avail.x);
     uint32_t newH = static_cast<uint32_t>(avail.y);
-
-    if (newW != currentExtent.width || newH != currentExtent.height) {
-      ctx.renderer.set_viewport_extent({ newW, newH });
-    }
+    ctx.renderer.set_viewport_extent({ newW, newH });
   }
 
-  // render the scene color texture into imgui window
+  // render scene color texture into imgui window
   VkDescriptorSet textureID = ctx.renderer.get_scene_color_descriptor();
   if (textureID != VK_NULL_HANDLE && avail.x > 0.0f && avail.y > 0.0f) {
     ImGui::Image(reinterpret_cast<ImTextureID>(textureID), avail, ImVec2(0, 0), ImVec2(1, 1));

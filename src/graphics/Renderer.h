@@ -4,7 +4,6 @@
 #include <graphics/Swapchain.h>
 
 #include <graphics/pass/FrustumCullpass.h>
-#include <graphics/pass/ForwardPass.h>
 #include <graphics/pass/ShadowPass.h>
 #include <graphics/pass/SkyboxPass.h>
 #include <graphics/pass/PointShadowPass.h>
@@ -24,7 +23,7 @@
 #include <core/Events.h>
 #include <core/cvars.h>
 
-extern AutoCVar_Int cvRenderPath;
+extern AutoCVar_Float cvRenderScale;
 
 extern AutoCVar_Int cvSSAO;
 extern AutoCVar_Float cvSSAORadius;
@@ -85,12 +84,6 @@ struct FrameData
 	AllocatedBuffer _gpuCountBuffer; // buffer for draw counts per batch
 };
 
-enum class RenderPath : uint32_t
-{
-	Forward = 0,
-	Deferred = 1
-};
-
 class Renderer
 {
 public:
@@ -104,7 +97,6 @@ public:
 
 	void set_gui_renderer(GuiRenderer* guiRenderer) { _guiRenderer = guiRenderer; }
 	void set_viewport_extent(VkExtent2D extent);
-	void set_render_path(RenderPath path) { _renderPath = path; }
 
 	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
 
@@ -123,7 +115,6 @@ public:
 	RenderResourceManager& get_resources() { return _resourceManager; }
 	IBLSystem& get_ibl() { return _iblSystem; }
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
-	RenderPath get_render_path() const { return _renderPath; }
 	VkDescriptorSet get_scene_color_descriptor();
 	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
 	const std::vector<PassStats> get_stats() const;
@@ -147,10 +138,9 @@ private:
 
 	GuiRenderer* _guiRenderer{ nullptr };
 
-	RenderPath _renderPath{ RenderPath::Deferred };
+	float _currentRenderScale{ 1.0f };
 
 	std::unique_ptr<FrustumCullPass> _frustumCullPass;
-	std::unique_ptr<ForwardPass> _forwardPass;
 	std::unique_ptr<ShadowPass> _shadowPass;
 	std::unique_ptr<PointShadowPass> _pointShadowPass;
 	std::unique_ptr<SkyboxPass> _skyboxPass;
@@ -169,6 +159,8 @@ private:
 	void create_command_buffers();
 	void create_sync_structures();
 	void create_render_targets();
+
+	void update_render_extent();
 	
 	void blit_to_swapchain(VkCommandBuffer cmd);
 

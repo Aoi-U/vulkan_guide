@@ -11,8 +11,19 @@ enum class CVarFlags : uint32_t
 	NoDisplay = 1 << 0,
 	EditReadOnly = 1 << 1,
 	Advanced = 1 << 2,
-	EditCheckBox = 1 << 3
+	EditCheckBox = 1 << 3,
+	EditFloatSlider = 1 << 4
 };
+
+inline CVarFlags operator|(CVarFlags a, CVarFlags b)
+{
+	return static_cast<CVarFlags>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
+}
+
+inline CVarFlags operator&(CVarFlags a, CVarFlags b)
+{
+	return static_cast<CVarFlags>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
+}
 
 enum class CVarType : uint8_t
 {
@@ -30,6 +41,8 @@ public:
 	CVarFlags flags;
 	std::string name;
 	std::string description;
+	double min{ 0.0 };
+	double max{ 1.0 };
 
 	bool HasFlag(CVarFlags flag) const {
 		return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(flag)) != 0;
@@ -51,7 +64,7 @@ public:
 	virtual void SetIntCVar(std::string_view name, int32_t value) = 0;
 	virtual void SetStringCVar(std::string_view name, const char* value) = 0;
 
-	virtual CVarParameter* CreateFloatCVar(const char* name, const char* description, double defaultValue, double currentValue, CVarFlags flags = CVarFlags::None) = 0;
+	virtual CVarParameter* CreateFloatCVar(const char* name, const char* description, double defaultValue, double currentValue, CVarFlags flags = CVarFlags::None, double min = 0.0, double max = 1.0) = 0;
 	virtual CVarParameter* CreateIntCVar(const char* name, const char* description, int32_t defaultValue, int32_t currentValue, CVarFlags flags = CVarFlags::None) = 0;
 	virtual CVarParameter* CreateStringCVar(const char* name, const char* description, const char* defaultValue, const char* currentValue, CVarFlags flags = CVarFlags::None) = 0;
 
@@ -70,7 +83,8 @@ struct AutoCVar
 
 struct AutoCVar_Float : AutoCVar<double>
 {
-	AutoCVar_Float(const char* name, const char* description, double defaultValue, CVarFlags flags = CVarFlags::None);
+	AutoCVar_Float(const char* name, const char* description, double defaultValue, CVarFlags flags = CVarFlags::None, double min = 0.0, double max = 1.0);
+	AutoCVar_Float(const char* name, const char* description, double defaultValue, double min, double max, CVarFlags flags = CVarFlags::EditFloatSlider);
 };
 
 struct AutoCVar_Int : AutoCVar<int32_t> {
