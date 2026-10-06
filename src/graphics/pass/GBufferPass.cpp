@@ -4,7 +4,7 @@
 #include <graphics/Renderer.h>
 #include <chrono>
 
-void GBufferPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
+void GBufferPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
 
@@ -14,8 +14,8 @@ void GBufferPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLay
 	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 2: instance buffer
 	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-	auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/gbuffer.vert.spv");
-	auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/gbuffer.frag.spv");
+	auto vert = resourceManager->load<Shader>("gbuffer_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/gbuffer.vert.spv");
+	auto frag = resourceManager->load<Shader>("gbuffer_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/gbuffer.frag.spv");
 
 	GraphicsPipelineDesc desc{
 		.shaders = {vert, frag},
@@ -24,11 +24,13 @@ void GBufferPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLay
 			VK_FORMAT_R16G16B16A16_SFLOAT, // position
 			VK_FORMAT_R16G16B16A16_SFLOAT, // normal
 			VK_FORMAT_R8G8B8A8_UNORM, // albedo
-			VK_FORMAT_R8G8B8A8_UNORM // metal rough
+			VK_FORMAT_R8G8B8A8_UNORM, // metal rough
+			VK_FORMAT_R16G16B16A16_SFLOAT // emissive
 			},
 		.depthAttachmentFormat = depthFormat,
-		.depthState = {.depthTest = true, .depthWrite = true, .compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL},
-		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE, .polygonMode = VK_POLYGON_MODE_FILL}
+		.depthState = { .depthTest = true, .depthWrite = true, .compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL },
+		.rasterState = { .cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE, .polygonMode = VK_POLYGON_MODE_FILL },
+		.dynamicStates = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE}
 	};
 	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), desc);
 }
@@ -45,7 +47,7 @@ void GBufferPass::cleanup()
 
 void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResourceManager & resources, DrawContext & drawCtx, const GPUSceneData & sceneData)
 {
-	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.buffer == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
+	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.get_buffer() == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
 		return;
 	}
 
@@ -54,9 +56,9 @@ void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResou
 
 	VkDescriptorSet globalDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _sceneDataDescriptorLayout);
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_buffer(1, frameData._gpuObjectBuffer.buffer, sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(2, frameData._gpuInstanceBuffer.buffer, sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, frameData.sceneDataBuffer.get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(1, frameData._gpuObjectBuffer.get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, frameData._gpuInstanceBuffer.get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	ctx.bind_pipeline(_pipeline);
@@ -67,6 +69,8 @@ void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResou
 
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
 		if (!batch.materialSet) continue;
+
+		ctx.set_cull_mode(batch.isDoubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
 
 		// bind material descriptor set if needed
 		if (batch.materialSet != lastMaterialSet) {
@@ -83,7 +87,7 @@ void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResou
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.buffer, indirectOffset, frameData._gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.get_buffer(), indirectOffset, frameData._gpuCountBuffer.get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
 
 	auto end = std::chrono::system_clock::now();

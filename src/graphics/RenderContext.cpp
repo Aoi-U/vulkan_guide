@@ -58,9 +58,13 @@ void RenderContext::set_viewport_scissor(const VkExtent2D extent)
 	vkCmdSetScissor(_cmd, 0, 1, &scissor);
 }
 
-void RenderContext::set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace)
+void RenderContext::set_cull_mode(VkCullModeFlags cullMode)
 {
 	vkCmdSetCullMode(_cmd, cullMode);
+}
+
+void RenderContext::set_front_face(VkFrontFace frontFace)
+{
 	vkCmdSetFrontFace(_cmd, frontFace);
 }
 

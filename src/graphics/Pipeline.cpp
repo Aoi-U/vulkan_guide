@@ -60,7 +60,7 @@ GraphicsPipeline::GraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& 
 	
 	builder.set_input_topology(desc.topology);
 	builder.set_polygon_mode(desc.rasterState.polygonMode);
-	builder.set_cull_mode(desc.rasterState.cullMode, desc.rasterState.frontFace);
+	builder.set_cull_mode(desc.rasterState.cullMode);
 	builder.set_multisampling_none();
 
 	switch (desc.blendMode) {
@@ -86,6 +86,8 @@ GraphicsPipeline::GraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& 
 	builder._renderInfo.colorAttachmentCount = static_cast<uint32_t>(desc.colorAttachmentFormats.size());
 	builder._renderInfo.pColorAttachmentFormats = desc.colorAttachmentFormats.data();
 
+	builder.set_dynamic_states(desc.dynamicStates);
+
 	_pipeline = builder.build_pipeline(_device);
 }
 
@@ -104,7 +106,7 @@ ComputePipeline::ComputePipeline(VkDevice device, const ComputePipelineDesc& des
 	// build pipeline
 	PipelineBuilder builder;
 	builder._pipelineLayout = _layout;
-	if (desc.computeShader) {
+	if (desc.computeShader.is_valid()) {
 		builder._computeShaderStage = desc.computeShader->get_stage_info();
 	}
 

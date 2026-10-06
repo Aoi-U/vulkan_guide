@@ -3,6 +3,7 @@
 #include <graphics/pass/RenderPass.h>
 #include <graphics/Pipeline.h>
 #include <graphics/VulkanCore.h>
+#include <resources/Buffer.h>
 
 struct SSAOPushConstants
 {
@@ -15,7 +16,7 @@ struct SSAOPushConstants
 class SSAOPass : public RenderPass
 {
 public:
-	void init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
+	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
 	void cleanup() override;
 	void render(RenderContext& ctx, FrameData& frameData, RenderResourceManager& resources, DrawContext& drawCtx, const GPUSceneData& sceneData) override;
 
@@ -26,7 +27,7 @@ private:
 	VkDescriptorSetLayout _descriptorLayout;
 	GraphicsPipeline _pipeline;
 
-	AllocatedBuffer _kernelBuffer;
-	AllocatedImage _noiseImage;
+	Buffer _kernelBuffer;
+	Texture _noiseImage;
 	VkSampler _noiseSampler;
 };

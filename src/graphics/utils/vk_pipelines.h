@@ -14,6 +14,7 @@ public:
 	VkPipelineDepthStencilStateCreateInfo _depthStencil;
 	VkPipelineRenderingCreateInfo _renderInfo;
 	VkFormat _colorAttachmentFormat;
+	std::vector<VkDynamicState> _dynamicStates;
 
 	PipelineBuilder() { clear(); }
 
@@ -21,11 +22,15 @@ public:
 
 	VkPipeline build_pipeline(VkDevice device);
 
+	void set_dynamic_states(std::span<const VkDynamicState> states);
+
 	void set_input_topology(VkPrimitiveTopology topology);
 
 	void set_polygon_mode(VkPolygonMode mode, float lineWidth = 1.0f);
 
-	void set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace);
+	void set_cull_mode(VkCullModeFlags cullMode);
+
+	void set_front_face(VkFrontFace frontFace);
 
 	void set_multisampling_none();
 

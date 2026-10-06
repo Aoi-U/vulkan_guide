@@ -3,7 +3,7 @@
 #include <graphics/Renderer.h>
 #include <chrono>
 
-void SkyboxPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
+void SkyboxPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
 
@@ -13,8 +13,8 @@ void SkyboxPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayo
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	// load shaders
-	auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/skybox.vert.spv");
-	auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/skybox.frag.spv");
+	auto vert = resourceManager->load<Shader>("skybox_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/skybox.vert.spv");
+	auto frag = resourceManager->load<Shader>("skybox_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/skybox.frag.spv");
 
 	// create pipeline
 	GraphicsPipelineDesc pipelineDesc{
@@ -50,7 +50,7 @@ void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, RenderResource
 	// bind descriptor sets
 	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(0, frameData.sceneDataBuffer.get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	writer.write_image(4, env.environmentView, env.cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), skyboxSet);
 

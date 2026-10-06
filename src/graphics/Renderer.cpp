@@ -15,7 +15,7 @@ AutoCVar_Float cvSSAORadius("r.ssao.radius", "SSAO sample hemisphere radius", 0.
 AutoCVar_Float cvSSAOBias("r.ssao.bias", "SSAO depth comparison bias", 0.025f, 0.001, 0.1, CVarFlags::EditFloatSlider);
 AutoCVar_Float cvSSAOPower("r.ssao.power", "SSAO occlusion power/intensity", 1.5f, 0.1, 5.0, CVarFlags::EditFloatSlider);
 
-void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher)
+void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher, ResourceManager* resourceManager)
 {
 	_window = window;
 	_vulkanCore = vulkanCore;
@@ -23,7 +23,7 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 	_viewportExtent = _window->get_extent();
 
 	_renderResourceManager.init(_vulkanCore);
-	_iblSystem.init(_vulkanCore);
+	_iblSystem.init(_vulkanCore, resourceManager);
 
 	recreate_swapchain();
 	create_command_buffers();
@@ -33,31 +33,31 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 
 	// create compute passes
 	_frustumCullPass = std::make_unique<FrustumCullPass>();
-	_frustumCullPass->init(_vulkanCore);
+	_frustumCullPass->init(_vulkanCore, resourceManager);
 
 	VkDescriptorSetLayout matLayout = Material::get_descriptor_layout();
 
 	// create render passes
 	_shadowPass = std::make_unique<ShadowPass>();
-	_shadowPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
+	_shadowPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
 
 	_pointShadowPass = std::make_unique<PointShadowPass>();
-	_pointShadowPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_D32_SFLOAT);
+	_pointShadowPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_D32_SFLOAT);
 
 	_skyboxPass = std::make_unique<SkyboxPass>();
-	_skyboxPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
+	_skyboxPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
 
 	_gbufferPass = std::make_unique<GBufferPass>();
-	_gbufferPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
+	_gbufferPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
 
 	_deferredLightingPass = std::make_unique<DeferredLightingPass>();
-	_deferredLightingPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
+	_deferredLightingPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
 
 	_ssaoPass = std::make_unique<SSAOPass>();
-	_ssaoPass->init(_vulkanCore, nullptr, _renderResourceManager.get_format("SSAOColor"), VK_FORMAT_UNDEFINED);
+	_ssaoPass->init(_vulkanCore, resourceManager, nullptr, _renderResourceManager.get_format("SSAOColor"), VK_FORMAT_UNDEFINED);
 
 	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
-	_ssaoBlurPass->init(_vulkanCore, nullptr, _renderResourceManager.get_format("SSAOBlur"), VK_FORMAT_UNDEFINED);
+	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, _renderResourceManager.get_format("SSAOBlur"), VK_FORMAT_UNDEFINED);
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -79,13 +79,12 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_renderResourceManager.cleanup();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
-		_vulkanCore->destroy_buffer(_frames[i]._cullStatsBuffer);
-
-		_vulkanCore->destroy_buffer(_frames[i].sceneDataBuffer);
-		_vulkanCore->destroy_buffer(_frames[i]._gpuObjectBuffer);
-		_vulkanCore->destroy_buffer(_frames[i]._gpuInstanceBuffer);
-		_vulkanCore->destroy_buffer(_frames[i]._gpuIndirectBuffer);
-		_vulkanCore->destroy_buffer(_frames[i]._gpuCountBuffer);
+		_frames[i]._cullStatsBuffer.unload(_vulkanCore);
+		_frames[i].sceneDataBuffer.unload(_vulkanCore);
+		_frames[i]._gpuObjectBuffer.unload(_vulkanCore);
+		_frames[i]._gpuInstanceBuffer.unload(_vulkanCore);
+		_frames[i]._gpuIndirectBuffer.unload(_vulkanCore);
+		_frames[i]._gpuCountBuffer.unload(_vulkanCore);
 
 
 		_frames[i]._deletionQueue.flush();
@@ -151,8 +150,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		FrameData& currentFrame = get_current_frame();
 
 		// upload scene data 
-		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
+		currentFrame.sceneDataBuffer.resize(_vulkanCore, sizeof(GPUSceneData));
+		currentFrame.sceneDataBuffer.copy_data(&sceneData, sizeof(GPUSceneData));
 
 		RenderGraph graph(_renderResourceManager);
 
@@ -175,10 +174,11 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 
 		// gbuffer geometry pass
 		graph.add_pass("GBufferPass")
-			.set_color_attachment("GBufferPosition", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
-			.set_color_attachment("GBufferNormal", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
-			.set_color_attachment("GBufferAlbedo", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
-			.set_color_attachment("GBufferMetalRough", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
+			.set_color_attachment("GBufferPosition")
+			.set_color_attachment("GBufferNormal")
+			.set_color_attachment("GBufferAlbedo")
+			.set_color_attachment("GBufferMetalRough")
+			.set_color_attachment("GBufferEmissive")
 			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
 			_gbufferPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
@@ -207,6 +207,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.read("GBufferNormal", ResourceState::ShaderReadOnly)
 			.read("GBufferAlbedo", ResourceState::ShaderReadOnly)
 			.read("GBufferMetalRough", ResourceState::ShaderReadOnly)
+			.read("GBufferEmissive", ResourceState::ShaderReadOnly)
 			.read("ShadowMap", ResourceState::ShaderReadOnly)
 			.read("PointShadowMap", ResourceState::ShaderReadOnly)
 			.read("SSAOBlur", ResourceState::ShaderReadOnly)
@@ -357,7 +358,7 @@ void Renderer::end_frame()
 void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 {
 	VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	AllocatedImage& sceneColor = _renderResourceManager.get_image("SceneColor");
+	Texture& sceneColor = _renderResourceManager.get_image("SceneColor");
 
 	// transition the draw image and the swapchain image into their correct transfer layouts
 	// so we can blit from the draw image to the swapchain image
@@ -367,7 +368,7 @@ void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 	RenderSync::transition_image(cmd, swapchainImage, ResourceState::Undefined, ResourceState::TransferDst);
 
 	// copy SceneColor into the swapchain
-	vkutil::copy_image_to_image(cmd, sceneColor.image, swapchainImage, _drawExtent, _swapchain.get_extent());
+	vkutil::copy_image_to_image(cmd, sceneColor.get_image(), swapchainImage, _drawExtent, _swapchain.get_extent());
 
 	// set swapchain image layout to color attachment optimal for imgui 
 	RenderSync::transition_image(cmd, swapchainImage, ResourceState::TransferDst, ResourceState::ColorAttachment);
@@ -400,6 +401,9 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 	// sort opaque objects 
 	std::sort(ctx.opaqueObjects.begin(), ctx.opaqueObjects.end(), [](const RenderObject& a, const RenderObject& b) {
+		if (a.isDoubleSided != b.isDoubleSided) 
+			return a.isDoubleSided < b.isDoubleSided;
+
 		if (a.materialSet != b.materialSet) 
 			return a.materialSet < b.materialSet;
 		
@@ -418,6 +422,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	currentBatch.batchIndex = 0;
 	currentBatch.materialSet = ctx.opaqueObjects[0].materialSet;
 	currentBatch.indexBuffer = ctx.opaqueObjects[0].indexBuffer;
+	bool currentDoubleSided = ctx.opaqueObjects[0].isDoubleSided;
 
 	// compact same objects into multidraw batches
 	for (uint32_t i = 0; i < static_cast<uint32_t>(ctx.opaqueObjects.size()); i++) {
@@ -432,6 +437,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			currentBatch.batchIndex = static_cast<uint32_t>(ctx.opaqueBatches.size());
 			currentBatch.materialSet = obj.materialSet;
 			currentBatch.indexBuffer = obj.indexBuffer;
+			currentDoubleSided = obj.isDoubleSided;
 		}
 		currentBatch.count++;
 	}
@@ -459,6 +465,7 @@ void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::
 			def.transform = nodeMatrix;
 			def.vertexBufferAddress = sm.mesh->get_vertex_buffer_address();
 
+			def.isDoubleSided = sm.material->get_constants().extraFactors.z > 0.5f;
 			if (def.passType == MaterialPassType::Transparent) {
 				ctx.transparentObjects.push_back(def);
 			}
@@ -592,7 +599,16 @@ void Renderer::create_sync_structures()
 		VK_CHECK(vkCreateFence(_vulkanCore->get_device(), &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
 		VK_CHECK(vkCreateSemaphore(_vulkanCore->get_device(), &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
 
-		_frames[i]._cullStatsBuffer = _vulkanCore->create_buffer(sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._cullStatsBuffer = Buffer("cullStats", sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._cullStatsBuffer.load(_vulkanCore);
+
+		_frames[i].sceneDataBuffer = Buffer("sceneData", sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i].sceneDataBuffer.load(_vulkanCore);
+
+		_frames[i]._gpuObjectBuffer = Buffer("gpuObject", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuInstanceBuffer = Buffer("gpuInstance", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+		_frames[i]._gpuIndirectBuffer = Buffer("gpuIndirect", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuCountBuffer = Buffer("gpuCount", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	}
 }
 
@@ -706,6 +722,16 @@ void Renderer::create_render_targets()
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 		}, targetExtent);
 
+	// create gbuffer emissive target
+	_renderResourceManager.register_target({
+		.name = "GBufferEmissive",
+		.sizePolicy = TargetSizePolicy::WindowRelative,
+		.relativeScale = 1.0f,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+		}, targetExtent);
+
 	// create ssao color target
 	_renderResourceManager.register_target({
 				.name = "SSAOColor",
@@ -725,6 +751,7 @@ void Renderer::create_render_targets()
 			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 		}, targetExtent);
+	
 }
 
 void Renderer::update_render_extent()

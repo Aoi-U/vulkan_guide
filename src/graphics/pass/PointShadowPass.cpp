@@ -5,7 +5,7 @@
 #include <chrono>
 #include <glm/gtc/matrix_transform.hpp>
 
-void PointShadowPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
+void PointShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
 
@@ -14,8 +14,8 @@ void PointShadowPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materia
 	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
 
-	auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/point_shadow.vert.spv");
-	auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/point_shadow.frag.spv"); 
+	auto vert = resourceManager->load<Shader>("point_shadow_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/point_shadow.vert.spv");
+	auto frag = resourceManager->load<Shader>("point_shadow_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/point_shadow.frag.spv");
 
 	GraphicsPipelineDesc pipeDesc{
 		.shaders = {vert, frag},
@@ -75,13 +75,13 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 	ctx.bind_pipeline(_pipeline);
 
 	VkDescriptorSet shadowDescriptor = VK_NULL_HANDLE;
-	if (drawCtx.indirectDrawCount > 0 && frameData._gpuIndirectBuffer.buffer != VK_NULL_HANDLE) {
+	if (drawCtx.indirectDrawCount > 0 && frameData._gpuIndirectBuffer.get_buffer() != VK_NULL_HANDLE) {
 		shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 
 		// update the descriptor set with the object buffer and instance buffer
 		DescriptorWriter writer;
-		writer.write_buffer(0, frameData._gpuObjectBuffer.buffer, sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		writer.write_buffer(1, frameData._gpuInstanceBuffer.buffer, sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		writer.write_buffer(0, frameData._gpuObjectBuffer.get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		writer.write_buffer(1, frameData._gpuInstanceBuffer.get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
 
 		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
@@ -120,7 +120,7 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 				// draw batch
 				VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 				VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-				ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.buffer, indirectOffset, frameData._gpuCountBuffer.buffer, countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+				ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.get_buffer(), indirectOffset, frameData._gpuCountBuffer.get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 			}
 		}
 

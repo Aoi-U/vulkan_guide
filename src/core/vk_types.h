@@ -54,14 +54,22 @@ struct EnvironmentResources
 	VkSampler lutSampler{ VK_NULL_HANDLE }; // brdf lut sampler
 };
 
-
-
-// a buffer that has been allocated on the GPU
-struct AllocatedBuffer
-{
-	VkBuffer buffer;
-	VmaAllocation allocation;
-	VmaAllocationInfo info;
+struct TextureDescription {
+	VkExtent3D extent{ 1, 1, 1 };
+	VkFormat format{ VK_FORMAT_UNDEFINED };
+	VkImageUsageFlags usage{ 0 };
+	uint32_t mipLevels{ 1 };
+	uint32_t arrayLayers{ 1 };
+	VkSampleCountFlagBits samples{ VK_SAMPLE_COUNT_1_BIT };
+	VkImageCreateFlags flags{ 0 };
+	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
+	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
+	VkFilter magFilter{ VK_FILTER_LINEAR };
+	VkFilter minFilter{ VK_FILTER_LINEAR };
+	VkSamplerMipmapMode mipmapMode{ VK_SAMPLER_MIPMAP_MODE_LINEAR };
+	VkSamplerAddressMode addressModeU{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
+	VkSamplerAddressMode addressModeV{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
+	VkSamplerAddressMode addressModeW{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
 };
 
 // object data stored in gpu contiguous buffer
@@ -106,6 +114,7 @@ struct Vertex
 	glm::vec3 normal;
 	float uv_y;
 	glm::vec4 color;
+	glm::vec4 tangent;
 };
 
 // used to identify pass groups for pipeline selection
@@ -135,6 +144,7 @@ struct RenderObject
 	Bounds bounds;
 	glm::mat4 transform;
 	VkDeviceAddress vertexBufferAddress;
+	bool isDoubleSided{ false };
 };
 
 // implementation of a scene node

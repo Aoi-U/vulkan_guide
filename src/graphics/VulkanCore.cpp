@@ -2,7 +2,6 @@
 #include "VkBootstrap.h"
 #include "utils/vk_initializers.h"
 #include "utils/vk_utils.h"
-
 #include <glm/gtx/transform.hpp>
 
 #define VMA_IMPLEMENTATION
@@ -87,10 +86,13 @@ void VulkanCore::cleanup()
 	vkDestroySampler(_device, _shadowSampler, nullptr);
 	vkDestroySampler(_device, _defaultSamplerNearest, nullptr);
 	vkDestroySampler(_device, _defaultSamplerLinear, nullptr);
-	destroy_image(_whiteImage);
-	destroy_image(_greyImage);
-	destroy_image(_blackImage);
-	destroy_image(_errorCheckerboardImage);
+
+	// destroy default images
+	_whiteImage.unload(this);
+	_greyImage.unload(this);
+	_blackImage.unload(this);
+	_errorCheckerboardImage.unload(this);
+	_defaultNormalImage.unload(this);
 
 	// destroy immediate submit resources
 	vkDestroyFence(_device, _immFence, nullptr);
@@ -130,197 +132,6 @@ void VulkanCore::immediate_submit(std::function<void(VkCommandBuffer cmd)>&& fun
 	VK_CHECK(vkWaitForFences(_device, 1, &_immFence, true, 9999999999));
 }
 
-void VulkanCore::check_and_resize_buffer(AllocatedBuffer& buffer, size_t requiredSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
-{
-	if (buffer.buffer != VK_NULL_HANDLE && buffer.info.size >= requiredSize) {
-		return;
-	}
-
-	size_t oldSize = buffer.buffer != VK_NULL_HANDLE ? buffer.info.size : 0;
-	if (buffer.buffer != VK_NULL_HANDLE) {
-		destroy_buffer(buffer);
-		buffer = {};
-	}
-
-	size_t newSize = std::max(requiredSize, static_cast<size_t>(oldSize * 1.5));
-	buffer = create_buffer(newSize, usage, memoryUsage);
-}
-
-AllocatedBuffer VulkanCore::create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage)
-{
-	// allocate buffer
-	VkBufferCreateInfo bufferInfo = { .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
-	bufferInfo.pNext = nullptr;
-	bufferInfo.size = allocSize;
-
-	bufferInfo.usage = usage;
-
-	VmaAllocationCreateInfo vmaAllocInfo = {};
-	vmaAllocInfo.usage = memoryUsage;
-	vmaAllocInfo.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-	AllocatedBuffer newBuffer;
-	// allocate the buffer
-	VK_CHECK(vmaCreateBuffer(_allocator, &bufferInfo, &vmaAllocInfo, &newBuffer.buffer, &newBuffer.allocation, &newBuffer.info));
-
-	return newBuffer;
-}
-
-void VulkanCore::destroy_buffer(const AllocatedBuffer& buffer)
-{
-	vmaDestroyBuffer(_allocator, buffer.buffer, buffer.allocation);
-}
-
-AllocatedImage VulkanCore::create_image(const ImageDescription& desc)
-{
-	AllocatedImage newImage;
-
-	// create the image
-	VkImageCreateInfo imgInfo{
-		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-		.flags = desc.flags,
-		.imageType = desc.extent.depth > 1 ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D,
-		.format = desc.format,
-		.extent = desc.extent,
-		.mipLevels = desc.mipLevels,
-		.arrayLayers = desc.arrayLayers,
-		.samples = desc.samples,
-		.tiling = VK_IMAGE_TILING_OPTIMAL,
-		.usage = desc.usage
-	};
-
-	VmaAllocationCreateInfo allocInfo{
-		.usage = VMA_MEMORY_USAGE_GPU_ONLY,
-		.requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)
-	};
-
-	VK_CHECK(vmaCreateImage(_allocator, &imgInfo, &allocInfo, &newImage.image, &newImage.allocation, nullptr));
-
-	// create an image view for the image
-	VkImageViewCreateInfo viewInfo{ .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
-	viewInfo.viewType = desc.viewType;
-	viewInfo.image = newImage.image;
-	viewInfo.format = desc.format;
-	viewInfo.subresourceRange.baseMipLevel = 0;
-	viewInfo.subresourceRange.levelCount = desc.mipLevels;
-	viewInfo.subresourceRange.baseArrayLayer = 0;
-	viewInfo.subresourceRange.layerCount = desc.arrayLayers;
-	viewInfo.subresourceRange.aspectMask = desc.aspectMask;
-
-	VK_CHECK(vkCreateImageView(_device, &viewInfo, nullptr, &newImage.imageView));
-	
-	return newImage;
-}
-
-AllocatedImage VulkanCore::create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped /* = false */)
-{
-	size_t dataSize = size.depth * size.width * size.height * 4;
-	AllocatedBuffer uploadBuffer = create_buffer(dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-	// copy data into upload buffer
-	memcpy(uploadBuffer.info.pMappedData, data, dataSize);
-
-	AllocatedImage newImage = create_image(size, format, usage | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, mipmapped);
-
-	immediate_submit([&](VkCommandBuffer cmd) {
-		vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-		VkBufferImageCopy copyRegion = {};
-		copyRegion.bufferOffset = 0;
-		copyRegion.bufferRowLength = 0;
-		copyRegion.bufferImageHeight = 0;
-
-		copyRegion.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-		copyRegion.imageSubresource.mipLevel = 0;
-		copyRegion.imageSubresource.baseArrayLayer = 0;
-		copyRegion.imageSubresource.layerCount = 1;
-		copyRegion.imageExtent = size;
-
-		// copy from staging buffer to image
-		vkCmdCopyBufferToImage(cmd, uploadBuffer.buffer, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-
-		if (mipmapped) {
-			vkutil::generate_mipmaps(cmd, newImage.image, VkExtent2D{ size.width, size.height });
-		}
-		else {
-			vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		}
-		});
-
-	// destroy upload buffer
-	destroy_buffer(uploadBuffer);
-
-	return newImage;
-}
-
-void VulkanCore::destroy_image(const AllocatedImage& image)
-{
-	vkDestroyImageView(_device, image.imageView, nullptr);
-	vmaDestroyImage(_allocator, image.image, image.allocation);
-}
-
-void VulkanCore::destroy_image(VkImage image, VkImageView imageView, VmaAllocation allocation)
-{
-	vkDestroyImageView(_device, imageView, nullptr);
-	vmaDestroyImage(_allocator, image, allocation);
-}
-
-AllocatedMesh VulkanCore::upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices)
-{
-	const size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
-	const size_t indexBufferSize = indices.size() * sizeof(uint32_t);
-
-	AllocatedMesh newMesh;
-
-	// create vertex buffer
-	newMesh.vertexBuffer = create_buffer(vertexBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-
-	// get the address of the vertex buffer
-	VkBufferDeviceAddressInfo deviceAddressInfo = {
-		.sType = VK_STRUCTURE_TYPE_BUFFER_DEVICE_ADDRESS_INFO,
-		.buffer = newMesh.vertexBuffer.buffer
-	};
-	newMesh.vertexBufferAddress = vkGetBufferDeviceAddress(_device, &deviceAddressInfo);
-
-	// create index buffer
-	newMesh.indexBuffer = create_buffer(indexBufferSize, VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-
-	// create staging buffers for vertex and index data
-	AllocatedBuffer staging = create_buffer(vertexBufferSize + indexBufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-
-	void* data = staging.info.pMappedData;
-
-	// copy vertex buffer
-	memcpy(data, vertices.data(), vertexBufferSize);
-	// copy index buffer
-	memcpy((char*)data + vertexBufferSize, indices.data(), indexBufferSize);
-
-	// copy from staging buffer to gpu buffers
-	immediate_submit([&](VkCommandBuffer cmd) {
-		// copy vertex buffer
-		VkBufferCopy vertexCopy = { 
-			.srcOffset = 0,
-			.dstOffset = 0,
-			.size = vertexBufferSize
-		};
-
-		vkCmdCopyBuffer(cmd, staging.buffer, newMesh.vertexBuffer.buffer, 1, &vertexCopy);
-
-		// copy index buffer
-		VkBufferCopy indexCopy = { 
-			.srcOffset = vertexBufferSize,
-			.dstOffset = 0,
-			.size = indexBufferSize
-		};
-
-		vkCmdCopyBuffer(cmd, staging.buffer, newMesh.indexBuffer.buffer, 1, &indexCopy);
-		});
-
-	// destroy staging buffer
-	destroy_buffer(staging);
-
-	return newMesh;
-}
 
 void VulkanCore::init_immediate_submit()
 {
@@ -341,13 +152,21 @@ void VulkanCore::init_default_data()
 {
 	// 3 default textures (white, grey, black) 1 pixel each
 	uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
-	_whiteImage = create_image((void*)&white, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+	TextureDescription desc1{ .extent = {1, 1, 1}, .format = VK_FORMAT_R8G8B8A8_UNORM, .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT };
+	_whiteImage = Texture("default_white", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&white), sizeof(uint32_t)));
+	_whiteImage.load(this);
 
 	uint32_t grey = glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1.f));
-	_greyImage = create_image((void*)&grey, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+	_greyImage = Texture("default_grey", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&grey), sizeof(uint32_t)));
+	_greyImage.load(this);
 
 	uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));
-	_blackImage = create_image((void*)&black, VkExtent3D{ 1, 1, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+	_blackImage = Texture("default_black", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&black), sizeof(uint32_t)));
+	_blackImage.load(this);
+
+	uint32_t normal = glm::packUnorm4x8(glm::vec4(0.5f, 0.5f, 1.0f, 1.0f));
+	_defaultNormalImage = Texture("default_normal", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&normal), sizeof(uint32_t)));
+	_defaultNormalImage.load(this);
 
 	// checkerboard image
 	uint32_t magenta = glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
@@ -357,7 +176,9 @@ void VulkanCore::init_default_data()
 			pixels[y * 16 + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
 		}
 	}
-	_errorCheckerboardImage = create_image(pixels.data(), VkExtent3D{ 16, 16, 1 }, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_SAMPLED_BIT);
+	TextureDescription desc2{ .extent = {16, 16, 1}, .format = VK_FORMAT_R8G8B8A8_UNORM, .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT };
+	_errorCheckerboardImage = Texture("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
+	_errorCheckerboardImage.load(this);
 
 	VkSamplerCreateInfo samplerInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
 	samplerInfo.magFilter = VK_FILTER_NEAREST;
@@ -377,18 +198,4 @@ void VulkanCore::init_default_data()
 	shadowSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
 	shadowSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
 	vkCreateSampler(_device, &shadowSamplerInfo, nullptr, &_shadowSampler);
-}
-
-AllocatedImage VulkanCore::create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped)
-{
-	ImageDescription desc;
-	desc.extent = size;
-	desc.format = format;
-	desc.usage = usage;
-	desc.mipLevels = mipmapped ? static_cast<uint32_t>(std::floor(std::log2(std::max(size.width, size.height)))) + 1 : 1;
-	desc.arrayLayers = 1;
-	desc.viewType = VK_IMAGE_VIEW_TYPE_2D;
-	desc.aspectMask = (format == VK_FORMAT_D32_SFLOAT || format == VK_FORMAT_D16_UNORM) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-	return create_image(desc);
 }

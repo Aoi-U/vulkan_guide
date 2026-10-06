@@ -4,6 +4,7 @@
 #include <graphics/utils/vk_descriptors.h>
 #include <resources/ResourceManager.h>
 #include <resources/Texture.h>
+#include <resources/Buffer.h>
 #include <string>
 
 class VulkanCore;
@@ -13,9 +14,10 @@ struct MaterialConstants
 {
 	glm::vec4 colorFactors;
 	glm::vec4 metalRoughFactors;
-	glm::vec4 extraFactors; // x: occlusionStrength
+	glm::vec4 extraFactors; // x: occlusionStrength, y: normalScale, z, isDoubleSided
+	glm::vec4 emissiveFactor; // xyz: emissiveFactor, w: emissiveStrength
 	// padding, needed for uniform bnuffers
-	glm::vec4 padding[13];
+	glm::vec4 padding[12];
 };
 
 class Material : public Resource
@@ -25,7 +27,9 @@ public:
 	{
 		BaseColor = 0,
 		MetallicRoughness = 1,
-		Occlusion = 2
+		Occlusion = 2,
+		Normal = 3,
+		Emissive = 4
 	};
 
 	Material(const std::string& id, ResourceManager* manager, MaterialPassType passType = MaterialPassType::Opaque);
@@ -37,6 +41,7 @@ public:
 
 	VkDescriptorSet get_descriptor_set() const { return _descriptorSet; }
 	MaterialPassType get_pass_type() const { return _passType; }
+	MaterialConstants& get_constants() { return _constants; }
 	
 	static void init_descriptor_layout(VulkanCore* core);
 	static void cleanup_descriptor_layout(VulkanCore* core);
@@ -51,11 +56,13 @@ private:
 	ResourceHandle<Texture> _baseColorTexture;
 	ResourceHandle<Texture> _metalRoughTexture;
 	ResourceHandle<Texture> _occlusionTexture;
+	ResourceHandle<Texture> _normalTexture;
+	ResourceHandle<Texture> _emissiveTexture;
 
-	MaterialConstants _constants;
+	MaterialConstants _constants{};
 	MaterialPassType _passType;
 
-	AllocatedBuffer _materialBuffer{};
+	Buffer _materialBuffer{};
 	VkDescriptorSet _descriptorSet{ VK_NULL_HANDLE };
 
 	static VkDescriptorSetLayout _layout;

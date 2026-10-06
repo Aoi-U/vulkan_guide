@@ -58,7 +58,7 @@ void RenderResourceManager::transition(VkCommandBuffer cmd, const std::string& n
 		return;
 
 	// transition image to the new state
-	RenderSync::transition_image(cmd, target.image.image, target.currentState, newState, target.description.aspectMask, 0, target.description.mipLevels, 0, target.description.arrayLayers);
+	RenderSync::transition_image(cmd, target.image.get_image(), target.currentState, newState, target.description.aspectMask, 0, target.description.mipLevels, 0, target.description.arrayLayers);
 	target.currentState = newState;
 }
 
@@ -75,7 +75,7 @@ void RenderResourceManager::transition_all_to_read_only(VkCommandBuffer cmd)
 		const RenderTargetDescription& desc = target.description;
 
 		ImageBarrierInfo barrier{};
-		barrier.image = target.image.image;
+		barrier.image = target.image.get_image();
 		barrier.oldState = target.currentState;
 		barrier.newState = targetState;
 		barrier.aspectMask = desc.aspectMask;
@@ -101,20 +101,20 @@ void RenderResourceManager::set_state(const std::string& name, ResourceState sta
 	}
 }
 
-AllocatedImage& RenderResourceManager::get_image(const std::string & name)
+Texture& RenderResourceManager::get_image(const std::string & name)
 {
 	return _targets.at(name).image;
 }
 
 VkImageView RenderResourceManager::get_view(const std::string& name)
 {
-	return _targets.at(name).image.imageView;
+	return _targets.at(name).image.get_image_view();
 }
 
 VkExtent2D RenderResourceManager::get_extent(const std::string& name) const
 {
-	const AllocatedImage& img = _targets.at(name).image;
-	return { img.imageExtent.width, img.imageExtent.height };
+	const Texture& img = _targets.at(name).image;
+	return img.get_extent_2d();
 }
 
 VkFormat RenderResourceManager::get_format(const std::string& name) const
@@ -160,7 +160,7 @@ void RenderResourceManager::allocate_target_resources(RenderTarget& target, VkEx
 	}
 
 	// create the target image
-	ImageDescription desc;
+	TextureDescription desc;
 	desc.extent = extent;
 	desc.format = target.description.format;
 	desc.usage = target.description.usage;
@@ -171,7 +171,8 @@ void RenderResourceManager::allocate_target_resources(RenderTarget& target, VkEx
 	desc.viewType = target.description.viewType;
 	desc.aspectMask = target.description.aspectMask;
 
-	target.image = _vulkanCore->create_image(desc);
+	target.image = Texture(target.description.name + "_tex", desc);
+	target.image.load(_vulkanCore);
 	target.currentState = ResourceState::Undefined;
 
 	// create 2d face views for cube maps
@@ -180,7 +181,7 @@ void RenderResourceManager::allocate_target_resources(RenderTarget& target, VkEx
 		for (uint32_t i = 0; i < 6; i++) {
 			VkImageViewCreateInfo viewInfo{ .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
 			viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-			viewInfo.image = target.image.image;
+			viewInfo.image = target.image.get_image();
 			viewInfo.format = target.description.format;
 			viewInfo.subresourceRange.aspectMask = target.description.aspectMask;
 			viewInfo.subresourceRange.baseMipLevel = 0;
@@ -204,8 +205,5 @@ void RenderResourceManager::destroy_target_resources(RenderTarget & target)
 	target.faceViews.clear();
 
 	// destroy image
-	if (target.image.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(target.image);
-		target.image = {};
-	}
+	target.image.unload(_vulkanCore);
 }

@@ -2,6 +2,7 @@
 
 #include "app/editor/ComponentRegistry.h"
 #include <core/Components.h>
+#include <resources/Model.h>
 #include <graphics/utils/UIWidgets.h>
 #include <array>
 

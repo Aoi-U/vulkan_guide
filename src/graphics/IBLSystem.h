@@ -5,6 +5,7 @@
 #include <string>
 #include <filesystem>
 #include <graphics/utils/RenderSync.h>
+#include <resources/Texture.h>
 
 class VulkanCore;
 
@@ -12,7 +13,7 @@ class VulkanCore;
 class IBLSystem
 {
 public:
-	void init(VulkanCore* vulkanCore);
+	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager);
 	void cleanup();
 
 	// load an hdr image
@@ -23,10 +24,10 @@ public:
 
 	EnvironmentResources get_environment_resources() const {
 		return EnvironmentResources{
-			.environmentView = _envCubemap.imageView,
-			.irradianceView = _irradianceCubemap.imageView,
-			.prefilterView = _prefilterCubemap.imageView,
-			.brdfLutView = _brdfLut.imageView,
+			.environmentView = _envCubemap.get_image_view(),
+			.irradianceView = _irradianceCubemap.get_image_view(),
+			.prefilterView = _prefilterCubemap.get_image_view(),
+			.brdfLutView = _brdfLut.get_image_view(),
 			.cubemapSampler = _cubemapSampler,
 			.lutSampler = _lutSampler
 		};
@@ -34,7 +35,7 @@ public:
 
 private:
 	void init_samplers();
-	void init_pipelines();
+	void init_pipelines(ResourceManager* resourceManager);
 	void generate_brdf_lut();
 	void destroy_current_environment();
 
@@ -42,10 +43,10 @@ private:
 
 	VulkanCore* _vulkanCore;
 
-	AllocatedImage _envCubemap;
-	AllocatedImage _irradianceCubemap;
-	AllocatedImage _prefilterCubemap;
-	AllocatedImage _brdfLut;
+	Texture _envCubemap;
+	Texture _irradianceCubemap;
+	Texture _prefilterCubemap;
+	Texture _brdfLut;
 
 	VkSampler _cubemapSampler;
 	VkSampler _lutSampler;

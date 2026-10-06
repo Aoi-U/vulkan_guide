@@ -29,7 +29,7 @@ struct RasterState
 
 struct GraphicsPipelineDesc
 {
-	std::vector<std::shared_ptr<Shader>> shaders;
+	std::vector<ResourceHandle<Shader>> shaders;
 	std::vector<VkDescriptorSetLayout> descriptorLayouts;
 	std::vector<VkPushConstantRange> pushConstants;
 	std::vector<VkFormat> colorAttachmentFormats;
@@ -38,11 +38,12 @@ struct GraphicsPipelineDesc
 	RasterState rasterState;
 	BlendMode blendMode{ BlendMode::None };
 	VkPrimitiveTopology topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
+	std::vector<VkDynamicState> dynamicStates{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 };
 
 struct ComputePipelineDesc
 {
-	std::shared_ptr<Shader> computeShader;
+	ResourceHandle<Shader> computeShader;
 	std::vector<VkDescriptorSetLayout> descriptorLayouts;
 	std::vector<VkPushConstantRange> pushConstants;
 };

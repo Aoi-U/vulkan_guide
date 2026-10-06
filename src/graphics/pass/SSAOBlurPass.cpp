@@ -4,7 +4,7 @@
 #include <graphics/Renderer.h>
 #include <chrono>
 
-void SSAOBlurPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
+void SSAOBlurPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
   _vulkanCore = vulkanCore;
 
@@ -12,8 +12,8 @@ void SSAOBlurPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLa
   builder.add_binding(0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 0: blur input texture
   _descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT);
 
-  auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/deferred_lighting.vert.spv");
-  auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/ssao_blur.frag.spv");
+  auto vert = resourceManager->load<Shader>("deferred_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/deferred_lighting.vert.spv");
+  auto frag = resourceManager->load<Shader>("ssao_blur_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/ssao_blur.frag.spv");
 
   GraphicsPipelineDesc desc{
     .shaders = { vert, frag },

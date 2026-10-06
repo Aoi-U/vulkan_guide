@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <resources/ResourceManager.h>
+#include <resources/Buffer.h>
 #include <string>
 #include <vector>
 
@@ -13,8 +14,8 @@ public:
 	explicit Mesh(const std::string& id, std::vector<uint32_t> indices, std::vector<Vertex> vertices);
 	~Mesh() override = default;
 
-	VkBuffer get_vertex_buffer() const { return _vertexBuffer.buffer; }
-	VkBuffer get_index_buffer() const { return _indexBuffer.buffer; }
+	VkBuffer get_vertex_buffer() const { return _vertexBuffer.get_buffer(); }
+	VkBuffer get_index_buffer() const { return _indexBuffer.get_buffer(); }
 	VkDeviceAddress get_vertex_buffer_address() const { return _vertexBufferAddress; }
 	uint32_t get_index_count() const { return _indexCount; }
 	uint32_t get_vertex_count() const { return _vertexCount; }
@@ -27,8 +28,9 @@ private:
 	std::vector<uint32_t> _cpuIndices;
 	std::vector<Vertex> _cpuVertices;
 
-	AllocatedBuffer _vertexBuffer{};
-	AllocatedBuffer _indexBuffer{};
+	Buffer _vertexBuffer{};
+	Buffer _indexBuffer{};
+
 	VkDeviceAddress _vertexBufferAddress{ 0 };
 	uint32_t _indexCount{ 0 };
 	uint32_t _vertexCount{ 0 };

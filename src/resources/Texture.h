@@ -10,9 +10,16 @@
 class Texture : public Resource
 {
 public:
-	explicit Texture(const std::string& id, const std::filesystem::path& filePath = "", VkFormat format = VK_FORMAT_R8G8B8A8_UNORM, VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT, bool generateMips = true);
+	Texture() : Resource(""), _format(VK_FORMAT_UNDEFINED), _usage(0), _mipmapped(false) {}
 
+	// construct texture from file path
+	explicit Texture(const std::string& id, const std::filesystem::path& filePath = "", VkFormat format = VK_FORMAT_R8G8B8A8_UNORM, VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT, bool generateMips = true); 
+
+	// construct texture from embedded data
 	explicit Texture(const std::string& id, std::span<const uint8_t> data, VkFormat format = VK_FORMAT_R8G8B8A8_UNORM, VkImageUsageFlags usage = VK_IMAGE_USAGE_SAMPLED_BIT, bool generateMips = true);
+
+	// construct texture from description and optional data
+	explicit Texture(const std::string& id, const TextureDescription& desc, std::span<const uint8_t> data = {});
 
 	~Texture() override = default;
 
@@ -20,6 +27,7 @@ public:
 	VkImageView get_image_view() const { return _imageView; }
 	VkSampler get_sampler() const { return _sampler; }
 	VkExtent3D get_extent() const { return _extent; }
+	VkExtent2D get_extent_2d() const { return { _extent.width, _extent.height }; }
 	VkFormat get_format() const { return _format; }
 
 protected:
@@ -27,8 +35,13 @@ protected:
 	bool doUnload(VulkanCore* core) override;
 
 private:
+	enum class SourceType { File, Encoded, Description };
+	SourceType _sourceType{ SourceType::File };
+
 	std::filesystem::path _filePath;
-	std::vector<uint8_t> _embeddedData; 
+	std::vector<uint8_t> _bufferData; 
+	TextureDescription _desc;
+
 	VkFormat _format;
 	VkImageUsageFlags _usage;
 	bool _mipmapped;
@@ -38,6 +51,5 @@ private:
 	VkImageView _imageView{ nullptr };
 	VkSampler _sampler{ nullptr };
 	VkExtent3D _extent{ 1, 1, 1 };
-	uint32_t _mipLevels;
-
+	uint32_t _mipLevels{ 0 };
 };

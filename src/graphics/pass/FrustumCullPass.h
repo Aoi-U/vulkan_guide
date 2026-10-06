@@ -18,7 +18,7 @@ struct CullStatsData {
 class FrustumCullPass : public ComputePass
 {
 public:
-  void init(VulkanCore* vulkanCore) override;
+  void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
   void cleanup() override;
   void dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
 

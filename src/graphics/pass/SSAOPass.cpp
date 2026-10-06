@@ -9,7 +9,7 @@ extern AutoCVar_Float cvSSAORadius;
 extern AutoCVar_Float cvSSAOBias;
 extern AutoCVar_Float cvSSAOPower;
 
-void SSAOPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
+void SSAOPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
 
@@ -23,8 +23,8 @@ void SSAOPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout
 	builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // texNoise
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT);
 
-	auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/deferred_lighting.vert.spv");
-	auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/ssao.frag.spv");
+	auto vert = resourceManager->load<Shader>("deferred_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/deferred_lighting.vert.spv");
+	auto frag = resourceManager->load<Shader>("ssao_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/ssao.frag.spv");
 
 	GraphicsPipelineDesc desc{
 		.shaders = { vert, frag },
@@ -50,14 +50,9 @@ void SSAOPass::cleanup()
 		vkDestroySampler(_vulkanCore->get_device(), _noiseSampler, nullptr);
 		_noiseSampler = VK_NULL_HANDLE;
 	}
-	if (_noiseImage.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_noiseImage);
-		_noiseImage = {};
-	}
-	if (_kernelBuffer.buffer != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_buffer(_kernelBuffer);
-		_kernelBuffer = {};
-	}
+	
+	_noiseImage.unload(_vulkanCore);
+	_kernelBuffer.unload(_vulkanCore);
 
 	_vulkanCore = nullptr;
 }
@@ -69,11 +64,11 @@ void SSAOPass::render(RenderContext & ctx, FrameData & frameData, RenderResource
 
 	VkDescriptorSet ssaoSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_buffer(1, _kernelBuffer.buffer, sizeof(glm::vec4) * 64, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(0, frameData.sceneDataBuffer.get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(1, _kernelBuffer.get_buffer(), sizeof(glm::vec4) * 64, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	writer.write_image(2, resources.get_view("GBufferPosition"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.write_image(3, resources.get_view("GBufferNormal"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(4, _noiseImage.imageView, _noiseSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	writer.write_image(4, _noiseImage.get_image_view(), _noiseSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), ssaoSet);
 
 	ctx.bind_pipeline(_pipeline);
@@ -126,8 +121,9 @@ void SSAOPass::generate_kernal_and_noise()
 		ssaoKernel.emplace_back(sample, 1.0);
 	}
 
-	_kernelBuffer = _vulkanCore->create_buffer(sizeof(glm::vec4) * KERNEL_SIZE, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	memcpy(_kernelBuffer.info.pMappedData, ssaoKernel.data(), sizeof(glm::vec4) * KERNEL_SIZE);
+	_kernelBuffer = Buffer("ssao_kernel", sizeof(glm::vec4) * KERNEL_SIZE, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	_kernelBuffer.load(_vulkanCore);
+	_kernelBuffer.copy_data(ssaoKernel.data(), sizeof(glm::vec4) * KERNEL_SIZE);
 
 	constexpr int NOISE_DIM = 16;
 	// generate noise texture
@@ -138,10 +134,11 @@ void SSAOPass::generate_kernal_and_noise()
 		ssaoNoise.emplace_back(noise, 1.0);
 	}
 
-	AllocatedBuffer staging = _vulkanCore->create_buffer(sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-	memcpy(staging.info.pMappedData, ssaoNoise.data(), sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM);
+	Buffer staging("ssao_noise_staging", sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+	staging.load(_vulkanCore);
+	staging.copy_data(ssaoNoise.data(), sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM);
 
-	ImageDescription desc{
+	TextureDescription desc{
 		.extent = { 4, 4, 1 },
 		.format = VK_FORMAT_R32G32B32A32_SFLOAT,
 		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
@@ -150,21 +147,23 @@ void SSAOPass::generate_kernal_and_noise()
 		.viewType = VK_IMAGE_VIEW_TYPE_2D,
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 	};
-	_noiseImage = _vulkanCore->create_image(desc);
+
+	_noiseImage = Texture("ssao_noise", desc);
+	_noiseImage.load(_vulkanCore);
 
 	// copy noise data staging buffer to noise image
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _noiseImage.image, ResourceState::Undefined, ResourceState::TransferDst);
+		RenderSync::transition_image(cmd, _noiseImage.get_image(), ResourceState::Undefined, ResourceState::TransferDst);
 		VkBufferImageCopy copyRegion{
 			.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
 			.imageExtent = { 4, 4, 1}
 		};
-		vkCmdCopyBufferToImage(cmd, staging.buffer, _noiseImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-		RenderSync::transition_image(cmd, _noiseImage.image, ResourceState::TransferDst, ResourceState::ShaderReadOnly);
+		vkCmdCopyBufferToImage(cmd, staging.get_buffer(), _noiseImage.get_image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+		RenderSync::transition_image(cmd, _noiseImage.get_image(), ResourceState::TransferDst, ResourceState::ShaderReadOnly);
 		});
 
 	// destroy staging buffer
-	_vulkanCore->destroy_buffer(staging);
+	staging.unload(_vulkanCore);
 
 	// repeat sampler for tiling across screen
 	VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };

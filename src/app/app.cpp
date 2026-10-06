@@ -8,12 +8,12 @@
 #include <glm/gtx/transform.hpp>
 #include <core/cvars.h>
 #include <resources/Material.h>
+#include <resources/Model.h>
 
 App::App()
 {
 	_window = std::make_unique<Window>();
 	_vulkanCore = std::make_unique<VulkanCore>();
-	_materialSystem = std::make_unique<MaterialSystem>();
 	_renderer = std::make_unique<Renderer>();
 	_editor = std::make_unique<Editor>();
 	_guiRenderer = std::make_unique<GuiRenderer>();
@@ -26,13 +26,10 @@ void App::init()
 	_window->init("Vulkan Engine", 1280, 720);
 	_vulkanCore->init(*_window);
 
-	_materialSystem->init(_vulkanCore.get());
-
-	_renderer->init(_window.get(), _vulkanCore.get(), dispatcher);
-	
 	_resourceManager = std::make_unique<ResourceManager>(_vulkanCore.get());
 	Material::init_descriptor_layout(_vulkanCore.get());
 
+	_renderer->init(_window.get(), _vulkanCore.get(), dispatcher, _resourceManager.get());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
 	_renderer->set_gui_renderer(_guiRenderer.get());
 
@@ -103,7 +100,6 @@ void App::cleanup()
 	_resourceManager->unload_all();
 	Material::cleanup_descriptor_layout(_vulkanCore.get());
 	_renderer->cleanup(dispatcher);
-	_materialSystem->cleanup();
 	_vulkanCore->cleanup();
 	_window->cleanup();
 }

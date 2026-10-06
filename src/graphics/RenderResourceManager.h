@@ -2,6 +2,7 @@
 
 #include <core/vk_types.h>
 #include <graphics/utils/RenderSync.h>
+#include <resources/Texture.h>
 #include <unordered_map>
 #include <string>
 #include <vector>
@@ -33,7 +34,7 @@ struct RenderTargetDescription
 struct RenderTarget
 {
 	RenderTargetDescription description;
-	AllocatedImage image;
+	Texture image;
 	ResourceState currentState{ ResourceState::Undefined };
 	std::vector<VkImageView> faceViews; // used for cube maps
 };
@@ -60,7 +61,7 @@ public:
 	void set_state(const std::string& name, ResourceState state);
 
 	// getters
-	AllocatedImage& get_image(const std::string& name);
+	Texture& get_image(const std::string& name);
 	VkImageView get_view(const std::string& name);
 	VkExtent2D get_extent(const std::string& name) const;
 	VkFormat get_format(const std::string& name) const;

@@ -19,6 +19,7 @@ layout (set = 0, binding = 7) uniform samplerCube prefilterMap;
 layout (set = 0, binding = 8) uniform sampler2D brdfLUT;
 layout (set = 0, binding = 9) uniform samplerCube pointShadowMap;
 layout (set = 0, binding = 10) uniform sampler2D ssaoMap;
+layout (set = 0, binding = 11) uniform sampler2D gEmissive;
 
 layout (push_constant) uniform PushConstants {
     int enableSSAO;
@@ -123,9 +124,11 @@ void main() {
     vec3 inWorldPos = posSample.xyz;
     vec3 N = normalize(texture(gNormal, inUV).xyz);
     vec3 albedo = texture(gAlbedo, inUV).rgb; 
+
     vec4 mr = texture(gMetalRough, inUV);
     float metallic = mr.r;
     float roughness = mr.g;
+
     float materialAO = mr.b; // baked gltf ao
 
     float ssao = (push.enableSSAO != 0) ? texture(ssaoMap, inUV).r : 1.0;
@@ -206,7 +209,9 @@ void main() {
     vec3 specularIBL = prefilteredColor * (F_ambient * envBrdf.x + envBrdf.y);
 
     vec3 ambient = (kD_ambient * diffuseIBL + specularIBL) * totalAO + (sceneData.ambientColor.xyz * albedo * totalAO);
-    vec3 color = ambient + Lo;
+    vec3 emissive = texture(gEmissive, inUV).rgb;
+
+    vec3 color = ambient + Lo + emissive;
 
     // tone mapping and gamma correction
     color = color / (color + vec3(1.0));

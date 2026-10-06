@@ -121,11 +121,11 @@ void RenderGraph::execute(RenderContext & ctx)
 				continue;
 
 			const RenderTargetDescription& desc = _resources.get_description(name);
-			AllocatedImage& img = _resources.get_image(name);
+			Texture& img = _resources.get_image(name);
 
 			// create an image barrier for the transition
 			ImageBarrierInfo barrier{};
-			barrier.image = img.image;
+			barrier.image = img.get_image();
 			barrier.oldState = currentState;
 			barrier.newState = targetState;
 			barrier.aspectMask = desc.aspectMask;

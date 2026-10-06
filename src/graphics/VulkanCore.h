@@ -1,34 +1,7 @@
 #pragma once
 #include <core/vk_types.h>
 #include <window/window.h>
-
-struct ImageDescription {
-	VkExtent3D extent{ 1, 1, 1 };
-	VkFormat format{ VK_FORMAT_UNDEFINED };
-	VkImageUsageFlags usage{ 0 };
-	uint32_t mipLevels{ 1 };
-	uint32_t arrayLayers{ 1 };
-	VkSampleCountFlagBits samples{ VK_SAMPLE_COUNT_1_BIT };
-	VkImageCreateFlags flags{ 0 };
-	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
-	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
-};
-
-// an image that has been allocated on the GPU
-struct AllocatedImage
-{
-	VkImage image;
-	VkImageView imageView;
-	VmaAllocation allocation;
-};
-
-// a mesh that has been allocated on the GPU
-struct AllocatedMesh
-{
-	AllocatedBuffer indexBuffer;
-	AllocatedBuffer vertexBuffer;
-	VkDeviceAddress vertexBufferAddress;
-};
+#include <resources/Texture.h>
 
 class VulkanCore
 {
@@ -39,22 +12,6 @@ public:
 
 	// submits a function to be executed immediately on the gpu
 	void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);	
-
-	// resizes buffer if needed
-	void check_and_resize_buffer(AllocatedBuffer& buffer, size_t requiredSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
-
-	// creates a buffer 
-	AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage);
-	void destroy_buffer(const AllocatedBuffer& buffer);
-
-	// creates an image 
-	AllocatedImage create_image(const ImageDescription& desc);
-
-	// creates an image with data
-	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
-
-	void destroy_image(const AllocatedImage& image);
-	void destroy_image(VkImage image, VkImageView imageView, VmaAllocation allocation);
 
 	VkInstance get_instance() const { return _instance; }
 	VkPhysicalDevice get_physical_device() const { return _chosenGPU; }
@@ -67,26 +24,19 @@ public:
 	VmaAllocator& get_allocator() { return _allocator; }
 
 	// default samplers and images
-	// Default samplers and fallback images
-	AllocatedImage _whiteImage;
-	AllocatedImage _blackImage;
-	AllocatedImage _greyImage;
-	AllocatedImage _errorCheckerboardImage;
+	Texture _whiteImage;
+	Texture _blackImage;
+	Texture _greyImage;
+	Texture _errorCheckerboardImage;
+	Texture _defaultNormalImage;
 	VkSampler _defaultSamplerLinear{ VK_NULL_HANDLE };
 	VkSampler _defaultSamplerNearest{ VK_NULL_HANDLE };
 
 	VkSampler _shadowSampler{ VK_NULL_HANDLE };
 
-	// uploads a mesh to the gpu and returns the buffers for it
-	AllocatedMesh upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
-
 private:
 	void init_immediate_submit();
 	void init_default_data();
-
-	// creates an image
-	AllocatedImage create_image(VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
-
 
 	// vulkan instance handles
 	VkInstance _instance; // vulkan library handle

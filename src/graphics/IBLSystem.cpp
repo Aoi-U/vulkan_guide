@@ -4,6 +4,7 @@
 #include <utils/vk_initializers.h>
 #include <utils/vk_descriptors.h>
 #include <graphics/utils/RenderSync.h>
+#include <resources/Buffer.h>
 #include <stb_image.h>
 #include <fmt/core.h>
 #include <cmath>
@@ -14,11 +15,11 @@ struct PrefilterPushConstants
 	float resolution;
 };
 
-void IBLSystem::init(VulkanCore* vulkanCore)
+void IBLSystem::init(VulkanCore* vulkanCore, ResourceManager* resourceManager)
 {
 	_vulkanCore = vulkanCore;
 	init_samplers();
-	init_pipelines();
+	init_pipelines(resourceManager);
 	generate_brdf_lut();
 	load_procedural_default();
 }
@@ -28,10 +29,8 @@ void IBLSystem::cleanup()
 	VkDevice device = _vulkanCore->get_device();
 	destroy_current_environment();
 
-	if (_brdfLut.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_brdfLut);
-		_brdfLut = {};
-	}
+	_brdfLut.unload(_vulkanCore);
+
 	if (_cubemapSampler != VK_NULL_HANDLE) {
 		vkDestroySampler(device, _cubemapSampler, nullptr);
 		_cubemapSampler = VK_NULL_HANDLE;
@@ -78,60 +77,61 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 
 	// upload hdr image to staging buffer
 	size_t dataBytes = width * height * 4 * sizeof(float);
-	AllocatedBuffer staging = _vulkanCore->create_buffer(dataBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	memcpy(staging.info.pMappedData, data, dataBytes);
+	Buffer staging("hdr_staging", dataBytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+	staging.load(_vulkanCore);
+	staging.copy_data(data, dataBytes);
 
 	// free image data after uploading
 	stbi_image_free(data);
 
 	// create the hdr image
-	AllocatedImage hdrImage = _vulkanCore->create_image({
-		.extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1},
-		.format = VK_FORMAT_R32G32B32A32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.mipLevels = 1,
-		.arrayLayers = 1,
-		.viewType = VK_IMAGE_VIEW_TYPE_2D,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+	TextureDescription hdrDesc{ .extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1}, .format = VK_FORMAT_R32G32B32A32_SFLOAT, .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT };
+	Texture hdrImage("hdr_img", hdrDesc);
+	hdrImage.load(_vulkanCore);
 
 	// copy image from staging buffer to hdr image
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, hdrImage.image, ResourceState::Undefined, ResourceState::TransferDst);
-		VkBufferImageCopy copyRegion{
-			.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1},
-			.imageExtent = hdrImage.imageExtent
+    RenderSync::transition_image(cmd, hdrImage.get_image(), ResourceState::Undefined, ResourceState::TransferDst);
+
+    VkBufferImageCopy copyRegion{ .imageSubresource = {
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, 
+			.mipLevel = 0, 
+			.baseArrayLayer = 0, 
+			.layerCount = 1}, 
+			.imageExtent = hdrImage.get_extent() 
 		};
 
-		vkCmdCopyBufferToImage(cmd, staging.buffer, hdrImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-		RenderSync::transition_image(cmd, hdrImage.image, ResourceState::TransferDst, ResourceState::ShaderReadOnly);
-		});
+    vkCmdCopyBufferToImage(cmd, staging.get_buffer(), hdrImage.get_image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+    RenderSync::transition_image(cmd, hdrImage.get_image(), ResourceState::TransferDst, ResourceState::ShaderReadOnly);
+    });
 
 	// destroy staging buffer
-	_vulkanCore->destroy_buffer(staging);
+	staging.unload(_vulkanCore);
 
 	// create environment cubemap
 	constexpr uint32_t ENV_CUBEMAP_SIZE = 2048;
 	uint32_t envMips = static_cast<uint32_t>(std::floor(std::log2(ENV_CUBEMAP_SIZE))) + 1;
 
-	_envCubemap = _vulkanCore->create_image({
-		.extent = {ENV_CUBEMAP_SIZE, ENV_CUBEMAP_SIZE, 1},
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-		.mipLevels = envMips,
-		.arrayLayers = 6,
-		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+	TextureDescription envDesc{ 
+		.extent = {ENV_CUBEMAP_SIZE, ENV_CUBEMAP_SIZE, 1}, 
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT, 
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 
+		.mipLevels = envMips, 
+		.arrayLayers = 6, 
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
+	};
+	_envCubemap = Texture("envCubemap", envDesc);
+	_envCubemap.load(_vulkanCore);
 
 	// temporary image view for compute output
 	VkImageView mip0ArrayView;
 	VkImageViewCreateInfo viewInfo{
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-		.image = _envCubemap.image,
+		.image = _envCubemap.get_image(),
 		.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-		.format = _envCubemap.imageFormat,
+		.format = _envCubemap.get_format(),
 		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6}
 	};
 	VK_CHECK(vkCreateImageView(_vulkanCore->get_device(), &viewInfo, nullptr, &mip0ArrayView));
@@ -148,41 +148,43 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 	VkDescriptorSet eqSet = allocator.allocate(_vulkanCore->get_device(), _computeLayout);
 	DescriptorWriter eqWriter;
 	eqWriter.write_image(0, mip0ArrayView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-	eqWriter.write_image(1, hdrImage.imageView, _hdrSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	eqWriter.write_image(1, hdrImage.get_image_view(), _hdrSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	eqWriter.update_set(_vulkanCore->get_device(), eqSet);
 
 	// dispatch compute shader to convert equirectangular hdr to cubemap
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _envCubemap.image, ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
+		RenderSync::transition_image(cmd, _envCubemap.get_image(), ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _equirectToCubemapPipeline.get_pipeline());
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _equirectToCubemapPipeline.get_layout(), 0, 1, &eqSet, 0, nullptr);
 		vkCmdDispatch(cmd, ENV_CUBEMAP_SIZE / 16, ENV_CUBEMAP_SIZE / 16, 6);
 
 		// generate full mip chain for environment cubemap
-		generate_cubemap_mips(cmd, _envCubemap.image, ENV_CUBEMAP_SIZE, envMips, ResourceState::StorageImage);
+		generate_cubemap_mips(cmd, _envCubemap.get_image(), ENV_CUBEMAP_SIZE, envMips, ResourceState::StorageImage);
 		});
 
 	// cleanup temporary image view and hdr image
 	vkDestroyImageView(_vulkanCore->get_device(), mip0ArrayView, nullptr);
-	_vulkanCore->destroy_image(hdrImage);
+	hdrImage.unload(_vulkanCore);
 
 	// create irradiance cubemap
 	constexpr uint32_t IRR_SIZE = 64;
 
-	_irradianceCubemap = _vulkanCore->create_image({
-			.extent = { IRR_SIZE, IRR_SIZE, 1 },
-			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-			.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.mipLevels = 1,
-			.arrayLayers = 6,
-			.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-			.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+	TextureDescription irrDesc{ 
+		.extent = { IRR_SIZE, IRR_SIZE, 1 }, 
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT, 
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+		.mipLevels = 1, 
+		.arrayLayers = 6, 
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
+	};
+	_irradianceCubemap = Texture("irradianceCubemap", irrDesc);
+	_irradianceCubemap.load(_vulkanCore);
 
 	// create temporary image view for compute shader
 	VkImageView irrArrayView;
-	viewInfo.image = _irradianceCubemap.image;
+	viewInfo.image = _irradianceCubemap.get_image();
 	viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 };
 	VK_CHECK(vkCreateImageView(_vulkanCore->get_device(), &viewInfo, nullptr, &irrArrayView));
 
@@ -190,18 +192,16 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 	VkDescriptorSet irrSet = allocator.allocate(_vulkanCore->get_device(), _computeLayout);
 	DescriptorWriter irrWriter;
 	irrWriter.write_image(0, irrArrayView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-	irrWriter.write_image(1, _envCubemap.imageView, _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	irrWriter.write_image(1, _envCubemap.get_image_view(), _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	irrWriter.update_set(_vulkanCore->get_device(), irrSet);
 
 	// dispatch compute shader to generate irradiance cubemap
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _irradianceCubemap.image, ResourceState::Undefined, ResourceState::StorageImage,
-			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
+		RenderSync::transition_image(cmd, _irradianceCubemap.get_image(), ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _irradiancePipeline.get_pipeline());
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _irradiancePipeline.get_layout(), 0, 1, &irrSet, 0, nullptr);
 		vkCmdDispatch(cmd, IRR_SIZE / 16, IRR_SIZE / 16, 6);
-		RenderSync::transition_image(cmd, _irradianceCubemap.image, ResourceState::StorageImage, ResourceState::ShaderReadOnly,
-			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
+		RenderSync::transition_image(cmd, _irradianceCubemap.get_image(), ResourceState::StorageImage, ResourceState::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
 		});
 	// cleanup temporary image view
 	vkDestroyImageView(_vulkanCore->get_device(), irrArrayView, nullptr);
@@ -210,34 +210,35 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 	constexpr uint32_t PREFILTER_SIZE = 128;
 	constexpr uint32_t PREFILTER_MIPS = 5;
 
-	_prefilterCubemap = _vulkanCore->create_image({
-		.extent = { PREFILTER_SIZE, PREFILTER_SIZE, 1 },
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.mipLevels = PREFILTER_MIPS,
-		.arrayLayers = 6,
-		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+	TextureDescription prefDesc{ 
+		.extent = { PREFILTER_SIZE, PREFILTER_SIZE, 1 }, 
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT, 
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+		.mipLevels = PREFILTER_MIPS, 
+		.arrayLayers = 6, 
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
+	};
+	_prefilterCubemap = Texture("prefilterCubemap", prefDesc);
+	_prefilterCubemap.load(_vulkanCore);
 
 	// create temporary image views for each mip level of the prefilter cubemap
 	std::vector<VkImageView> prefilterMipViews(PREFILTER_MIPS);
 	for (uint32_t mip = 0; mip < PREFILTER_MIPS; ++mip) {
 		VkImageViewCreateInfo mipViewInfo{
-				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-				.image = _prefilterCubemap.image,
-				.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-				.format = _prefilterCubemap.imageFormat,
-				.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6 }
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = _prefilterCubemap.get_image(),
+			.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6 }
 		};
 		VK_CHECK(vkCreateImageView(_vulkanCore->get_device(), &mipViewInfo, nullptr, &prefilterMipViews[mip]));
 	}
 
 	// dispatch compute shader for each mip level
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _prefilterCubemap.image, ResourceState::Undefined, ResourceState::StorageImage,
-			VK_IMAGE_ASPECT_COLOR_BIT, 0, PREFILTER_MIPS, 0, 6);
+		RenderSync::transition_image(cmd, _prefilterCubemap.get_image(), ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, PREFILTER_MIPS, 0, 6);
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _prefilterPipeline.get_pipeline());
 
@@ -248,7 +249,7 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 			VkDescriptorSet prefSet = allocator.allocate(_vulkanCore->get_device(), _computeLayout);
 			DescriptorWriter prefWriter;
 			prefWriter.write_image(0, prefilterMipViews[mip], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-			prefWriter.write_image(1, _envCubemap.imageView, _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			prefWriter.write_image(1, _envCubemap.get_image_view(), _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 			prefWriter.update_set(_vulkanCore->get_device(), prefSet);
 
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _prefilterPipeline.get_layout(), 0, 1, &prefSet, 0, nullptr);
@@ -264,8 +265,7 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 		}
 
 		// transition prefilter cubemap 
-		RenderSync::transition_image(cmd, _prefilterCubemap.image, ResourceState::StorageImage, ResourceState::ShaderReadOnly,
-			VK_IMAGE_ASPECT_COLOR_BIT, 0, PREFILTER_MIPS, 0, 6);
+		RenderSync::transition_image(cmd, _prefilterCubemap.get_image(), ResourceState::StorageImage, ResourceState::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT, 0, PREFILTER_MIPS, 0, 6);
 		});
 
 	// cleanup descriptor pools and prefilter mip views
@@ -287,8 +287,9 @@ void IBLSystem::load_procedural_default()
 	// procedurally generated gradient cubemap 
 	constexpr uint32_t FACE_SIZE = 256;
 	const size_t faceBytes = FACE_SIZE * FACE_SIZE * 4 * sizeof(float);
-	AllocatedBuffer staging = _vulkanCore->create_buffer(faceBytes * 6, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-	float* mappedData = static_cast<float*>(staging.info.pMappedData);
+	Buffer staging("procedural_staging", faceBytes * 6, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+	staging.load(_vulkanCore);
+	float* mappedData = static_cast<float*>(staging.get_mapped_data());
 
 	// set colors for sky and 
 	const glm::vec3 zenith(0.18f, 0.38f, 0.85f);
@@ -326,32 +327,36 @@ void IBLSystem::load_procedural_default()
 
 	// create cubemap image and upload data
 	uint32_t envMips = static_cast<uint32_t>(std::floor(std::log2(FACE_SIZE))) + 1;
-	_envCubemap = _vulkanCore->create_image({
-			.extent = { FACE_SIZE, FACE_SIZE, 1 },
-			.format = VK_FORMAT_R32G32B32A32_SFLOAT,
-			.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.mipLevels = envMips,
-			.arrayLayers = 6,
-			.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-			.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+
+	TextureDescription envDesc{ 
+		.extent = {FACE_SIZE, FACE_SIZE, 1},
+		.format = VK_FORMAT_R32G32B32A32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, 
+		.mipLevels = envMips, 
+		.arrayLayers = 6, 
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
+	};
+	_envCubemap = Texture("envCubemap", envDesc);
+	_envCubemap.load(_vulkanCore);
 
 	// copy data from staging buffer to cubemap image and generate mips
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _envCubemap.image, ResourceState::Undefined, ResourceState::TransferDst,
+		RenderSync::transition_image(cmd, _envCubemap.get_image(), ResourceState::Undefined, ResourceState::TransferDst,
 			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
 		std::vector<VkBufferImageCopy> copies(6);
 		for (uint32_t f = 0; f < 6; ++f) {
 			copies[f].bufferOffset = f * faceBytes;
 			copies[f].imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, f, 1 };
-			copies[f].imageExtent = _envCubemap.imageExtent;
+			copies[f].imageExtent = _envCubemap.get_extent();
 		}
-		vkCmdCopyBufferToImage(cmd, staging.buffer, _envCubemap.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6, copies.data());
-		generate_cubemap_mips(cmd, _envCubemap.image, FACE_SIZE, envMips, ResourceState::TransferDst);
+		vkCmdCopyBufferToImage(cmd, staging.get_buffer(), _envCubemap.get_image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 6, copies.data());
+		generate_cubemap_mips(cmd, _envCubemap.get_image(), FACE_SIZE, envMips, ResourceState::TransferDst);
 		});
+
 	// cleanup staging buffer
-	_vulkanCore->destroy_buffer(staging);
+	staging.unload(_vulkanCore);
 
 	DescriptorAllocatorGrowable allocator;
 	std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> poolSizes = {
@@ -361,96 +366,104 @@ void IBLSystem::load_procedural_default()
 	allocator.init(_vulkanCore->get_device(), 20, poolSizes);
 
 	// generate irradiance cubemap
-	_irradianceCubemap = _vulkanCore->create_image({
-			.extent = { 32, 32, 1 },
-			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-			.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.mipLevels = 1,
-			.arrayLayers = 6,
-			.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-			.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+	constexpr uint32_t IRR_SIZE = 64;
+	TextureDescription irrDesc{ 
+		.extent = { IRR_SIZE, IRR_SIZE, 1 }, 
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT, 
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+		.mipLevels = 1, 
+		.arrayLayers = 6, 
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
+	};
+	_irradianceCubemap = Texture("irradianceCubemap", irrDesc);
+	_irradianceCubemap.load(_vulkanCore);
 
 	// temporary image view for compute shader
 	VkImageView irrArrView;
 	VkImageViewCreateInfo viewInfo{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-			.image = _irradianceCubemap.image,
-			.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-			.format = _irradianceCubemap.imageFormat,
-			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 }
+		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+		.image = _irradianceCubemap.get_image(),
+		.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6 }
 	};
 	VK_CHECK(vkCreateImageView(_vulkanCore->get_device(), &viewInfo, nullptr, &irrArrView));
 
 	VkDescriptorSet irrSet = allocator.allocate(_vulkanCore->get_device(), _computeLayout);
 	DescriptorWriter irrWriter;
 	irrWriter.write_image(0, irrArrView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-	irrWriter.write_image(1, _envCubemap.imageView, _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	irrWriter.write_image(1, _envCubemap.get_image_view(), _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	irrWriter.update_set(_vulkanCore->get_device(), irrSet);
 
 	// run irradiance compute shader
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _irradianceCubemap.image, ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
+		RenderSync::transition_image(cmd, _irradianceCubemap.get_image(), ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _irradiancePipeline.get_pipeline());
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _irradiancePipeline.get_layout(), 0, 1, &irrSet, 0, nullptr);
-		vkCmdDispatch(cmd, 32 / 16, 32 / 16, 6);
+		vkCmdDispatch(cmd, IRR_SIZE / 16, IRR_SIZE / 16, 6);
 		
-		RenderSync::transition_image(cmd, _irradianceCubemap.image, ResourceState::StorageImage, ResourceState::ShaderReadOnly,
+		RenderSync::transition_image(cmd, _irradianceCubemap.get_image(), ResourceState::StorageImage, ResourceState::ShaderReadOnly,
 			VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 6);
 		});
 	vkDestroyImageView(_vulkanCore->get_device(), irrArrView, nullptr);
 
 	// generate prefilter cubemap
+	constexpr uint32_t PREFILTER_SIZE = 128;
 	constexpr uint32_t PREFILTER_MIPS = 5;
-	_prefilterCubemap = _vulkanCore->create_image({
-		.extent = { 64, 64, 1 },
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.mipLevels = PREFILTER_MIPS,
-		.arrayLayers = 6,
-		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		});
+	TextureDescription prefDesc{ 
+		.extent = { PREFILTER_SIZE, PREFILTER_SIZE, 1 }, 
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT, 
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+		.mipLevels = PREFILTER_MIPS, 
+		.arrayLayers = 6, 
+		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, 
+		.viewType = VK_IMAGE_VIEW_TYPE_CUBE, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
+	};
+	_prefilterCubemap = Texture("prefilterCubemap", prefDesc);
+	_prefilterCubemap.load(_vulkanCore);
 
 	// create temporary image views for each mip level of the prefilter cubemap
 	std::vector<VkImageView> prefilterMipViews(PREFILTER_MIPS);
 	for (uint32_t mip = 0; mip < PREFILTER_MIPS; ++mip) {
 		VkImageViewCreateInfo mipInfo{
-				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-				.image = _prefilterCubemap.image,
-				.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
-				.format = _prefilterCubemap.imageFormat,
-				.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6 }
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = _prefilterCubemap.get_image(),
+			.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+			.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, mip, 1, 0, 6 }
 		};
 		VK_CHECK(vkCreateImageView(_vulkanCore->get_device(), &mipInfo, nullptr, &prefilterMipViews[mip]));
 	}
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _prefilterCubemap.image, ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 5, 0, 6);
+		RenderSync::transition_image(cmd, _prefilterCubemap.get_image(), ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 5, 0, 6);
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _prefilterPipeline.get_pipeline());
 
 		// dispatch compute shader for each mip level
 		for (uint32_t mip = 0; mip < 5; ++mip) {
-			uint32_t mipDim = 64 >> mip;
+			uint32_t mipDim = PREFILTER_SIZE >> mip;
 
 			VkDescriptorSet pSet = allocator.allocate(_vulkanCore->get_device(), _computeLayout);
 			DescriptorWriter pWriter;
 			pWriter.write_image(0, prefilterMipViews[mip], VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
-			pWriter.write_image(1, _envCubemap.imageView, _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			pWriter.write_image(1, _envCubemap.get_image_view(), _cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 			pWriter.update_set(_vulkanCore->get_device(), pSet);
 
 			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _prefilterPipeline.get_layout(), 0, 1, &pSet, 0, nullptr);
 
-			PrefilterPushConstants push{ static_cast<float>(mip) / 4.0f, 64.0f };
+			PrefilterPushConstants push{ 
+				.roughness = static_cast<float>(mip) / 4.0f, 
+				.resolution = FACE_SIZE };
 			vkCmdPushConstants(cmd, _prefilterPipeline.get_layout(), VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(push), &push);
 
 			vkCmdDispatch(cmd, std::max(1u, mipDim / 16), std::max(1u, mipDim / 16), 6);
 		}
 		
-		RenderSync::transition_image(cmd, _prefilterCubemap.image, ResourceState::StorageImage, ResourceState::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT, 0, 5, 0, 6);
+		RenderSync::transition_image(cmd, _prefilterCubemap.get_image(), ResourceState::StorageImage, ResourceState::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT, 0, 5, 0, 6);
 		});
 	// cleanup temporary image views and descriptor pools
 	for (VkImageView view : prefilterMipViews) {
@@ -500,7 +513,7 @@ void IBLSystem::init_samplers()
 	VK_CHECK(vkCreateSampler(device, &hdrInfo, nullptr, &_hdrSampler));
 }
 
-void IBLSystem::init_pipelines()
+void IBLSystem::init_pipelines(ResourceManager* resourceManager)
 {
 	VkDevice device = _vulkanCore->get_device();
 
@@ -519,20 +532,16 @@ void IBLSystem::init_pipelines()
 		_lutComputeLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
 	}
 
-	auto eqShader = Shader::load(device, VK_SHADER_STAGE_COMPUTE_BIT, "../../shaders/equirect_to_cubemap.comp.spv");
+	auto eqShader = resourceManager->load<Shader>("equirect_to_cubemap_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/equirect_to_cubemap.comp.spv");
 	_equirectToCubemapPipeline = ComputePipeline(device, { .computeShader = eqShader, .descriptorLayouts = { _computeLayout } });
 
-	auto irrShader = Shader::load(device, VK_SHADER_STAGE_COMPUTE_BIT, "../../shaders/irradiance_cube.comp.spv");
+	auto irrShader = resourceManager->load<Shader>("irradiance_cube_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/irradiance_cube.comp.spv");
 	_irradiancePipeline = ComputePipeline(device, { .computeShader = irrShader, .descriptorLayouts = { _computeLayout } });
 
-	auto prefShader = Shader::load(device, VK_SHADER_STAGE_COMPUTE_BIT, "../../shaders/prefilter_cube.comp.spv");
-	_prefilterPipeline = ComputePipeline(device, {
-		.computeShader = prefShader,
-		.descriptorLayouts = { _computeLayout },
-		.pushConstants = {{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PrefilterPushConstants) }}
-		});
+	auto prefShader = resourceManager->load<Shader>("prefilter_cube_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/prefilter_cube.comp.spv");
+	_prefilterPipeline = ComputePipeline(device, { .computeShader = prefShader, .descriptorLayouts = { _computeLayout }, .pushConstants = {{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PrefilterPushConstants) }} });
 
-	auto brdfShader = Shader::load(device, VK_SHADER_STAGE_COMPUTE_BIT, "../../shaders/brdf_lut.comp.spv");
+	auto brdfShader = resourceManager->load<Shader>("brdf_lut_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/brdf_lut.comp.spv");
 	_brdfLutPipeline = ComputePipeline(device, { .computeShader = brdfShader, .descriptorLayouts = { _lutComputeLayout } });
 }
 
@@ -541,16 +550,17 @@ void IBLSystem::generate_brdf_lut()
 	constexpr uint32_t lutSize = 512;
 
 	// create the brdf lut image
-	ImageDescription desc{
-		.extent = {lutSize, lutSize, 1},
-		.format = VK_FORMAT_R16G16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.mipLevels = 1,
-		.arrayLayers = 1,
-		.viewType = VK_IMAGE_VIEW_TYPE_2D,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
+	TextureDescription desc{ 
+		.extent = {lutSize, lutSize, 1}, 
+		.format = VK_FORMAT_R16G16_SFLOAT, 
+		.usage = VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+		.mipLevels = 1, 
+		.arrayLayers = 1, 
+		.viewType = VK_IMAGE_VIEW_TYPE_2D, 
+		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT 
 	};
-	_brdfLut = _vulkanCore->create_image(desc);
+	_brdfLut = Texture("brdfLut", desc);
+	_brdfLut.load(_vulkanCore);
 
 	// allocate descriptor set for brdf lut compute shader
 	DescriptorAllocatorGrowable allocator;
@@ -560,18 +570,18 @@ void IBLSystem::generate_brdf_lut()
 
 	// write the brdf lut image 
 	DescriptorWriter writer;
-	writer.write_image(0, _brdfLut.imageView, VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
+	writer.write_image(0, _brdfLut.get_image_view(), VK_NULL_HANDLE, VK_IMAGE_LAYOUT_GENERAL, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE);
 	writer.update_set(_vulkanCore->get_device(), lutSet);
 
 	// dispatch the compute shader to generate the brdf lut
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _brdfLut.image, ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+		RenderSync::transition_image(cmd, _brdfLut.get_image(), ResourceState::Undefined, ResourceState::StorageImage, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _brdfLutPipeline.get_pipeline());
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _brdfLutPipeline.get_layout(), 0, 1, &lutSet, 0, nullptr);
 		vkCmdDispatch(cmd, lutSize / 16, lutSize / 16, 1);
 
-		RenderSync::transition_image(cmd, _brdfLut.image, ResourceState::StorageImage, ResourceState::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
+		RenderSync::transition_image(cmd, _brdfLut.get_image(), ResourceState::StorageImage, ResourceState::ShaderReadOnly, VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1);
 		});
 
 	// cleanup descriptor set allocator
@@ -580,20 +590,9 @@ void IBLSystem::generate_brdf_lut()
 
 void IBLSystem::destroy_current_environment()
 {
-	if (_envCubemap.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_envCubemap);
-		_envCubemap = {};
-	}
-
-	if (_irradianceCubemap.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_irradianceCubemap);
-		_irradianceCubemap = {};
-	}
-
-	if (_prefilterCubemap.image != VK_NULL_HANDLE) {
-		_vulkanCore->destroy_image(_prefilterCubemap);
-		_prefilterCubemap = {};
-	}
+	_envCubemap.unload(_vulkanCore);
+	_irradianceCubemap.unload(_vulkanCore);
+	_prefilterCubemap.unload(_vulkanCore);
 }
 
 void IBLSystem::generate_cubemap_mips(VkCommandBuffer cmd, VkImage image, uint32_t size, uint32_t mipLevels, ResourceState baseState)

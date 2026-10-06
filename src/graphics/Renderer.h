@@ -12,6 +12,7 @@
 #include <graphics/pass/SSAOPass.h>
 #include <graphics/pass/SSAOBlurPass.h>
 
+#include <resources/Buffer.h>
 #include <graphics/IBLSystem.h>
 #include <graphics/RenderResourceManager.h>
 #include <window/window.h>
@@ -39,6 +40,7 @@ struct IndirectBatch
 	uint32_t first; // first index in the indirect buffer
 	uint32_t count; // number of indirect commands in this batch
 	uint32_t batchIndex; // index of this batch in the batch array
+	bool isDoubleSided{ false };
 };
 
 struct DrawContext
@@ -74,14 +76,14 @@ struct FrameData
 	DescriptorAllocatorGrowable _frameDescriptors;
 
 
-	AllocatedBuffer sceneDataBuffer; // uniform buffer for scene data
+	Buffer sceneDataBuffer; // uniform buffer for scene data
 
 	// indirect draw buffers
-	AllocatedBuffer _cullStatsBuffer; // buffer for frustum cull statistics
-	AllocatedBuffer _gpuObjectBuffer; // buffer for object data used in frustum culling
-	AllocatedBuffer _gpuInstanceBuffer; // buffer for instance ids for visible objects
-	AllocatedBuffer _gpuIndirectBuffer; // buffer for indirect draw commands
-	AllocatedBuffer _gpuCountBuffer; // buffer for draw counts per batch
+	Buffer _cullStatsBuffer; // buffer for frustum cull statistics
+	Buffer _gpuObjectBuffer; // buffer for object data used in frustum culling
+	Buffer _gpuInstanceBuffer; // buffer for instance ids for visible objects
+	Buffer _gpuIndirectBuffer; // buffer for indirect draw commands
+	Buffer _gpuCountBuffer; // buffer for draw counts per batch
 };
 
 class Renderer
@@ -89,7 +91,7 @@ class Renderer
 public:
 	static constexpr unsigned int FRAME_OVERLAP = 2;
 
-	void init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher);
+	void init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher, ResourceManager* resourceManager);
 
 	void cleanup(entt::dispatcher& dispatcher);
 

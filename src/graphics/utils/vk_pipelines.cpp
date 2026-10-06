@@ -67,13 +67,18 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 	VkDynamicState state[] = { 
 		VK_DYNAMIC_STATE_VIEWPORT, 
 		VK_DYNAMIC_STATE_SCISSOR,
+		VK_DYNAMIC_STATE_CULL_MODE
 	};
 
 	VkPipelineDynamicStateCreateInfo dynamicInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-	dynamicInfo.pDynamicStates = &state[0];
-	dynamicInfo.dynamicStateCount = static_cast<uint32_t>(std::size(state));
-	
-	pipelineInfo.pDynamicState = &dynamicInfo;
+	if (!_dynamicStates.empty()) {
+		dynamicInfo.pDynamicStates = _dynamicStates.data();
+		dynamicInfo.dynamicStateCount = static_cast<uint32_t>(_dynamicStates.size());
+		pipelineInfo.pDynamicState = &dynamicInfo;
+	}
+	else {
+		pipelineInfo.pDynamicState = nullptr;
+	}
 
 	// create the pipeline
 	// easy to error out on create graphics pipeline, so we handle it better than common VK_CHECK
@@ -84,6 +89,11 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 	}
 
 	return newPipeline;
+}
+
+void PipelineBuilder::set_dynamic_states(std::span<const VkDynamicState> states)
+{
+	_dynamicStates.assign(states.begin(), states.end());
 }
 
 void PipelineBuilder::set_input_topology(VkPrimitiveTopology topology)
@@ -99,9 +109,13 @@ void PipelineBuilder::set_polygon_mode(VkPolygonMode mode, float lineWidth /* = 
 	_rasterizer.lineWidth = lineWidth;
 }
 
-void PipelineBuilder::set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace)
+void PipelineBuilder::set_cull_mode(VkCullModeFlags cullMode)
 {
 	_rasterizer.cullMode = cullMode;
+}
+
+void PipelineBuilder::set_front_face(VkFrontFace frontFace)
+{
 	_rasterizer.frontFace = frontFace;
 }
 

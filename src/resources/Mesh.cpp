@@ -13,28 +13,30 @@ bool Mesh::doLoad(VulkanCore* core) {
   _vertexCount = static_cast<uint32_t>(_cpuVertices.size());
   _indexCount = static_cast<uint32_t>(_cpuIndices.size());
 
-  AllocatedMesh buffers = core->upload_mesh(_cpuIndices, _cpuVertices);
+  const size_t vertexBufferSize = _cpuVertices.size() * sizeof(Vertex);
+  const size_t indexBufferSize = _cpuIndices.size() * sizeof(uint32_t);
+
+	VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
+  _vertexBuffer = Buffer(get_id() + "_VB", std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(_cpuVertices.data()), vertexBufferSize), vertexUsage, VMA_MEMORY_USAGE_GPU_ONLY);
+  _vertexBuffer.load(core);
+
+	VkBufferUsageFlags indexUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  _indexBuffer = Buffer(get_id() + "_IB", std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(_cpuIndices.data()), indexBufferSize), indexUsage, VMA_MEMORY_USAGE_GPU_ONLY);
+  _indexBuffer.load(core);
+
+  _vertexBufferAddress = _vertexBuffer.get_device_address(core);
 
   // free CPU memory as it's now on the GPU
   _cpuVertices.clear();
   _cpuIndices.clear();
 
-  _vertexBuffer = buffers.vertexBuffer;
-  _indexBuffer = buffers.indexBuffer;
-  _vertexBufferAddress = buffers.vertexBufferAddress;
-
   return true;
 }
 
 bool Mesh::doUnload(VulkanCore* core) {
-  if (_vertexBuffer.buffer != VK_NULL_HANDLE) {
-    core->destroy_buffer(_vertexBuffer);
-    _vertexBuffer = {};
-  }
-  if (_indexBuffer.buffer != VK_NULL_HANDLE) {
-    core->destroy_buffer(_indexBuffer);
-    _indexBuffer = {};
-  }
+  _vertexBuffer.unload(core);
+  _indexBuffer.unload(core);
   _vertexBufferAddress = 0;
+
   return true;
 }

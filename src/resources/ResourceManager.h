@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <utility>
 #include <typeinfo>
+#include <fmt/std.h>
 
 class VulkanCore;
 class ResourceManager;
@@ -82,6 +83,13 @@ private:
 // resource manager
 class ResourceManager
 {
+	// two level ref count for automatic resource lifecycle management
+	// maps resource type first, then resource id to their data
+	struct ResourceData
+	{
+		std::shared_ptr<Resource> resource; // the actual resource
+		int refCount; // reference count for this resource
+	};
 public:
 	ResourceManager() = default;
 	explicit ResourceManager(VulkanCore* vulkanCore)
@@ -213,13 +221,6 @@ private:
 	// organize by type first, then by unique id
 	std::unordered_map<std::type_index, std::unordered_map<std::string, std::shared_ptr<Resource>>> _resources;
 
-	// two level ref count for automatic resource lifecycle management
-	// maps resource type first, then resource id to their data
-	struct ResourceData
-	{
-		std::shared_ptr<Resource> resource; // the actual resource
-		int refCount; // reference count for this resource
-	};
 	std::unordered_map<std::type_index, std::unordered_map<std::string, ResourceData>> _refCounts;
 };
 

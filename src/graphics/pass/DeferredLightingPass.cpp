@@ -4,7 +4,7 @@
 #include <graphics/Renderer.h>
 #include <chrono>
 
-void DeferredLightingPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
+void DeferredLightingPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
   _vulkanCore = vulkanCore;
 
@@ -20,10 +20,11 @@ void DeferredLightingPass::init(VulkanCore* vulkanCore, VkDescriptorSetLayout ma
   builder.add_binding(8, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 8: brdf lut
   builder.add_binding(9, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 9: point shadow map
   builder.add_binding(10, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 10: ssao map
+  builder.add_binding(11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 11:: gEmissive
   _descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT);
 
-  auto vert = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT, "../../shaders/deferred_lighting.vert.spv");
-  auto frag = Shader::load(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT, "../../shaders/deferred_lighting.frag.spv");
+  auto vert = resourceManager->load<Shader>("deferred_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/deferred_lighting.vert.spv");
+  auto frag = resourceManager->load<Shader>("deferred_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/deferred_lighting.frag.spv");
 
   GraphicsPipelineDesc desc{
       .shaders = { vert, frag },
@@ -57,7 +58,7 @@ void DeferredLightingPass::render(RenderContext & ctx, FrameData & frameData, Re
   VkDescriptorSet lightingSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
   // update descriptor set 
   DescriptorWriter writer;
-  writer.write_buffer(0, frameData.sceneDataBuffer.buffer, sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+  writer.write_buffer(0, frameData.sceneDataBuffer.get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
   writer.write_image(1, resources.get_view("GBufferPosition"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.write_image(2, resources.get_view("GBufferNormal"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.write_image(3, resources.get_view("GBufferAlbedo"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
@@ -68,6 +69,7 @@ void DeferredLightingPass::render(RenderContext & ctx, FrameData & frameData, Re
   writer.write_image(8, env.brdfLutView, env.lutSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.write_image(9, resources.get_view("PointShadowMap"), env.cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.write_image(10, resources.get_view("SSAOBlur"), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  writer.write_image(11, resources.get_view("GBufferEmissive"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
   writer.update_set(_vulkanCore->get_device(), lightingSet);
 
   ctx.bind_pipeline(_pipeline);

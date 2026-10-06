@@ -42,7 +42,8 @@ public:
 	void end_rendering();
 
 	void set_viewport_scissor(const VkExtent2D extent);
-	void set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace = VK_FRONT_FACE_CLOCKWISE);
+	void set_cull_mode(VkCullModeFlags cullMode);
+	void set_front_face(VkFrontFace frontFace);
 
 	void bind_pipeline(const GraphicsPipeline& pipeline);
 	void bind_pipeline(const ComputePipeline& pipeline);
