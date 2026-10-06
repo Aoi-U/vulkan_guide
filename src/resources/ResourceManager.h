@@ -11,6 +11,9 @@
 #include <typeinfo>
 #include <fmt/std.h>
 
+// resource management classes heavily based off vulkan resource management tutorial: 
+// https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.html#_resource_management
+
 class VulkanCore;
 class ResourceManager;
 
@@ -110,11 +113,19 @@ public:
 	{
 		std::shared_ptr<Resource> resource; // the actual resource
 		int refCount; // reference count for this resource
+		bool isPersistent{ false }; // marks asset for persistent preloading
 	};
 
 	ResourceManager() = default;
 	explicit ResourceManager(VulkanCore* vulkanCore)
 		: _vulkanCore(vulkanCore) {}
+
+	template<typename T, typename... Args>
+	ResourceHandle<T> preload(const std::string& resourceId, Args&&... args) {
+		auto handle = load<T>(resourceId, std::forward<Args>(args)...);
+		set_persistent<T>(resourceId, true);
+		return handle;
+	}
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> load(const std::string& resourceId, Args&&... args)
@@ -143,6 +154,23 @@ public:
 		_refCounts[typeKey][resourceId] = ResourceData{ resource, 1 };
 
 		return ResourceHandle<T>(resourceId, this);
+	}
+
+	template<typename T>
+	void set_persistent(const std::string& resourceId, bool persistent) {
+		auto typeKey = std::type_index(typeid(T));
+		if (_refCounts.contains(typeKey) && _refCounts[typeKey].contains(resourceId)) {
+			_refCounts[typeKey][resourceId].isPersistent = persistent;
+		}
+	}
+
+	template<typename T>
+	bool is_persistent(const std::string& resourceId) const {
+		auto typeKey = std::type_index(typeid(T));
+		if (_refCounts.contains(typeKey) && _refCounts.at(typeKey).contains(resourceId)) {
+			return _refCounts.at(typeKey).at(resourceId).isPersistent;
+		}
+		return false;
 	}
 
 	template<typename T>
@@ -217,7 +245,7 @@ public:
 		it->second.refCount--;
 
 		// check if resource has no remaining references
-		if (it->second.refCount <= 0) {
+		if (it->second.refCount <= 0 && !it->second.isPersistent) {
 			auto resTypeIt = _resources.find(typeKey);
 
 			if (resTypeIt == _resources.end())
@@ -229,8 +257,34 @@ public:
 			if (resourceIt == typeResources.end())
 				return;
 
+			resourceIt->second->unload(_vulkanCore);
 			typeResources.erase(resourceIt);
 			typeIt->second.erase(it);
+		}
+	}
+
+	template<typename T>
+	void force_unload(const std::string& resourceId) {
+		auto typeKey = std::type_index(typeid(T));
+		if (_resources.contains(typeKey) && _resources[typeKey].contains(resourceId)) {
+			_resources[typeKey][resourceId]->unload(_vulkanCore);
+			_resources[typeKey].erase(resourceId);
+			_refCounts[typeKey].erase(resourceId);
+		}
+	}
+
+	void unload_unused() {
+		for (auto& [type, typeCounts] : _refCounts) {
+			for (auto it = typeCounts.begin(); it != typeCounts.end(); ) {
+				if (it->second.refCount <= 0 && !it->second.isPersistent) {
+					_resources[type][it->first]->unload(_vulkanCore);
+					_resources[type].erase(it->first);
+					it = typeCounts.erase(it);
+				}
+				else {
+					++it;
+				}
+			}
 		}
 	}
 

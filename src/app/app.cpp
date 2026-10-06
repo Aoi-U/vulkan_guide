@@ -9,6 +9,7 @@
 #include <core/cvars.h>
 #include <resources/Material.h>
 #include <resources/Model.h>
+#include <resources/AssetRegistry.h>
 
 App::App()
 {
@@ -41,7 +42,13 @@ void App::init()
 	dispatcher.sink<Events::LoadEnvironmentEvent>().connect<&App::on_load_environment>(this);
 	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
-	
+	AssetRegistry::get().scan_directory("../../assets");
+	auto helmet = _resourceManager->preload<Model>("DamagedHelmet", "../../assets/DamagedHelmet.glb", _resourceManager.get());
+
+	entt::entity e = _registry.create();
+	_registry.emplace<TagComponent>(e, "Helmet");
+	_registry.emplace<TransformComponent>(e);
+	_registry.emplace<MeshComponent>(e, helmet);
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;
@@ -52,13 +59,6 @@ void App::run()
 {
 	auto lastTime = std::chrono::steady_clock::now();
 	auto& dispatcher = _registry.ctx().get<entt::dispatcher>();
-
-	auto helmet = _resourceManager->load<Model>("DamagedHelmet", "../../assets/DamagedHelmet.glb", _resourceManager.get());
-
-	entt::entity e = _registry.create();
-	_registry.emplace<TagComponent>(e, "Helmet");
-	_registry.emplace<TransformComponent>(e);
-	_registry.emplace<MeshComponent>(e, helmet);
 
 	while (!_window->should_close()) {
 		auto currentTime = std::chrono::steady_clock::now();

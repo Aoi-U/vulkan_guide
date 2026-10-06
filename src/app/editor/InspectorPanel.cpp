@@ -1,6 +1,7 @@
 #include "app/editor/InspectorPanel.h"
 
 #include "app/editor/ComponentRegistry.h"
+#include <resources/AssetRegistry.h>
 #include <core/Components.h>
 #include <resources/Model.h>
 #include <graphics/utils/UIWidgets.h>
@@ -95,23 +96,36 @@ void InspectorPanel::register_engine_components()
 	// mesh component
   reg.register_component<MeshComponent>("Mesh", [](MeshComponent& mc, EditorContext& ctx) {
     ImGui::Checkbox("Visible", &mc.visible);
-    auto assets = ctx.resourceManager.get_loaded_resources<Model>();
 
-    std::string currentName = "None";
-    if (mc.model.is_valid()) currentName = mc.model.get_id();
+    // browse all indexed models 
+    auto assets = AssetRegistry::get().get_assets_by_type(AssetType::Model);
+    std::string currentName = mc.model.is_valid() ? mc.model.get_id() : "None";
 
     if (ImGui::BeginCombo("Scene Asset", currentName.c_str())) {
       if (ImGui::Selectable("None", !mc.model.is_valid())) {
         mc.model = ResourceHandle<Model>();
       }
-      for (const auto& name : assets) {
-        bool isSelected = (name == currentName);
-        if (ImGui::Selectable(name.c_str(), isSelected)) {
-          mc.model = ResourceHandle<Model>(name, &ctx.resourceManager);
+      for (const auto& asset : assets) {
+        bool isSelected = (asset.id == currentName);
+        if (ImGui::Selectable(asset.id.c_str(), isSelected)) {
+          // fetch from disk if it drops reference count and was previously purged
+          mc.model = ctx.resourceManager.load<Model>(asset.id, asset.path, &ctx.resourceManager);
         }
         if (isSelected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
+    }
+
+    // drag and drop 
+    if (ImGui::BeginDragDropTarget()) {
+      if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_ID")) {
+        std::string draggedId = (const char*)payload->Data;
+        auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
+        if (assetRec) {
+          mc.model = ctx.resourceManager.load<Model>(draggedId, assetRec->path, &ctx.resourceManager);
+        }
+      }
+      ImGui::EndDragDropTarget();
     }
     });
 

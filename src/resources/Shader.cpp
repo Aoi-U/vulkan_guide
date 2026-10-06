@@ -20,6 +20,13 @@ Shader::Shader(const std::string& id, VkShaderStageFlagBits stage, std::string_v
 	}
 }
 
+Shader::Shader(Shader&& other) noexcept
+	: Resource(std::move(other)), _filePath(std::move(other._filePath)),
+	_module(other._module), _stage(other._stage), _entryPoint(std::move(other._entryPoint)), _core(other._core)
+{
+	other._module = VK_NULL_HANDLE;
+}
+
 Shader& Shader::operator=(Shader&& other) noexcept {
 	if (this != &other) {
 		if (_module != VK_NULL_HANDLE && _core != nullptr) {

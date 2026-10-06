@@ -46,6 +46,16 @@ Buffer::~Buffer() {
 	}
 }
 
+void Buffer::destroy_immediate(VulkanCore* core)
+{
+	if (_buffer != VK_NULL_HANDLE) {
+		vmaDestroyBuffer(core->get_allocator(), _buffer, _allocation);
+		_buffer = VK_NULL_HANDLE;
+		_allocation = VK_NULL_HANDLE;
+		_mappedData = nullptr;
+	}
+}
+
 void* Buffer::map(VulkanCore * core)
 {
 	if (!_mappedData && _allocation) {
@@ -187,7 +197,7 @@ bool Buffer::doLoad(VulkanCore* core)
 				copyRegion.size = _initialData.size();
 				vkCmdCopyBuffer(cmd, staging.get_buffer(), _buffer, 1, &copyRegion);
 				});
-			//staging.unload(core);
+			staging.destroy_immediate(core);
 		}
 		_initialData.clear();
 	}

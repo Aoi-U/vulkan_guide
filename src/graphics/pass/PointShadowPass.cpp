@@ -72,7 +72,6 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 		shadowTransforms[5] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)); // -z
 	}
 
-	ctx.bind_pipeline(_pipeline);
 
 	VkDescriptorSet shadowDescriptor = VK_NULL_HANDLE;
 	if (drawCtx.indirectDrawCount > 0 && frameData._gpuIndirectBuffer.get_buffer() != VK_NULL_HANDLE) {
@@ -101,6 +100,8 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 
 		ctx.begin_rendering(desc);
 		ctx.set_viewport_scissor(extent);
+
+		ctx.bind_pipeline(_pipeline);
 
 		if (shadowLightCount >= 0 && shadowDescriptor != VK_NULL_HANDLE && !drawCtx.opaqueBatches.empty()) {
 			PointShadowPushConstants push{

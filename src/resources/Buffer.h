@@ -19,6 +19,8 @@ public:
   Buffer& operator=(Buffer&& other) noexcept;
   ~Buffer() override;
 
+  void destroy_immediate(VulkanCore* core);
+
   void* map(VulkanCore* core);
   void unmap(VulkanCore* core);
   void copy_data(const void* data, size_t size, size_t offset = 0);

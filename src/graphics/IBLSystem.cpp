@@ -106,7 +106,7 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
     });
 
 	// destroy staging buffer
-	//staging.unload(_vulkanCore);
+	staging.destroy_immediate(_vulkanCore);
 
 	// create environment cubemap
 	constexpr uint32_t ENV_CUBEMAP_SIZE = 2048;
@@ -164,7 +164,7 @@ bool IBLSystem::load_hdr(const std::filesystem::path& path)
 
 	// cleanup temporary image view and hdr image
 	vkDestroyImageView(_vulkanCore->get_device(), mip0ArrayView, nullptr);
-	//hdrImage.unload(_vulkanCore);
+	hdrImage.destroy_immediate(_vulkanCore);
 
 	// create irradiance cubemap
 	constexpr uint32_t IRR_SIZE = 64;
@@ -356,7 +356,7 @@ void IBLSystem::load_procedural_default()
 		});
 
 	// cleanup staging buffer
-	//staging.unload(_vulkanCore);
+	staging.destroy_immediate(_vulkanCore);
 
 	DescriptorAllocatorGrowable allocator;
 	std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> poolSizes = {

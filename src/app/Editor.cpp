@@ -8,6 +8,7 @@
 #include "app/editor/CVarPanel.h"
 #include "app/editor/GizmoPanel.h"
 #include "app/editor/RenderTargetViewPanel.h"
+#include "app/editor/ContentBrowserPanel.h"
 
 #include <core/Components.h>
 #include <resources/Model.h>
@@ -23,6 +24,7 @@ Editor::Editor()
 	add_panel<ViewportPanel>();
 	add_panel<HierarchyPanel>();
 	add_panel<InspectorPanel>();
+	add_panel<ContentBrowserPanel>();
 	add_panel<EnvironmentPanel>();
 	add_panel<PerformancePanel>();
 	add_panel<CVarPanel>();

@@ -56,9 +56,29 @@ Texture& Texture::operator=(Texture&& other) noexcept {
 
 Texture::~Texture() {
 	if (_core != nullptr) {
-		if (_sampler) _core->globalDeletionQueue.push(_sampler);
-		if (_imageView) _core->globalDeletionQueue.push(_imageView);
-		if (_image) _core->globalDeletionQueue.push(_image, _allocation);
+		if (_sampler != VK_NULL_HANDLE)
+			_core->globalDeletionQueue.push(_sampler);
+		if (_imageView != VK_NULL_HANDLE)
+			_core->globalDeletionQueue.push(_imageView);
+		if (_image != VK_NULL_HANDLE)
+			_core->globalDeletionQueue.push(_image, _allocation);
+	}
+}
+
+void Texture::destroy_immediate(VulkanCore* core)
+{
+	if (_image != VK_NULL_HANDLE) {
+		vmaDestroyImage(core->get_allocator(), _image, _allocation);
+		_image = VK_NULL_HANDLE;
+		_allocation = VK_NULL_HANDLE;
+	}
+	if (_imageView != VK_NULL_HANDLE) {
+		vkDestroyImageView(core->get_device(), _imageView, nullptr);
+		_imageView = VK_NULL_HANDLE;
+	}
+	if (_sampler != VK_NULL_HANDLE) {
+		vkDestroySampler(core->get_device(), _sampler, nullptr);
+		_sampler = VK_NULL_HANDLE;
 	}
 }
 
@@ -165,7 +185,7 @@ bool Texture::doLoad(VulkanCore* core)
 				vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			}
 			});
-		//staging.unload(core);
+		staging.destroy_immediate(core);
 
 		if (!isRaw) {
 			stbi_image_free(pixels);

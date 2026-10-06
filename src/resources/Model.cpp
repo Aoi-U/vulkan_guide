@@ -142,7 +142,7 @@ bool Model::doLoad(VulkanCore* core)
 					}
 				}, buffer.data);
 			}
-		}, image.data);
+			}, image.data);
 	}
 	_textures = textures;
 
@@ -180,17 +180,17 @@ bool Model::doLoad(VulkanCore* core)
 
 		// grab textures from gltf file
 		if (mat.pbrData.baseColorTexture.has_value()) { // base color texture
-			size_t imgIdx = gltf.textures[mat.pbrData.baseColorTexture->textureIndex].imageIndex.value(); 
+			size_t imgIdx = gltf.textures[mat.pbrData.baseColorTexture->textureIndex].imageIndex.value();
 			materials[i]->set_texture(Material::TextureSlot::BaseColor, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
 		if (mat.pbrData.metallicRoughnessTexture.has_value()) { // metallic roughness texture
-			size_t imgIdx = gltf.textures[mat.pbrData.metallicRoughnessTexture->textureIndex].imageIndex.value(); 
+			size_t imgIdx = gltf.textures[mat.pbrData.metallicRoughnessTexture->textureIndex].imageIndex.value();
 			materials[i]->set_texture(Material::TextureSlot::MetallicRoughness, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
 		if (mat.occlusionTexture.has_value()) { // occlusion texture
-			size_t imgIdx = gltf.textures[mat.occlusionTexture->textureIndex].imageIndex.value(); 
+			size_t imgIdx = gltf.textures[mat.occlusionTexture->textureIndex].imageIndex.value();
 			materials[i]->set_texture(Material::TextureSlot::Occlusion, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
@@ -217,30 +217,50 @@ bool Model::doLoad(VulkanCore* core)
 	std::vector<std::vector<ModelSubMesh>> meshSubmeshes(gltf.meshes.size());
 	for (size_t i = 0; i < gltf.meshes.size(); i++) {
 		fastgltf::Mesh& mesh = gltf.meshes[i];
-		
+
+		indices.clear();
+		vertices.clear();
+
 		for (size_t p = 0; p < mesh.primitives.size(); p++) {
 			fastgltf::Primitive& prim = mesh.primitives[p];
-			indices.clear();
-			vertices.clear();
+
+			ModelSubMesh sm;
+			sm.startIndex = (uint32_t)indices.size();
+
+			size_t initialVertex = vertices.size();
 
 			// load indices
 			if (prim.indicesAccessor.has_value()) {
 				fastgltf::Accessor& accessor = gltf.accessors[prim.indicesAccessor.value()];
-				indices.reserve(accessor.count);
-				fastgltf::iterateAccessor<uint32_t>(gltf, accessor, [&](uint32_t idx) {indices.push_back(idx); });
+				sm.count = (uint32_t)accessor.count;
+
+				indices.reserve(indices.size() + accessor.count);
+				fastgltf::iterateAccessor<uint32_t>(gltf, accessor, [&](uint32_t idx) {
+					indices.push_back(idx + initialVertex);
+					});
+			}
+			else {
+				// generate sequential indices if none exist
+				fastgltf::Accessor& posAccessor = gltf.accessors[prim.findAttribute("POSITION")->second];
+				sm.count = (uint32_t)posAccessor.count;
+				indices.reserve(indices.size() + sm.count);
+				for (uint32_t v = 0; v < sm.count; v++) {
+					indices.push_back(initialVertex + v);
+				}
 			}
 
 			// load vertices
 			auto posIt = prim.findAttribute("POSITION");
 			if (posIt != prim.attributes.end()) {
 				fastgltf::Accessor& accessor = gltf.accessors[posIt->second];
-				vertices.resize(accessor.count);
+				vertices.resize(initialVertex + accessor.count);
+
 				fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, accessor, [&](glm::vec3 v, size_t idx) {
-					vertices[idx].position = v;
-					vertices[idx].normal = glm::vec3(1, 0, 0);
-					vertices[idx].color = glm::vec4(1.0);
-					vertices[idx].uv_x = 0;
-					vertices[idx].uv_y = 0;
+					vertices[idx + initialVertex].position = v;
+					vertices[idx + initialVertex].normal = glm::vec3(1, 0, 0);
+					vertices[idx + initialVertex].color = glm::vec4(1.0);
+					vertices[idx + initialVertex].uv_x = 0;
+					vertices[idx + initialVertex].uv_y = 0;
 					});
 			}
 
@@ -248,7 +268,7 @@ bool Model::doLoad(VulkanCore* core)
 			auto normIt = prim.findAttribute("NORMAL");
 			if (normIt != prim.attributes.end()) {
 				fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, gltf.accessors[normIt->second], [&](glm::vec3 v, size_t idx) {
-					vertices[idx].normal = v;
+					vertices[idx + initialVertex].normal = v;
 					});
 			}
 
@@ -256,8 +276,8 @@ bool Model::doLoad(VulkanCore* core)
 			auto uvIt = prim.findAttribute("TEXCOORD_0");
 			if (uvIt != prim.attributes.end()) {
 				fastgltf::iterateAccessorWithIndex<glm::vec2>(gltf, gltf.accessors[uvIt->second], [&](glm::vec2 v, size_t idx) {
-					vertices[idx].uv_x = v.x;
-					vertices[idx].uv_y = v.y;
+					vertices[idx + initialVertex].uv_x = v.x;
+					vertices[idx + initialVertex].uv_y = v.y;
 					});
 			}
 
@@ -267,28 +287,30 @@ bool Model::doLoad(VulkanCore* core)
 				fastgltf::Accessor& accessor = gltf.accessors[colorIt->second];
 				if (accessor.type == fastgltf::AccessorType::Vec3) {
 					fastgltf::iterateAccessorWithIndex<glm::vec3>(gltf, accessor, [&](glm::vec3 c, size_t idx) {
-						vertices[idx].color = glm::vec4(c, 1.0f);
+						vertices[idx + initialVertex].color = glm::vec4(c, 1.0f);
 						});
 				}
 				else if (accessor.type == fastgltf::AccessorType::Vec4) {
 					fastgltf::iterateAccessorWithIndex<glm::vec4>(gltf, accessor, [&](glm::vec4 c, size_t idx) {
-						vertices[idx].color = c;
+						vertices[idx + initialVertex].color = c;
 						});
 				}
 			}
 
 			// load tangents
 			auto tangentIt = prim.findAttribute("TANGENT");
+			std::vector<uint32_t> tempIndices = std::vector<uint32_t>(indices.begin() + sm.startIndex, indices.end());
+
 			if (tangentIt != prim.attributes.end()) {
 				fastgltf::iterateAccessorWithIndex<glm::vec4>(gltf, gltf.accessors[tangentIt->second], [&](glm::vec4 v, size_t idx) {
-					vertices[idx].tangent = v;
+					vertices[idx + initialVertex].tangent = v;
 					});
 			}
-			else if (uvIt != prim.attributes.end() && !indices.empty()) { // no tangents provided, calculate them from positions and uvs
-				for (size_t j = 0; j < indices.size(); j += 3) {
-					Vertex& v0 = vertices[indices[j + 0]];
-					Vertex& v1 = vertices[indices[j + 1]];
-					Vertex& v2 = vertices[indices[j + 2]];
+			else if (uvIt != prim.attributes.end() && !tempIndices.empty()) { // no tangents provided, calculate them from positions and uvs
+				for (size_t j = 0; j + 2 < tempIndices.size(); j += 3) {
+					Vertex& v0 = vertices[tempIndices[j + 0]];
+					Vertex& v1 = vertices[tempIndices[j + 1]];
+					Vertex& v2 = vertices[tempIndices[j + 2]];
 
 					glm::vec3 edge1 = v1.position - v0.position;
 					glm::vec3 edge2 = v2.position - v0.position;
@@ -308,32 +330,29 @@ bool Model::doLoad(VulkanCore* core)
 					v1.tangent += glm::vec4(tangent, 0.0f);
 					v2.tangent += glm::vec4(tangent, 0.0f);
 				}
-				for (Vertex& v : vertices) {
+				for (int k = initialVertex; k < vertices.size(); k++) {
+					Vertex& v = vertices[k];
 					glm::vec3 t = glm::vec3(v.tangent);
 					glm::vec3 n = v.normal;
 					float NdotT = glm::dot(n, t);
-					glm::vec3 ortho = glm::normalize(t - n * NdotT);
+
+					glm::vec3 orthoDir = t - n * NdotT;
+					glm::vec3 ortho = glm::length(orthoDir) > 1e-6f ? glm::normalize(orthoDir) : glm::vec3(1.0f, 0.0f, 0.0f);
 					v.tangent = glm::vec4(ortho, 1.0f);
 				}
 			}
 
 			// calculate bounds
-			glm::vec3 minPos(std::numeric_limits<int>::max()), maxPos(std::numeric_limits<int>::min());
-			for (const Vertex& v : vertices) {
-				minPos = glm::min(minPos, v.position);
-				maxPos = glm::max(maxPos, v.position);
+			glm::vec3 minPos = vertices[initialVertex].position;
+			glm::vec3 maxPos = vertices[initialVertex].position;
+			for (int i = initialVertex; i < vertices.size(); i++) {
+				minPos = glm::min(minPos, vertices[i].position);
+				maxPos = glm::max(maxPos, vertices[i].position);
 			}
 
-			ModelSubMesh sm;
-			sm.startIndex = 0;
-			sm.count = static_cast<uint32_t>(indices.empty() ? vertices.size() : indices.size());
 			sm.bounds.origin = (maxPos + minPos) / 2.0f;
 			sm.bounds.extents = (maxPos - minPos) / 2.0f;
 			sm.bounds.sphereRadius = glm::length(sm.bounds.extents);
-
-			// create a mesh resource for the submesh
-			std::string meshName = get_id() + "_mesh_" + std::to_string(i) + "_prim_" + std::to_string(p);
-			sm.mesh = _resourceManager->load<Mesh>(meshName, std::move(indices), std::move(vertices));
 
 			// assign material to the submesh, defaulting to a fallback material if none is specified
 			if (prim.materialIndex.has_value()) {
@@ -343,8 +362,15 @@ bool Model::doLoad(VulkanCore* core)
 				sm.material = defaultMat;
 			}
 
-			// store submesh
 			meshSubmeshes[i].push_back(sm);
+		}
+
+		std::string meshName = get_id() + "_mesh_" + std::to_string(i);
+		auto batchedMesh = _resourceManager->load<Mesh>(meshName, indices, vertices);
+
+		// assign the shared batched mesh to all primitives
+		for (auto& sm : meshSubmeshes[i]) {
+			sm.mesh = batchedMesh;
 		}
 	}
 
@@ -365,10 +391,10 @@ bool Model::doLoad(VulkanCore* core)
 				modelNode->localTransform = glm::translate(glm::mat4(1.0f), tl) * glm::toMat4(rot) * glm::scale(glm::mat4(1.0f), sc);
 				}
 			}, node.transform);
-		
-		if (node.meshIndex.has_value()) 
+
+		if (node.meshIndex.has_value())
 			modelNode->submeshes = meshSubmeshes[node.meshIndex.value()];
-		
+
 		allNodes.push_back(modelNode);
 	}
 

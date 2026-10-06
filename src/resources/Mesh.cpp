@@ -4,7 +4,7 @@
 #include <fmt/core.h>
 
 Mesh::Mesh(const std::string& id, std::vector<uint32_t> indices, std::vector<Vertex> vertices)
-	: Resource(id), _cpuIndices(std::move(indices)), _cpuVertices(std::move(vertices)) 
+	: Resource(id), _cpuIndices(indices), _cpuVertices(vertices) 
 {}
 
 bool Mesh::doLoad(VulkanCore* core) {

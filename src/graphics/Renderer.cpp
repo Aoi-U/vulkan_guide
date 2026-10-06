@@ -421,13 +421,19 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	currentBatch.batchIndex = 0;
 	currentBatch.materialSet = ctx.opaqueObjects[0].materialSet;
 	currentBatch.indexBuffer = ctx.opaqueObjects[0].indexBuffer;
-	bool currentDoubleSided = ctx.opaqueObjects[0].isDoubleSided;
+	currentBatch.isDoubleSided = ctx.opaqueObjects[0].isDoubleSided; 
 
 	// compact same objects into multidraw batches
 	for (uint32_t i = 0; i < static_cast<uint32_t>(ctx.opaqueObjects.size()); i++) {
 		const RenderObject& obj = ctx.opaqueObjects[i];
 
-		bool isSameBatch = (obj.materialSet == currentBatch.materialSet) && (obj.indexBuffer == currentBatch.indexBuffer);
+		const RenderObject& firstObj = ctx.opaqueObjects[currentBatch.first];
+
+		bool isSameBatch = (obj.materialSet == firstObj.materialSet) &&
+			(obj.indexBuffer == firstObj.indexBuffer) &&
+			(obj.firstIndex == firstObj.firstIndex) &&
+			(obj.indexCount == firstObj.indexCount) &&
+			(obj.isDoubleSided == firstObj.isDoubleSided);
 
 		if (!isSameBatch) {
 			ctx.opaqueBatches.push_back(currentBatch);
@@ -436,7 +442,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			currentBatch.batchIndex = static_cast<uint32_t>(ctx.opaqueBatches.size());
 			currentBatch.materialSet = obj.materialSet;
 			currentBatch.indexBuffer = obj.indexBuffer;
-			currentDoubleSided = obj.isDoubleSided;
+			currentBatch.isDoubleSided = obj.isDoubleSided;
 		}
 		currentBatch.count++;
 	}

@@ -1,11 +1,13 @@
 #pragma once
 
-#include <resources/ResourceManager.h>
 #include <core/vk_types.h>
 #include <filesystem>
+#include <resources/ResourceManager.h>
 #include <string>
-#include <vulkan/vulkan.h>
 #include <vk_mem_alloc.h>
+#include <vulkan/vulkan.h>
+
+class VulkanCore;
 
 class Texture : public Resource
 {
@@ -24,6 +26,8 @@ public:
 	Texture(Texture&& other) noexcept;
 	Texture& operator=(Texture&& other) noexcept;
 	~Texture() override;
+
+	void destroy_immediate(VulkanCore* core);
 
 	VkImage get_image() const { return _image; }
 	VkImageView get_image_view() const { return _imageView; }
