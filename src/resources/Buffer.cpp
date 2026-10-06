@@ -12,6 +12,40 @@ Buffer::Buffer(const std::string & id, std::span<const uint8_t> initialData, VkB
 	: Resource(id), _size(initialData.size()), _usage(usage), _memoryUsage(memoryUsage), _allocFlags(0), _initialData(initialData.begin(), initialData.end())
 {}
 
+Buffer::Buffer(Buffer&& other) noexcept
+	: Resource(std::move(other)), _size(other._size), _usage(other._usage),
+	_memoryUsage(other._memoryUsage), _allocFlags(other._allocFlags),
+	_initialData(std::move(other._initialData)), _buffer(other._buffer),
+	_allocation(other._allocation), _allocInfo(other._allocInfo),
+	_mappedData(other._mappedData), _core(other._core)
+{
+	other._buffer = VK_NULL_HANDLE;
+	other._allocation = VK_NULL_HANDLE;
+	other._mappedData = nullptr;
+}
+
+Buffer& Buffer::operator=(Buffer&& other) noexcept {
+	if (this != &other) {
+		if (_buffer != VK_NULL_HANDLE && _core != nullptr) {
+			_core->globalDeletionQueue.push(_buffer, _allocation);
+		}
+		Resource::operator=(std::move(other));
+		_size = other._size; _usage = other._usage; _memoryUsage = other._memoryUsage;
+		_allocFlags = other._allocFlags; _initialData = std::move(other._initialData);
+		_buffer = other._buffer; _allocation = other._allocation;
+		_allocInfo = other._allocInfo; _mappedData = other._mappedData; _core = other._core;
+
+		other._buffer = VK_NULL_HANDLE; other._allocation = VK_NULL_HANDLE; other._mappedData = nullptr;
+	}
+	return *this;
+}
+
+Buffer::~Buffer() {
+	if (_buffer != VK_NULL_HANDLE && _core != nullptr) {
+		_core->globalDeletionQueue.push(_buffer, _allocation);
+	}
+}
+
 void* Buffer::map(VulkanCore * core)
 {
 	if (!_mappedData && _allocation) {
@@ -86,7 +120,9 @@ bool Buffer::resize(VulkanCore * core, size_t newSize, bool preserveData)
 		}
 	}
 
-	vmaDestroyBuffer(core->get_allocator(), _buffer, _allocation);
+	if (_buffer != VK_NULL_HANDLE) {
+		core->globalDeletionQueue.push(_buffer, _allocation);
+	}
 	_size = targetSize;
 	_buffer = newBuffer;
 	_allocation = newAllocation;
@@ -111,6 +147,8 @@ VkDeviceAddress Buffer::get_device_address(VulkanCore* core) const
 
 bool Buffer::doLoad(VulkanCore* core)
 {
+	_core = core;
+
 	if (_size == 0) return false; 
 
 	VkBufferCreateInfo bufferInfo{};
@@ -149,7 +187,7 @@ bool Buffer::doLoad(VulkanCore* core)
 				copyRegion.size = _initialData.size();
 				vkCmdCopyBuffer(cmd, staging.get_buffer(), _buffer, 1, &copyRegion);
 				});
-			staging.unload(core);
+			//staging.unload(core);
 		}
 		_initialData.clear();
 	}
@@ -160,7 +198,7 @@ bool Buffer::doLoad(VulkanCore* core)
 bool Buffer::doUnload(VulkanCore* core)
 {
 	if (_buffer != VK_NULL_HANDLE) {
-		vmaDestroyBuffer(core->get_allocator(), _buffer, _allocation);
+		core->globalDeletionQueue.push(_buffer, _allocation);
 		_buffer = VK_NULL_HANDLE;
 		_allocation = VK_NULL_HANDLE;
 		_mappedData = nullptr;

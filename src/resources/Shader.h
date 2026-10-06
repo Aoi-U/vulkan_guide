@@ -11,7 +11,9 @@ class Shader : public Resource
 {
 public:
 	Shader(const std::string& id, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath);
-	~Shader() override = default;
+	Shader(Shader&& other) noexcept;
+	Shader& operator=(Shader&& other) noexcept;
+	~Shader() override;
 
 	// getters
 	VkShaderModule get_module() const { return _module; }
@@ -23,6 +25,8 @@ protected:
 	bool doUnload(VulkanCore* core) override;
 
 private:
+	VulkanCore* _core{ nullptr };
+
 	std::filesystem::path _filePath{};
 	VkShaderModule _module{ VK_NULL_HANDLE };
 	VkShaderStageFlagBits _stage{};

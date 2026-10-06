@@ -93,6 +93,7 @@ bool Model::doLoad(VulkanCore* core)
 	}
 
 	// load textures
+	std::vector<ResourceHandle<Texture>> textures(gltf.images.size());
 	for (size_t i = 0; i < gltf.images.size(); i++) {
 		fastgltf::Image& image = gltf.images[i];
 		std::string texName = get_id() + "_tex_" + std::to_string(i);
@@ -123,10 +124,10 @@ bool Model::doLoad(VulkanCore* core)
 			[](auto& arg) {},
 			[&](fastgltf::sources::URI& filePath) { // case: textures stored outside the gltf/glb file
 				std::filesystem::path p = _filePath.parent_path() / std::string(filePath.uri.path().begin(), filePath.uri.path().end());
-				_resourceManager->load<Texture>(texName, p, format, desc.usage);
+				textures[i] = _resourceManager->load<Texture>(texName, p, format, desc.usage);
 			},
 			[&](fastgltf::sources::Vector& vector) { // case: textures stored inside the gltf/glb file
-				_resourceManager->load<Texture>(texName, std::span<const uint8_t>(vector.bytes.data(), vector.bytes.size()), format);
+				textures[i] = _resourceManager->load<Texture>(texName, std::span<const uint8_t>(vector.bytes.data(), vector.bytes.size()), format);
 			},
 			[&](fastgltf::sources::BufferView& view) { // case: textures stored inside the gltf/glb file as a buffer view
 				auto& bufferView = gltf.bufferViews[view.bufferViewIndex];
@@ -134,24 +135,25 @@ bool Model::doLoad(VulkanCore* core)
 				std::visit(fastgltf::visitor{
 					[](auto& arg) {},
 					[&](fastgltf::sources::Vector& vector) {
-						_resourceManager->load<Texture>(texName, std::span<const uint8_t>(vector.bytes.data() + bufferView.byteOffset, bufferView.byteLength), format);
+						textures[i] = _resourceManager->load<Texture>(texName, std::span<const uint8_t>(vector.bytes.data() + bufferView.byteOffset, bufferView.byteLength), format);
 					},
 					[&](fastgltf::sources::ByteView& byteView) {
-						_resourceManager->load<Texture>(texName, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(byteView.bytes.data()) + bufferView.byteOffset, bufferView.byteLength), format);
+						textures[i] = _resourceManager->load<Texture>(texName, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(byteView.bytes.data()) + bufferView.byteOffset, bufferView.byteLength), format);
 					}
 				}, buffer.data);
 			}
 		}, image.data);
 	}
+	_textures = textures;
 
 	// load materials
-
+	std::vector<ResourceHandle<Material>> materials(gltf.materials.size());
 	for (size_t i = 0; i < gltf.materials.size(); i++) {
 		fastgltf::Material& mat = gltf.materials[i];
 		std::string matName = get_id() + "_mat_" + std::to_string(i);
 
 		MaterialPassType passType = mat.alphaMode == fastgltf::AlphaMode::Blend ? MaterialPassType::Transparent : MaterialPassType::Opaque;
-		auto matHandle = _resourceManager->load<Material>(matName, _resourceManager, passType); // get default material handle 
+		materials[i] = _resourceManager->load<Material>(matName, _resourceManager, passType); // get default material handle 
 
 		MaterialConstants constants;
 		constants.colorFactors.x = mat.pbrData.baseColorFactor[0];
@@ -174,36 +176,37 @@ bool Model::doLoad(VulkanCore* core)
 		constants.emissiveFactor.z = mat.emissiveFactor[2];
 		constants.emissiveFactor.w = 1.0f;
 
-		matHandle->set_constants(constants);
+		materials[i]->set_constants(constants);
 
 		// grab textures from gltf file
 		if (mat.pbrData.baseColorTexture.has_value()) { // base color texture
 			size_t imgIdx = gltf.textures[mat.pbrData.baseColorTexture->textureIndex].imageIndex.value(); 
-			matHandle->set_texture(Material::TextureSlot::BaseColor, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager)); 
+			materials[i]->set_texture(Material::TextureSlot::BaseColor, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
 		if (mat.pbrData.metallicRoughnessTexture.has_value()) { // metallic roughness texture
 			size_t imgIdx = gltf.textures[mat.pbrData.metallicRoughnessTexture->textureIndex].imageIndex.value(); 
-			matHandle->set_texture(Material::TextureSlot::MetallicRoughness, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
+			materials[i]->set_texture(Material::TextureSlot::MetallicRoughness, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
 		if (mat.occlusionTexture.has_value()) { // occlusion texture
 			size_t imgIdx = gltf.textures[mat.occlusionTexture->textureIndex].imageIndex.value(); 
-			matHandle->set_texture(Material::TextureSlot::Occlusion, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
+			materials[i]->set_texture(Material::TextureSlot::Occlusion, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
 		if (mat.normalTexture.has_value()) { // normal texture
 			size_t imgIdx = gltf.textures[mat.normalTexture->textureIndex].imageIndex.value();
-			matHandle->set_texture(Material::TextureSlot::Normal, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
+			materials[i]->set_texture(Material::TextureSlot::Normal, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
 		if (mat.emissiveTexture.has_value()) { // emissive texture
 			size_t imgIdx = gltf.textures[mat.emissiveTexture->textureIndex].imageIndex.value();
-			matHandle->set_texture(Material::TextureSlot::Emissive, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
+			materials[i]->set_texture(Material::TextureSlot::Emissive, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
-		matHandle->update_buffer(core);
+		materials[i]->update_buffer(core);
 	}
+	_materials = materials;
 
 	// load default material if no materials were found
 	auto defaultMat = _resourceManager->load<Material>(get_id() + "_defaultMat", _resourceManager, MaterialPassType::Opaque);
@@ -334,7 +337,7 @@ bool Model::doLoad(VulkanCore* core)
 
 			// assign material to the submesh, defaulting to a fallback material if none is specified
 			if (prim.materialIndex.has_value()) {
-				sm.material = ResourceHandle<Material>(get_id() + "_mat_" + std::to_string(prim.materialIndex.value()), _resourceManager);
+				sm.material = _materials[prim.materialIndex.value()];
 			}
 			else {
 				sm.material = defaultMat;
@@ -392,6 +395,8 @@ bool Model::doUnload(VulkanCore* core)
 {
 	rootNodes.clear();
 	allNodes.clear();
+	_materials.clear();
+	_textures.clear();
 
 	return true;
 }

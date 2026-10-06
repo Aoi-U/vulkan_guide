@@ -30,7 +30,7 @@ void RenderResourceManager::register_target(const RenderTargetDescription& desc,
 	target.description = desc;
 	_lastWindowExtent = currentWindowExtent;
 	allocate_target_resources(target, currentWindowExtent);
-	_targets[desc.name] = target;
+	_targets.insert_or_assign(desc.name, std::move(target));
 }
 
 void RenderResourceManager::on_window_resize(VkExtent2D newWindowExtent)

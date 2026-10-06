@@ -20,28 +20,71 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
 
-// NOTE: inefficient at scale. better implementation would be to store arrays of vulkan handles of various types (VkImage, VkBuffer, etc)
-// and delete them from a loop
 struct DeletionQueue
 {
-	std::deque<std::function<void()>> deletors;
+public:
+	void push(VkBuffer buffer, VmaAllocation allocation) { buffers.emplace_back(buffer, allocation); }
+	void push(VkImage image, VmaAllocation allocation) { images.emplace_back(image, allocation); }
+	void push(VkImageView imageView) { imageViews.push_back(imageView); }
+	void push(VkSampler sampler) { samplers.push_back(sampler); }
+	void push(VkShaderModule shaderModule) { shaderModules.push_back(shaderModule); }
+	void push(VkPipeline pipeline) { pipelines.push_back(pipeline); }
+	void push(VkPipelineLayout layout) { pipelineLayouts.push_back(layout); }
+	void push(VkDescriptorSetLayout layout) { descriptorSetLayouts.push_back(layout); }
 
-	// adds a function to the deletion queue
-	void push_function(std::function<void()>&& function)
+	void flush(VkDevice device, VmaAllocator allocator)
 	{
-		deletors.push_back(function);
-	}
-
-	// flushes the deletion queue
-	void flush()
-	{
-		// reverse iterate the deletion queue to execute all functions
-		for (auto it = deletors.rbegin(); it != deletors.rend(); it++) {
-			(*it)(); // call the function
+		// Destroy handles in reverse dependency order
+		for (auto it = imageViews.rbegin(); it != imageViews.rend(); ++it) {
+			vkDestroyImageView(device, *it, nullptr);
 		}
+		imageViews.clear();
 
-		deletors.clear();
+		for (auto it = samplers.rbegin(); it != samplers.rend(); ++it) {
+			vkDestroySampler(device, *it, nullptr);
+		}
+		samplers.clear();
+
+		for (auto it = images.rbegin(); it != images.rend(); ++it) {
+			vmaDestroyImage(allocator, it->first, it->second);
+		}
+		images.clear();
+
+		for (auto it = buffers.rbegin(); it != buffers.rend(); ++it) {
+			vmaDestroyBuffer(allocator, it->first, it->second);
+		}
+		buffers.clear();
+
+		for (auto it = shaderModules.rbegin(); it != shaderModules.rend(); ++it) {
+			vkDestroyShaderModule(device, *it, nullptr);
+		}
+		shaderModules.clear();
+
+		for (auto it = pipelines.rbegin(); it != pipelines.rend(); ++it) {
+			vkDestroyPipeline(device, *it, nullptr);
+		}
+		pipelines.clear();
+
+		for (auto it = pipelineLayouts.rbegin(); it != pipelineLayouts.rend(); ++it) {
+			vkDestroyPipelineLayout(device, *it, nullptr);
+		}
+		pipelineLayouts.clear();
+
+		for (auto it = descriptorSetLayouts.rbegin(); it != descriptorSetLayouts.rend(); ++it) {
+			vkDestroyDescriptorSetLayout(device, *it, nullptr);
+		}
+		descriptorSetLayouts.clear();
 	}
+
+private:
+	std::vector<std::pair<VkBuffer, VmaAllocation>> buffers;
+	std::vector<std::pair<VkImage, VmaAllocation>> images;
+	std::vector<VkImageView> imageViews;
+	std::vector<VkSampler> samplers;
+	std::vector<VkShaderModule> shaderModules;
+	std::vector<VkPipeline> pipelines;
+	std::vector<VkPipelineLayout> pipelineLayouts;
+	std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
 };
 
 struct EnvironmentResources

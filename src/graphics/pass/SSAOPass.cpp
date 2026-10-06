@@ -163,7 +163,7 @@ void SSAOPass::generate_kernal_and_noise()
 		});
 
 	// destroy staging buffer
-	staging.unload(_vulkanCore);
+	//staging.unload(_vulkanCore);
 
 	// repeat sampler for tiling across screen
 	VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };

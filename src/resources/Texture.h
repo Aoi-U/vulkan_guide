@@ -21,7 +21,9 @@ public:
 	// construct texture from description and optional data
 	explicit Texture(const std::string& id, const TextureDescription& desc, std::span<const uint8_t> data = {});
 
-	~Texture() override = default;
+	Texture(Texture&& other) noexcept;
+	Texture& operator=(Texture&& other) noexcept;
+	~Texture() override;
 
 	VkImage get_image() const { return _image; }
 	VkImageView get_image_view() const { return _imageView; }
@@ -35,6 +37,8 @@ protected:
 	bool doUnload(VulkanCore* core) override;
 
 private:
+	VulkanCore* _core{ nullptr };
+
 	enum class SourceType { File, Encoded, Description };
 	SourceType _sourceType{ SourceType::File };
 

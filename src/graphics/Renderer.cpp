@@ -66,7 +66,6 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
-	//_meshRenderer->cleanup();
 	_frustumCullPass->cleanup();
 	_pointShadowPass->cleanup();
 	_shadowPass->cleanup();
@@ -87,7 +86,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 		_frames[i]._gpuCountBuffer.unload(_vulkanCore);
 
 
-		_frames[i]._deletionQueue.flush();
+		_frames[i]._deletionQueue.flush(_vulkanCore->get_device(), _vulkanCore->get_allocator());
 		_frames[i]._frameDescriptors.destroy_pools(_vulkanCore->get_device());
 
 		vkDestroyCommandPool(_vulkanCore->get_device(), _frames[i]._commandPool, nullptr);
@@ -255,7 +254,7 @@ VkCommandBuffer Renderer::begin_frame()
 	// timeout of 1 second
 	FrameData& currentFrame = get_current_frame();
 	VK_CHECK(vkWaitForFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence, true, 1000000000));
-	currentFrame._deletionQueue.flush();
+	currentFrame._deletionQueue.flush(_vulkanCore->get_device(), _vulkanCore->get_allocator());
 	currentFrame._frameDescriptors.clear_pools(_vulkanCore->get_device());
 
 	// request image from swapchain

@@ -98,6 +98,8 @@ void VulkanCore::cleanup()
 	vkDestroyFence(_device, _immFence, nullptr);
 	vkDestroyCommandPool(_device, _immCommandPool, nullptr);
 
+	globalDeletionQueue.flush(_device, _allocator);
+
 	// destroy memory allocator
 	vmaDestroyAllocator(_allocator);
 

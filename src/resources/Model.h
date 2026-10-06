@@ -40,4 +40,7 @@ private:
 	std::filesystem::path _filePath;
 	ResourceManager* _resourceManager;
 
+	std::vector<ResourceHandle<Texture>> _textures;
+	std::vector<ResourceHandle<Material>> _materials;
+
 };

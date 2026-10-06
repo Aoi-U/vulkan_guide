@@ -21,8 +21,51 @@ Texture::Texture(const std::string& id, std::span<const uint8_t> data, VkFormat 
 Texture::Texture(const std::string& id, const TextureDescription& desc, std::span<const uint8_t> data)
 	: Resource(id), _sourceType(SourceType::Description), _bufferData(data.begin(), data.end()), _desc(desc), _format(desc.format), _usage(desc.usage), _mipmapped(desc.mipLevels > 1), _extent(desc.extent), _mipLevels(desc.mipLevels) {}
 
+Texture::Texture(Texture&& other) noexcept
+	: Resource(std::move(other)), _sourceType(other._sourceType), _filePath(std::move(other._filePath)),
+	_bufferData(std::move(other._bufferData)), _desc(other._desc), _format(other._format),
+	_usage(other._usage), _mipmapped(other._mipmapped), _image(other._image),
+	_allocation(other._allocation), _imageView(other._imageView), _sampler(other._sampler),
+	_extent(other._extent), _mipLevels(other._mipLevels), _core(other._core)
+{
+	other._image = VK_NULL_HANDLE;
+	other._allocation = VK_NULL_HANDLE;
+	other._imageView = VK_NULL_HANDLE;
+	other._sampler = VK_NULL_HANDLE;
+}
+
+Texture& Texture::operator=(Texture&& other) noexcept {
+	if (this != &other) {
+		if (_core != nullptr) {
+			if (_sampler) _core->globalDeletionQueue.push(_sampler);
+			if (_imageView) _core->globalDeletionQueue.push(_imageView);
+			if (_image) _core->globalDeletionQueue.push(_image, _allocation);
+		}
+		Resource::operator=(std::move(other));
+		_sourceType = other._sourceType; _filePath = std::move(other._filePath);
+		_bufferData = std::move(other._bufferData); _desc = other._desc; _format = other._format;
+		_usage = other._usage; _mipmapped = other._mipmapped; _image = other._image;
+		_allocation = other._allocation; _imageView = other._imageView; _sampler = other._sampler;
+		_extent = other._extent; _mipLevels = other._mipLevels; _core = other._core;
+
+		other._image = VK_NULL_HANDLE; other._allocation = VK_NULL_HANDLE;
+		other._imageView = VK_NULL_HANDLE; other._sampler = VK_NULL_HANDLE;
+	}
+	return *this;
+}
+
+Texture::~Texture() {
+	if (_core != nullptr) {
+		if (_sampler) _core->globalDeletionQueue.push(_sampler);
+		if (_imageView) _core->globalDeletionQueue.push(_imageView);
+		if (_image) _core->globalDeletionQueue.push(_image, _allocation);
+	}
+}
+
 bool Texture::doLoad(VulkanCore* core)
 {
+	_core = core;
+
 	int width = 0, height = 0, channels = 0;
 	stbi_uc* pixels = nullptr;
 	bool isRaw = false;
@@ -122,7 +165,7 @@ bool Texture::doLoad(VulkanCore* core)
 				vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			}
 			});
-		staging.unload(core);
+		//staging.unload(core);
 
 		if (!isRaw) {
 			stbi_image_free(pixels);
@@ -183,18 +226,19 @@ bool Texture::doLoad(VulkanCore* core)
 
 bool Texture::doUnload(VulkanCore* core)
 {
-	if (_sampler != VK_NULL_HANDLE) {
-		vkDestroySampler(core->get_device(), _sampler, nullptr);
-		_sampler = VK_NULL_HANDLE;
+	if (_sampler != VK_NULL_HANDLE) { 
+		core->globalDeletionQueue.push(_sampler); 
+		_sampler = VK_NULL_HANDLE; 
 	}
-	if (_imageView != VK_NULL_HANDLE) {
-		vkDestroyImageView(core->get_device(), _imageView, nullptr);
+	if (_imageView != VK_NULL_HANDLE) { 
+		core->globalDeletionQueue.push(_imageView); 
 		_imageView = VK_NULL_HANDLE;
 	}
-	if (_image != VK_NULL_HANDLE) {
-		vmaDestroyImage(core->get_allocator(), _image, _allocation);
+	if (_image != VK_NULL_HANDLE) { 
+		core->globalDeletionQueue.push(_image, _allocation); 
 		_image = VK_NULL_HANDLE;
-		_allocation = VK_NULL_HANDLE;
+		_allocation = VK_NULL_HANDLE; 
 	}
+
 	return true;
 }

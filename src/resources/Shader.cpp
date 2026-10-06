@@ -20,6 +20,25 @@ Shader::Shader(const std::string& id, VkShaderStageFlagBits stage, std::string_v
 	}
 }
 
+Shader& Shader::operator=(Shader&& other) noexcept {
+	if (this != &other) {
+		if (_module != VK_NULL_HANDLE && _core != nullptr) {
+			_core->globalDeletionQueue.push(_module);
+		}
+		Resource::operator=(std::move(other));
+		_filePath = std::move(other._filePath); _module = other._module;
+		_stage = other._stage; _entryPoint = std::move(other._entryPoint); _core = other._core;
+		other._module = VK_NULL_HANDLE;
+	}
+	return *this;
+}
+
+Shader::~Shader() {
+	if (_module != VK_NULL_HANDLE && _core != nullptr) {
+		_core->globalDeletionQueue.push(_module);
+	}
+}
+
 VkPipelineShaderStageCreateInfo Shader::get_stage_info() const
 {
 	VkPipelineShaderStageCreateInfo info = {};
@@ -33,6 +52,8 @@ VkPipelineShaderStageCreateInfo Shader::get_stage_info() const
 
 bool Shader::doLoad(VulkanCore* core)
 {
+	_core = core;
+
 	// open the file, with cursor at end
 	std::ifstream file(_filePath, std::ios::ate | std::ios::binary);
 
@@ -78,7 +99,7 @@ bool Shader::doLoad(VulkanCore* core)
 bool Shader::doUnload(VulkanCore* core)
 {
 	if (_module != VK_NULL_HANDLE) {
-		vkDestroyShaderModule(core->get_device(), _module, nullptr);
+		core->globalDeletionQueue.push(_module);
 		_module = VK_NULL_HANDLE;
 	}
 	return true;

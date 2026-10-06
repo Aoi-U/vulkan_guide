@@ -23,6 +23,8 @@ public:
 
 	VmaAllocator& get_allocator() { return _allocator; }
 
+	DeletionQueue globalDeletionQueue;
+
 	// default samplers and images
 	Texture _whiteImage;
 	Texture _blackImage;

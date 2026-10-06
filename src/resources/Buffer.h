@@ -14,7 +14,10 @@ public:
     : Resource(""), _size(0), _usage(0), _memoryUsage(VMA_MEMORY_USAGE_UNKNOWN), _allocFlags(0) {}
   Buffer(const std::string& id, size_t size, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage, VmaAllocationCreateFlags allocFlags = 0); // constructor for empty buffer
 	Buffer(const std::string& id, std::span<const uint8_t> initialData, VkBufferUsageFlags usage, VmaMemoryUsage memoryUsage); // constructor for buffer with initial data
-  ~Buffer() override = default;
+
+  Buffer(Buffer&& other) noexcept;
+  Buffer& operator=(Buffer&& other) noexcept;
+  ~Buffer() override;
 
   void* map(VulkanCore* core);
   void unmap(VulkanCore* core);
@@ -35,6 +38,8 @@ protected:
 	bool doUnload(VulkanCore* core) override;
 
 private:
+  VulkanCore* _core{ nullptr };
+
   size_t _size;
   VkBufferUsageFlags _usage;
   VmaMemoryUsage _memoryUsage;
