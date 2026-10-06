@@ -174,12 +174,6 @@ void VulkanCore::destroy_buffer(const AllocatedBuffer& buffer)
 AllocatedImage VulkanCore::create_image(const ImageDescription& desc)
 {
 	AllocatedImage newImage;
-	newImage.imageFormat = desc.format;
-	newImage.imageExtent = desc.extent;
-	newImage.aspectMask = desc.aspectMask;
-	newImage.mipLevels = desc.mipLevels;
-	newImage.arrayLayers = desc.arrayLayers;
-	newImage.viewType = desc.viewType;
 
 	// create the image
 	VkImageCreateInfo imgInfo{
@@ -246,7 +240,7 @@ AllocatedImage VulkanCore::create_image(void* data, VkExtent3D size, VkFormat fo
 		vkCmdCopyBufferToImage(cmd, uploadBuffer.buffer, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
 		if (mipmapped) {
-			vkutil::generate_mipmaps(cmd, newImage.image, VkExtent2D{ newImage.imageExtent.width, newImage.imageExtent.height });
+			vkutil::generate_mipmaps(cmd, newImage.image, VkExtent2D{ size.width, size.height });
 		}
 		else {
 			vkutil::transition_image(cmd, newImage.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -265,12 +259,18 @@ void VulkanCore::destroy_image(const AllocatedImage& image)
 	vmaDestroyImage(_allocator, image.image, image.allocation);
 }
 
-GPUMeshBuffers VulkanCore::upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices)
+void VulkanCore::destroy_image(VkImage image, VkImageView imageView, VmaAllocation allocation)
+{
+	vkDestroyImageView(_device, imageView, nullptr);
+	vmaDestroyImage(_allocator, image, allocation);
+}
+
+AllocatedMesh VulkanCore::upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices)
 {
 	const size_t vertexBufferSize = vertices.size() * sizeof(Vertex);
 	const size_t indexBufferSize = indices.size() * sizeof(uint32_t);
 
-	GPUMeshBuffers newMesh;
+	AllocatedMesh newMesh;
 
 	// create vertex buffer
 	newMesh.vertexBuffer = create_buffer(vertexBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VMA_MEMORY_USAGE_GPU_ONLY);

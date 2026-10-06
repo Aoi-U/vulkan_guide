@@ -1,7 +1,6 @@
 #pragma once
 
 #include <graphics/pass/RenderPass.h>
-#include <graphics/MaterialSystem.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/RenderResourceManager.h>
 

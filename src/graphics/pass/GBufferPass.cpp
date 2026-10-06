@@ -62,15 +62,16 @@ void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResou
 	ctx.bind_pipeline(_pipeline);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, globalDescriptor);
 
-	MaterialInstance* lastMaterial = nullptr;
+	VkDescriptorSet lastMaterialSet = VK_NULL_HANDLE;
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
+
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
-		if (!batch.material) continue;
+		if (!batch.materialSet) continue;
 
 		// bind material descriptor set if needed
-		if (batch.material != lastMaterial) {
-			lastMaterial = batch.material;
-			ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 1, lastMaterial->materialSet);
+		if (batch.materialSet != lastMaterialSet) {
+			lastMaterialSet = batch.materialSet;
+			ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 1, lastMaterialSet);
 		}
 
 		// bind index buffer if needed

@@ -1,7 +1,7 @@
 #pragma once
 
 #include <core/vk_types.h>
-#include <graphics/Shader.h>
+#include <resources/Shader.h>
 #include <vector>
 #include <memory>
 #include <span>

@@ -2,8 +2,9 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
-#include <resources/vk_loader.h>
 #include <string>
+
+class Model;
 
 struct TagComponent
 {
@@ -29,7 +30,7 @@ struct TransformComponent
 
 struct MeshComponent
 {
-	std::shared_ptr<LoadedGLTF> mesh;
+	ResourceHandle<Model> model;
 	bool visible{ true };
 };
 

@@ -1,15 +1,13 @@
-#include "App.h"
+#include "app.h"
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
 #include <chrono>
 #include <thread>
-
 #include <utils/vk_initializers.h>
-#include <imgui.h>
-#include <imgui_impl_sdl2.h>
 #include <imgui_impl_vulkan.h>
 #include <glm/gtx/transform.hpp>
 #include <core/cvars.h>
+#include <resources/Material.h>
 
 App::App()
 {
@@ -30,11 +28,12 @@ void App::init()
 
 	_materialSystem->init(_vulkanCore.get());
 
-	_renderer->init(_window.get(), _vulkanCore.get(), _materialSystem.get(), dispatcher);
+	_renderer->init(_window.get(), _vulkanCore.get(), dispatcher);
 	
-	_assetManager.init(_vulkanCore.get(), _materialSystem.get());
-	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
+	_resourceManager = std::make_unique<ResourceManager>(_vulkanCore.get());
+	Material::init_descriptor_layout(_vulkanCore.get());
 
+	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
 	_renderer->set_gui_renderer(_guiRenderer.get());
 
 	_registry.ctx().emplace<entt::dispatcher>();
@@ -45,7 +44,12 @@ void App::init()
 	dispatcher.sink<Events::LoadEnvironmentEvent>().connect<&App::on_load_environment>(this);
 	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
-	_assetManager.loadScene("DamagedHelmet", "../../assets/DamagedHelmet.glb");
+	auto helmet = _resourceManager->load<Model>("DamagedHelmet", "../../assets/DamagedHelmet.glb", _resourceManager.get());
+
+	entt::entity e = _registry.create();
+	_registry.emplace<TagComponent>(e, "Helmet");
+	_registry.emplace<TransformComponent>(e);
+	_registry.emplace<MeshComponent>(e, helmet);
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;
@@ -81,7 +85,7 @@ void App::run()
 		stats.renderStats = _renderer->get_stats();
 
 		_guiRenderer->new_frame();
-		_editor->draw_gui(_registry, _assetManager, stats, _sceneData, *_renderer);
+		_editor->draw_gui(_registry, *_resourceManager, stats, _sceneData, *_renderer);
 
 		_renderer->render_frame(_registry, _sceneData);
 	}
@@ -96,7 +100,8 @@ void App::cleanup()
 
 	_guiRenderer->cleanup();
 	_registry.clear();
-	_assetManager.cleanup();
+	_resourceManager->unload_all();
+	Material::cleanup_descriptor_layout(_vulkanCore.get());
 	_renderer->cleanup(dispatcher);
 	_materialSystem->cleanup();
 	_vulkanCore->cleanup();

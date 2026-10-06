@@ -54,20 +54,7 @@ struct EnvironmentResources
 	VkSampler lutSampler{ VK_NULL_HANDLE }; // brdf lut sampler
 };
 
-// an image that has been allocated on the GPU
-struct AllocatedImage
-{
-	VkImage image;
-	VkImageView imageView;
-	VmaAllocation allocation;
-	VkExtent3D imageExtent;
-	VkFormat imageFormat;
 
-	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
-	uint32_t mipLevels{ 1 };
-	uint32_t arrayLayers{ 1 };
-	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
-};
 
 // a buffer that has been allocated on the GPU
 struct AllocatedBuffer
@@ -121,33 +108,11 @@ struct Vertex
 	glm::vec4 color;
 };
 
-// used to identify shading models for different passes
-enum class MaterialType : uint8_t
-{
-	MetallicRoughness,
-	Unlit
-};
-
 // used to identify pass groups for pipeline selection
 enum class MaterialPassType : uint8_t
 {
 	Opaque,
 	Transparent
-};
-
-struct MaterialInstance
-{
-	MaterialType type{ MaterialType::MetallicRoughness };
-	MaterialPassType passType{ MaterialPassType::Opaque };
-	VkDescriptorSet materialSet;
-};
-
-// resources needed for a mesh
-struct GPUMeshBuffers
-{
-	AllocatedBuffer indexBuffer;
-	AllocatedBuffer vertexBuffer;
-	VkDeviceAddress vertexBufferAddress; 
 };
 
 // bounding volume of a mesh used for frustum culling
@@ -165,7 +130,8 @@ struct RenderObject
 	uint32_t firstIndex;
 	VkBuffer indexBuffer;
 
-	MaterialInstance* material;
+	VkDescriptorSet materialSet;
+	MaterialPassType passType;
 	Bounds bounds;
 	glm::mat4 transform;
 	VkDeviceAddress vertexBufferAddress;

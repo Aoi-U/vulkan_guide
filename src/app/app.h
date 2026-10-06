@@ -3,8 +3,7 @@
 //#include <graphics/vk_engine.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/Renderer.h>
-#include <resources/AssetManager.h>
-#include <graphics/MaterialSystem.h>
+#include <resources/ResourceManager.h>
 #include <app/camera.h>
 #include <memory>
 #include <entt.hpp>
@@ -31,14 +30,13 @@ private:
 
 	std::unique_ptr<Window> _window;
 	std::unique_ptr<VulkanCore> _vulkanCore;
-	std::unique_ptr<MaterialSystem> _materialSystem;
+	std::unique_ptr<ResourceManager> _resourceManager;
 	std::unique_ptr<Renderer> _renderer;
 	std::unique_ptr<Editor> _editor;
 	std::unique_ptr<GuiRenderer> _guiRenderer;
 
 	entt::registry _registry;
 
-	AssetManager _assetManager;
 	Camera _camera;
 	GPUSceneData _sceneData;
 

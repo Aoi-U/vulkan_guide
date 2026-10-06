@@ -3,7 +3,7 @@
 #include <utils/vk_utils.h>
 #include <cmath>
 #include <algorithm>
-#include <resources/vk_loader.h>
+#include <resources/Model.h>
 #include <core/Components.h>
 #include "graphics/GuiRenderer.h"
 #include "graphics/RenderGraph.h"
@@ -15,14 +15,14 @@ AutoCVar_Float cvSSAORadius("r.ssao.radius", "SSAO sample hemisphere radius", 0.
 AutoCVar_Float cvSSAOBias("r.ssao.bias", "SSAO depth comparison bias", 0.025f, 0.001, 0.1, CVarFlags::EditFloatSlider);
 AutoCVar_Float cvSSAOPower("r.ssao.power", "SSAO occlusion power/intensity", 1.5f, 0.1, 5.0, CVarFlags::EditFloatSlider);
 
-void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem, entt::dispatcher& dispatcher)
+void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher)
 {
 	_window = window;
 	_vulkanCore = vulkanCore;
 
 	_viewportExtent = _window->get_extent();
 
-	_resourceManager.init(_vulkanCore);
+	_renderResourceManager.init(_vulkanCore);
 	_iblSystem.init(_vulkanCore);
 
 	recreate_swapchain();
@@ -35,28 +35,29 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, MaterialSystem* mate
 	_frustumCullPass = std::make_unique<FrustumCullPass>();
 	_frustumCullPass->init(_vulkanCore);
 
+	VkDescriptorSetLayout matLayout = Material::get_descriptor_layout();
+
 	// create render passes
 	_shadowPass = std::make_unique<ShadowPass>();
-	_shadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+	_shadowPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
 
 	_pointShadowPass = std::make_unique<PointShadowPass>();
-	_pointShadowPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), VK_FORMAT_D32_SFLOAT);
+	_pointShadowPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_D32_SFLOAT);
 
 	_skyboxPass = std::make_unique<SkyboxPass>();
-	_skyboxPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+	_skyboxPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
 
 	_gbufferPass = std::make_unique<GBufferPass>();
-	_gbufferPass->init(_vulkanCore, materialSystem->get_material_layout(),
-		_resourceManager.get_format("SceneColor"), _resourceManager.get_format("SceneDepth"));
+	_gbufferPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
 
 	_deferredLightingPass = std::make_unique<DeferredLightingPass>();
-	_deferredLightingPass->init(_vulkanCore, materialSystem->get_material_layout(), _resourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
+	_deferredLightingPass->init(_vulkanCore, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
 
 	_ssaoPass = std::make_unique<SSAOPass>();
-	_ssaoPass->init(_vulkanCore, nullptr, _resourceManager.get_format("SSAOColor"), VK_FORMAT_UNDEFINED);
+	_ssaoPass->init(_vulkanCore, nullptr, _renderResourceManager.get_format("SSAOColor"), VK_FORMAT_UNDEFINED);
 
 	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
-	_ssaoBlurPass->init(_vulkanCore, nullptr, _resourceManager.get_format("SSAOBlur"), VK_FORMAT_UNDEFINED);
+	_ssaoBlurPass->init(_vulkanCore, nullptr, _renderResourceManager.get_format("SSAOBlur"), VK_FORMAT_UNDEFINED);
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -74,10 +75,8 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_deferredLightingPass->cleanup();
 	_ssaoPass->cleanup();
 	_ssaoBlurPass->cleanup();
-
 	_iblSystem.cleanup();
-
-	_resourceManager.cleanup();
+	_renderResourceManager.cleanup();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		_vulkanCore->destroy_buffer(_frames[i]._cullStatsBuffer);
@@ -132,11 +131,11 @@ void Renderer::set_viewport_extent(VkExtent2D extent)
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
 	_drawExtent.height = std::max(1u, static_cast<uint32_t>(_viewportExtent.height * _currentRenderScale));
 
-	_resourceManager.on_window_resize(_drawExtent);
+	_renderResourceManager.on_window_resize(_drawExtent);
 
 	// update the descriptor 
 	if (_guiRenderer) {
-		VkImageView newView = _resourceManager.get_view("SceneColor");
+		VkImageView newView = _renderResourceManager.get_view("SceneColor");
 		_guiRenderer->get_image_descriptor(newView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	}
 }
@@ -155,7 +154,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		_vulkanCore->check_and_resize_buffer(currentFrame.sceneDataBuffer, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		*static_cast<GPUSceneData*>(currentFrame.sceneDataBuffer.info.pMappedData) = sceneData;
 
-		RenderGraph graph(_resourceManager);
+		RenderGraph graph(_renderResourceManager);
 
 		graph.add_pass("FrustumCull")
 			.set_execute_callback([&](RenderContext& ctx) {
@@ -165,13 +164,13 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		graph.add_pass("ShadowPass")
 			.set_depth_attachment("ShadowMap", VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
-			_shadowPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_shadowPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 		});
 
 		graph.add_pass("PointShadowPass")
 			.write("PointShadowMap", ResourceState::DepthAttachment)
 			.set_execute_callback([&](RenderContext& ctx) {
-			_pointShadowPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_pointShadowPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 				});
 
 		// gbuffer geometry pass
@@ -182,7 +181,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.set_color_attachment("GBufferMetalRough", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f })
 			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
-			_gbufferPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_gbufferPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 				});
 
 		// SSAO generation pass
@@ -191,7 +190,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.read("GBufferNormal", ResourceState::ShaderReadOnly)
 			.set_color_attachment("SSAOColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
 			.set_execute_callback([&](RenderContext& ctx) {
-			_ssaoPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_ssaoPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 				});
 
 		// SSAO blue pass
@@ -199,7 +198,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.read("SSAOColor", ResourceState::ShaderReadOnly)
 			.set_color_attachment("SSAOBlur", VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
 			.set_execute_callback([&](RenderContext& ctx) {
-			_ssaoBlurPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_ssaoBlurPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 				});
 
 		// deferred lighting pass
@@ -213,7 +212,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.read("SSAOBlur", ResourceState::ShaderReadOnly)
 			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
 			.set_execute_callback([&](RenderContext& ctx) {
-			_deferredLightingPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_deferredLightingPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 				});
 
 		// skybox pass
@@ -222,7 +221,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_LOAD)
 			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_LOAD)
 			.set_execute_callback([&](RenderContext& ctx) {
-			_skyboxPass->render(ctx, currentFrame, _resourceManager, drawCtx, sceneData);
+			_skyboxPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
 				});
 
 		graph.compile();
@@ -232,7 +231,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		//_resourceManager.transition(cmd, "SceneColor", ResourceState::ShaderReadOnly);
 
 		// transition al render targets to shaderreadonly for viewing in imgui
-		_resourceManager.transition_all_to_read_only(cmd);
+		_renderResourceManager.transition_all_to_read_only(cmd);
 
 		// transition swapchain image to color attachment for imgui rendering
 		VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
@@ -279,7 +278,7 @@ VkCommandBuffer Renderer::begin_frame()
 	// now that we are sure the commands finished executing, we can safely reset the command buffer to begin recording again
 	VK_CHECK(vkResetCommandBuffer(cmd, 0));
 
-	VkExtent2D sceneColorExtent = _resourceManager.get_extent("SceneColor");
+	VkExtent2D sceneColorExtent = _renderResourceManager.get_extent("SceneColor");
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
 
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(sceneColorExtent.width * scale));
@@ -358,11 +357,11 @@ void Renderer::end_frame()
 void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 {
 	VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	AllocatedImage& sceneColor = _resourceManager.get_image("SceneColor");
+	AllocatedImage& sceneColor = _renderResourceManager.get_image("SceneColor");
 
 	// transition the draw image and the swapchain image into their correct transfer layouts
 	// so we can blit from the draw image to the swapchain image
-	_resourceManager.transition(cmd, "SceneColor", ResourceState::TransferSrc);
+	_renderResourceManager.transition(cmd, "SceneColor", ResourceState::TransferSrc);
 
 	// transition swapchain image to transferdst to copy into it
 	RenderSync::transition_image(cmd, swapchainImage, ResourceState::Undefined, ResourceState::TransferDst);
@@ -380,7 +379,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 	auto view = registry.view<const MeshComponent>();
 	for (auto [entity, mesh] : view.each()) {
-		if (!mesh.visible || !mesh.mesh) {
+		if (!mesh.visible || !mesh.model) {
 			continue;
 		}
 
@@ -390,7 +389,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			worldMatrix = tc->get_transform();
 		}
 
-		for (const auto& topNode : mesh.mesh->topNodes) {
+		for (const auto& topNode : mesh.model->rootNodes) {
 			collect_draw_nodes(topNode, worldMatrix, ctx);
 		}
 	}
@@ -401,15 +400,15 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 	// sort opaque objects 
 	std::sort(ctx.opaqueObjects.begin(), ctx.opaqueObjects.end(), [](const RenderObject& a, const RenderObject& b) {
-		if (a.material->materialSet != b.material->materialSet) {
-			return a.material->materialSet < b.material->materialSet;
-		}
-		if (a.indexBuffer != b.indexBuffer) {
+		if (a.materialSet != b.materialSet) 
+			return a.materialSet < b.materialSet;
+		
+		if (a.indexBuffer != b.indexBuffer) 
 			return a.indexBuffer < b.indexBuffer;
-		}
-		if (a.firstIndex != b.firstIndex) {
+		
+		if (a.firstIndex != b.firstIndex) 
 			return a.firstIndex < b.firstIndex;
-		}
+		
 		return a.indexCount < b.indexCount;;
 		});
 
@@ -417,21 +416,21 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	currentBatch.first = 0;
 	currentBatch.count = 0;
 	currentBatch.batchIndex = 0;
-	currentBatch.material = ctx.opaqueObjects[0].material;
+	currentBatch.materialSet = ctx.opaqueObjects[0].materialSet;
 	currentBatch.indexBuffer = ctx.opaqueObjects[0].indexBuffer;
 
 	// compact same objects into multidraw batches
 	for (uint32_t i = 0; i < static_cast<uint32_t>(ctx.opaqueObjects.size()); i++) {
 		const RenderObject& obj = ctx.opaqueObjects[i];
 
-		bool isSameBatch = (obj.material == currentBatch.material) && (obj.indexBuffer == currentBatch.indexBuffer);
+		bool isSameBatch = (obj.materialSet == currentBatch.materialSet) && (obj.indexBuffer == currentBatch.indexBuffer);
 
 		if (!isSameBatch) {
 			ctx.opaqueBatches.push_back(currentBatch);
 			currentBatch.first = i;
 			currentBatch.count = 0;
 			currentBatch.batchIndex = static_cast<uint32_t>(ctx.opaqueBatches.size());
-			currentBatch.material = obj.material;
+			currentBatch.materialSet = obj.materialSet;
 			currentBatch.indexBuffer = obj.indexBuffer;
 		}
 		currentBatch.count++;
@@ -443,22 +442,24 @@ void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::
 {
 	glm::mat4 nodeMatrix = parentMatrix * node->localTransform;
 
-	auto meshNode = std::dynamic_pointer_cast<MeshNode>(node);
+	auto modelNode = std::dynamic_pointer_cast<ModelNode>(node);
 
-	if (meshNode && meshNode->mesh) {
-		// collect all surfaces of the mesh
-		// mesh can have multiple surfaces, each with its own material
-		for (auto& surface : meshNode->mesh->surfaces) {
+	if (modelNode) {
+		for (auto& sm : modelNode->submeshes) {
+			if (!sm.mesh || !sm.material) 
+				continue;
+
 			RenderObject def;
-			def.indexCount = surface.count;
-			def.firstIndex = surface.startIndex;
-			def.indexBuffer = meshNode->mesh->meshBuffers.indexBuffer.buffer;
-			def.material = &surface.material->data;
-			def.bounds = surface.bounds;
+			def.indexCount = sm.count;
+			def.firstIndex = sm.startIndex;
+			def.indexBuffer = sm.mesh->get_index_buffer();
+			def.materialSet = sm.material->get_descriptor_set();
+			def.passType = sm.material->get_pass_type();
+			def.bounds = sm.bounds;
 			def.transform = nodeMatrix;
-			def.vertexBufferAddress = meshNode->mesh->meshBuffers.vertexBufferAddress;
+			def.vertexBufferAddress = sm.mesh->get_vertex_buffer_address();
 
-			if (surface.material->data.passType == MaterialPassType::Transparent) {
+			if (def.passType == MaterialPassType::Transparent) {
 				ctx.transparentObjects.push_back(def);
 			}
 			else {
@@ -494,36 +495,36 @@ void Renderer::recreate_swapchain()
 	_swapchain.destroy_swapchain();
 	_swapchain.init(_vulkanCore->get_physical_device(), _vulkanCore->get_device(), _vulkanCore->get_surface(), actualExtent.width, actualExtent.height);
 
-	if (!_resourceManager.has_target("SceneColor")) {
+	if (!_renderResourceManager.has_target("SceneColor")) {
 		create_render_targets();
 	}
 	else {
-		_resourceManager.on_window_resize(_pendingResizeExtent);
+		_renderResourceManager.on_window_resize(_pendingResizeExtent);
 	}
 
 	if (_guiRenderer) {
-		VkImageView newView = _resourceManager.get_view("SceneColor");
+		VkImageView newView = _renderResourceManager.get_view("SceneColor");
 		_guiRenderer->get_image_descriptor(newView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	}
 }
 
 VkDescriptorSet Renderer::get_target_descriptor(const std::string& name, uint32_t faceIndex)
 {
-	if (!_guiRenderer || !_resourceManager.has_target(name)) {
+	if (!_guiRenderer || !_renderResourceManager.has_target(name)) {
 		return VK_NULL_HANDLE;
 	}
 
-	const auto& desc = _resourceManager.get_description(name);
+	const auto& desc = _renderResourceManager.get_description(name);
 	VkImageView imageView = VK_NULL_HANDLE;
 
 	bool isCube = (desc.flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) || (desc.arrayLayers == 6 && desc.viewType == VK_IMAGE_VIEW_TYPE_CUBE);
 	if (isCube) {
 		if (faceIndex < 6) {
-			imageView = _resourceManager.get_face_view(name, faceIndex);
+			imageView = _renderResourceManager.get_face_view(name, faceIndex);
 		}
 	}
 	else {
-		imageView = _resourceManager.get_view(name);
+		imageView = _renderResourceManager.get_view(name);
 	}
 
 	if (imageView == VK_NULL_HANDLE) {
@@ -608,7 +609,7 @@ void Renderer::create_render_targets()
 	}
 
 	// create primary scene color 
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 		.name = "SceneColor",
 		.sizePolicy = TargetSizePolicy::WindowRelative,
 		.relativeScale = 1.0f,
@@ -618,7 +619,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 	
 	// create primary scene depth
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 		.name = "SceneDepth",
 		.sizePolicy = TargetSizePolicy::WindowRelative,
 		.relativeScale = 1.0f,
@@ -628,7 +629,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create shadow map target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 		.name = "ShadowMap",
 		.sizePolicy = TargetSizePolicy::Absolute,
 		.absoluteExtent = { 2048, 2048 },
@@ -638,7 +639,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create point shadow target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 		.name = "PointShadowMap",
 		.sizePolicy = TargetSizePolicy::Absolute,
 		.absoluteExtent = { 1024, 1024 },
@@ -652,7 +653,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create skybox target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 		.name = "SkyCubemap",
 		.sizePolicy = TargetSizePolicy::Absolute,
 		.absoluteExtent = { 256, 256 },
@@ -666,7 +667,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create gbuffer position target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 		.name = "GBufferPosition",
 		.sizePolicy = TargetSizePolicy::WindowRelative,
 		.relativeScale = 1.0f,
@@ -676,7 +677,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create gbuffer normal target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 			.name = "GBufferNormal",
 			.sizePolicy = TargetSizePolicy::WindowRelative,
 			.relativeScale = 1.0f,
@@ -686,7 +687,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create gbuffer albedo target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 			.name = "GBufferAlbedo",
 			.sizePolicy = TargetSizePolicy::WindowRelative,
 			.relativeScale = 1.0f,
@@ -696,7 +697,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create gbuffer metallic/roughness target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 			.name = "GBufferMetalRough",
 			.sizePolicy = TargetSizePolicy::WindowRelative,
 			.relativeScale = 1.0f,
@@ -706,7 +707,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create ssao color target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 				.name = "SSAOColor",
 				.sizePolicy = TargetSizePolicy::WindowRelative,
 				.relativeScale = 1.0f,
@@ -716,7 +717,7 @@ void Renderer::create_render_targets()
 		}, targetExtent);
 
 	// create ssao blur target
-	_resourceManager.register_target({
+	_renderResourceManager.register_target({
 			.name = "SSAOBlur",
 			.sizePolicy = TargetSizePolicy::WindowRelative,
 			.relativeScale = 1.0f,
@@ -732,5 +733,5 @@ void Renderer::update_render_extent()
 	_currentRenderScale = scale;
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
 	_drawExtent.height = std::max(1u, static_cast<uint32_t>(_viewportExtent.height * _currentRenderScale));
-	_resourceManager.on_window_resize(_drawExtent);
+	_renderResourceManager.on_window_resize(_drawExtent);
 }

@@ -92,33 +92,27 @@ void InspectorPanel::register_engine_components()
 		});
 
 	// mesh component
-	reg.register_component<MeshComponent>("Mesh", [](MeshComponent& mc, EditorContext& ctx) {
-		ImGui::Checkbox("Visible", &mc.visible);
-		auto& assets = ctx.assetManager.getAssets();
-		std::string currentName = "None";
-		for (const auto& [name, asset] : assets) {
-			if (asset == mc.mesh) {
-				currentName = name;
-				break;
-			}
-		}
+  reg.register_component<MeshComponent>("Mesh", [](MeshComponent& mc, EditorContext& ctx) {
+    ImGui::Checkbox("Visible", &mc.visible);
+    auto assets = ctx.resourceManager.get_loaded_resources<Model>();
 
-		if (ImGui::BeginCombo("Scene Asset", currentName.c_str())) {
-			if (ImGui::Selectable("None", mc.mesh == nullptr)) {
-				mc.mesh = nullptr;
-			}
-			for (const auto& [name, asset] : assets) {
-				bool isSelected = (asset == mc.mesh);
-				if (ImGui::Selectable(name.c_str(), isSelected)) {
-					mc.mesh = asset;
-				}
-				if (isSelected) {
-					ImGui::SetItemDefaultFocus();
-				}
-			}
-			ImGui::EndCombo();
-		}
-		});
+    std::string currentName = "None";
+    if (mc.model.is_valid()) currentName = mc.model.get_id();
+
+    if (ImGui::BeginCombo("Scene Asset", currentName.c_str())) {
+      if (ImGui::Selectable("None", !mc.model.is_valid())) {
+        mc.model = ResourceHandle<Model>();
+      }
+      for (const auto& name : assets) {
+        bool isSelected = (name == currentName);
+        if (ImGui::Selectable(name.c_str(), isSelected)) {
+          mc.model = ResourceHandle<Model>(name, &ctx.resourceManager);
+        }
+        if (isSelected) ImGui::SetItemDefaultFocus();
+      }
+      ImGui::EndCombo();
+    }
+    });
 
 	// directional light component
 	reg.register_component<DirectionalLightComponent>("Directional Light", [](DirectionalLightComponent& dl, EditorContext&) {

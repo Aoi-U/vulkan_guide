@@ -2,7 +2,7 @@
 
 #include <entt.hpp>
 #include <imgui.h>
-#include <resources/AssetManager.h>
+#include <resources/ResourceManager.h>
 #include <graphics/pass/Pass.h>
 #include <core/vk_types.h>
 
@@ -18,7 +18,7 @@ struct EngineStats
 struct EditorContext
 {
 	entt::registry& registry;
-	AssetManager& assetManager;
+	ResourceManager& resourceManager;
 	const EngineStats& stats;
 	entt::entity& selectedEntity;
 	const GPUSceneData& sceneData;

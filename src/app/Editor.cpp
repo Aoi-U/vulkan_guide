@@ -10,7 +10,7 @@
 #include "app/editor/RenderTargetViewPanel.h"
 
 #include <core/Components.h>
-#include <resources/vk_loader.h>
+#include <resources/Model.h>
 #include <imgui_impl_sdl2.h>
 #include <ImGuizmo.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -30,14 +30,14 @@ Editor::Editor()
 	add_panel<RenderTargetViewPanel>();
 }
 
-void Editor::draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer)
+void Editor::draw_gui(entt::registry& registry, ResourceManager& resourceManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer)
 {
 	draw_dockspace();
 	draw_main_menu_bar();
 
 	EditorContext ctx{
 		.registry = registry,
-		.assetManager = assetManager,
+		.resourceManager = resourceManager,
 		.stats = stats,
 		.selectedEntity = _selectedEntity,
 		.sceneData = sceneData,
@@ -149,23 +149,21 @@ static bool intersect_ray_sphere(const glm::vec3& rayOrigin, const glm::vec3& ra
 static void raycast_node(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, const glm::vec3& rayOrigin, const glm::vec3& rayDir, float& closestDist, entt::entity& hitEntity, entt::entity currentEntity)
 {
 	glm::mat4 nodeMatrix = parentMatrix * node->localTransform;
-	auto meshNode = std::dynamic_pointer_cast<MeshNode>(node);
+	auto modelNode = std::dynamic_pointer_cast<ModelNode>(node);
 
-	if (meshNode && meshNode->mesh) {
+	if (modelNode) {
 		glm::mat4 invMat = glm::inverse(nodeMatrix);
 		glm::vec3 localRayOrigin = glm::vec3(invMat * glm::vec4(rayOrigin, 1.0f));
 		glm::vec3 localRayDir = glm::vec3(invMat * glm::vec4(rayDir, 0.0f));
 
-		for (const auto& surface : meshNode->mesh->surfaces) {
-			glm::vec3 bMin = surface.bounds.origin - surface.bounds.extents;
-			glm::vec3 bMax = surface.bounds.origin + surface.bounds.extents;
-
+		for (const auto& sm : modelNode->submeshes) {
+			glm::vec3 bMin = sm.bounds.origin - sm.bounds.extents;
+			glm::vec3 bMax = sm.bounds.origin + sm.bounds.extents;
 			float localT;
 			if (intersect_ray_aabb(localRayOrigin, localRayDir, bMin, bMax, localT)) {
 				glm::vec3 localHit = localRayOrigin + localRayDir * localT;
 				glm::vec3 worldHit = glm::vec3(nodeMatrix * glm::vec4(localHit, 1.0f));
 				float worldDist = glm::distance(rayOrigin, worldHit);
-
 				if (worldDist < closestDist) {
 					closestDist = worldDist;
 					hitEntity = currentEntity;
@@ -230,14 +228,13 @@ void Editor::process_viewport_picking(EditorContext& ctx)
 	// test renderable mesh components
 	auto meshView = ctx.registry.view<const MeshComponent>();
 	for (auto [entity, mc] : meshView.each()) {
-		if (!mc.visible || !mc.mesh) continue;
-
+		if (!mc.visible || !mc.model.is_valid())
+			continue;
 		glm::mat4 worldMatrix(1.0f);
 		if (const auto* tc = ctx.registry.try_get<TransformComponent>(entity)) {
 			worldMatrix = tc->get_transform();
 		}
-
-		for (const auto& topNode : mc.mesh->topNodes) {
+		for (const auto& topNode : mc.model->rootNodes) {
 			raycast_node(topNode, worldMatrix, rayOrigin, rayDir, closestDist, hitEntity, entity);
 		}
 	}

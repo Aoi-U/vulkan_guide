@@ -14,6 +14,22 @@ struct ImageDescription {
 	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
 };
 
+// an image that has been allocated on the GPU
+struct AllocatedImage
+{
+	VkImage image;
+	VkImageView imageView;
+	VmaAllocation allocation;
+};
+
+// a mesh that has been allocated on the GPU
+struct AllocatedMesh
+{
+	AllocatedBuffer indexBuffer;
+	AllocatedBuffer vertexBuffer;
+	VkDeviceAddress vertexBufferAddress;
+};
+
 class VulkanCore
 {
 public:
@@ -38,6 +54,7 @@ public:
 	AllocatedImage create_image(void* data, VkExtent3D size, VkFormat format, VkImageUsageFlags usage, bool mipmapped = false);
 
 	void destroy_image(const AllocatedImage& image);
+	void destroy_image(VkImage image, VkImageView imageView, VmaAllocation allocation);
 
 	VkInstance get_instance() const { return _instance; }
 	VkPhysicalDevice get_physical_device() const { return _chosenGPU; }
@@ -61,7 +78,7 @@ public:
 	VkSampler _shadowSampler{ VK_NULL_HANDLE };
 
 	// uploads a mesh to the gpu and returns the buffers for it
-	GPUMeshBuffers upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+	AllocatedMesh upload_mesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
 private:
 	void init_immediate_submit();

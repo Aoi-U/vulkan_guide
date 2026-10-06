@@ -11,7 +11,7 @@ class Editor
 public:
 	Editor();
 
-	void draw_gui(entt::registry& registry, AssetManager& assetManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer);
+	void draw_gui(entt::registry& registry, ResourceManager& resourceManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer);
 
 	// events
 	void on_input_event(const Events::SDLInputEvent& event);

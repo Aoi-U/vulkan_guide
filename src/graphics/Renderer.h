@@ -12,7 +12,6 @@
 #include <graphics/pass/SSAOPass.h>
 #include <graphics/pass/SSAOBlurPass.h>
 
-#include <graphics/MaterialSystem.h>
 #include <graphics/IBLSystem.h>
 #include <graphics/RenderResourceManager.h>
 #include <window/window.h>
@@ -31,11 +30,12 @@ extern AutoCVar_Float cvSSAOBias;
 extern AutoCVar_Float cvSSAOPower;
 
 class GuiRenderer;
+class ResourceManager;
 
 struct IndirectBatch
 {
 	VkBuffer indexBuffer;
-	MaterialInstance* material;
+	VkDescriptorSet materialSet;
 	uint32_t first; // first index in the indirect buffer
 	uint32_t count; // number of indirect commands in this batch
 	uint32_t batchIndex; // index of this batch in the batch array
@@ -89,17 +89,15 @@ class Renderer
 public:
 	static constexpr unsigned int FRAME_OVERLAP = 2;
 
-	void init(Window* window, VulkanCore* vulkanCore, MaterialSystem* materialSystem, entt::dispatcher& dispatcher);
+	void init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher);
 
 	void cleanup(entt::dispatcher& dispatcher);
 
 	void on_window_resize(const Events::WindowResizeEvent& event);
-
 	void set_gui_renderer(GuiRenderer* guiRenderer) { _guiRenderer = guiRenderer; }
 	void set_viewport_extent(VkExtent2D extent);
 
 	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
-
 	void recreate_swapchain();
 
 	bool load_environment(const std::filesystem::path& path) { return _iblSystem.load_hdr(path); }
@@ -107,16 +105,15 @@ public:
 
 	VkExtent2D get_swapchain_extent() const { return _swapchain.get_extent(); }
 	VkExtent2D get_draw_extent() const { return _drawExtent; }
-	VkImageView get_current_swapchain_image_view() const {
-		return _swapchain.get_image_views()[_swapchainImageIndex];
-	}
+	VkImageView get_current_swapchain_image_view() const { return _swapchain.get_image_views()[_swapchainImageIndex]; }
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-	RenderResourceManager& get_resources() { return _resourceManager; }
+	RenderResourceManager& get_resources() { return _renderResourceManager; }
 	IBLSystem& get_ibl() { return _iblSystem; }
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
-	VkDescriptorSet get_scene_color_descriptor();
+
 	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
+	VkDescriptorSet get_scene_color_descriptor();
 	VkDescriptorSet get_target_descriptor(const std::string& name, uint32_t faceIndex = 0);
 	const std::vector<PassStats> get_stats() const;
 
@@ -124,21 +121,17 @@ private:
 	Window* _window;
 	VulkanCore* _vulkanCore;
 	Swapchain _swapchain;
-	
-	RenderResourceManager _resourceManager;
+	RenderResourceManager _renderResourceManager;
 	VkExtent2D _drawExtent;
 	VkExtent2D _viewportExtent{ 1280, 720 };
-
 	FrameData _frames[FRAME_OVERLAP];
+
 	uint32_t _frameNumber{ 0 };
 	uint32_t _swapchainImageIndex{ 0 };
 	bool _isFrameStarted{ false };
-
 	bool _resizeRequested{ false };
 	VkExtent2D _pendingResizeExtent{ 0, 0 };
-
 	GuiRenderer* _guiRenderer{ nullptr };
-
 	float _currentRenderScale{ 1.0f };
 
 	std::unique_ptr<FrustumCullPass> _frustumCullPass;
