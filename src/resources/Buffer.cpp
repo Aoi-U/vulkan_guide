@@ -130,9 +130,8 @@ bool Buffer::resize(VulkanCore * core, size_t newSize, bool preserveData)
 		}
 	}
 
-	if (_buffer != VK_NULL_HANDLE) {
-		core->globalDeletionQueue.push(_buffer, _allocation);
-	}
+	destroy_immediate(core);
+	
 	_size = targetSize;
 	_buffer = newBuffer;
 	_allocation = newAllocation;

@@ -261,6 +261,7 @@ bool Model::doLoad(VulkanCore* core)
 					vertices[idx + initialVertex].color = glm::vec4(1.0);
 					vertices[idx + initialVertex].uv_x = 0;
 					vertices[idx + initialVertex].uv_y = 0;
+					vertices[idx + initialVertex].tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
 					});
 			}
 
@@ -413,6 +414,7 @@ bool Model::doLoad(VulkanCore* core)
 			node->refreshTransform(glm::mat4(1.0f));
 		}
 	}
+
 
 	return true;
 }
