@@ -3,9 +3,17 @@
 #include <graphics/VulkanCore.h>
 #include <fmt/core.h>
 
-Mesh::Mesh(const std::string& id, std::vector<uint32_t> indices, std::vector<Vertex> vertices)
+Mesh::Mesh(const std::string& id, std::vector<uint32_t> indices, std::vector<Vertex> vertices, bool keepCpuGeometry)
 	: Resource(id), _cpuIndices(indices), _cpuVertices(vertices) 
-{}
+{
+  if (keepCpuGeometry) {
+    _pickingIndices = _cpuIndices;
+    _pickingPositions.reserve(_cpuVertices.size());
+    for (const auto& v : _cpuVertices) {
+      _pickingPositions.push_back(v.position);
+    }
+  }
+}
 
 bool Mesh::doLoad(VulkanCore* core) {
   if (_cpuVertices.empty() || _cpuIndices.empty()) return false;

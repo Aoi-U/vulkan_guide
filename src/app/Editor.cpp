@@ -97,33 +97,37 @@ void Editor::draw_dockspace()
 	}
 }
 
-static bool intersect_ray_aabb(const glm::vec3& rayOrigin, const glm::vec3& rayDir, const glm::vec3& boxMin, const glm::vec3& boxMax, float& tOut)
-{
+struct RaycastHit {
+	entt::entity hitEntity{ entt::null };
+	float distance{ std::numeric_limits<float>::max() };
+	glm::vec3 worldPosition{ 0.0f };
+	glm::vec3 worldNormal{ 0.0f };
+	uint32_t triangleIndex{ 0 };
+	glm::vec2 barycentricCoords{ 0.0f };
+};
+
+static bool intersect_ray_aabb(const glm::vec3& rayOrigin, const glm::vec3& rayDirUnnorm, const glm::vec3& boxMin, const glm::vec3& boxMax, float& tOut) {
 	float tMin = -std::numeric_limits<float>::max();
 	float tMax = std::numeric_limits<float>::max();
 
 	for (int i = 0; i < 3; ++i) {
-		if (std::abs(rayDir[i]) < 1e-6f) {
-			// ray is parallel to slab
-			if (rayOrigin[i] < boxMin[i] || rayOrigin[i] > boxMax[i])
-				return false;
+		if (std::abs(rayDirUnnorm[i]) < 1e-6f) {
+			if (rayOrigin[i] < boxMin[i] || rayOrigin[i] > boxMax[i]) return false;
 		}
 		else {
-			float invD = 1.0f / rayDir[i];
+			float invD = 1.0f / rayDirUnnorm[i];
 			float t0 = (boxMin[i] - rayOrigin[i]) * invD;
 			float t1 = (boxMax[i] - rayOrigin[i]) * invD;
-			if (t0 > t1) std::swap(t0, t1);
 
+			if (t0 > t1) std::swap(t0, t1);
 			tMin = std::max(tMin, t0);
 			tMax = std::min(tMax, t1);
+
 			if (tMin > tMax) return false;
 		}
 	}
 
-	// box is entirely behind ray
 	if (tMax < 0.0f) return false;
-
-	// if ray starts inside the box (tMin < 0), return exit distance tMax, otherwise entry distance tMin
 	tOut = (tMin < 0.0f) ? tMax : tMin;
 	return true;
 }
@@ -145,6 +149,42 @@ static bool intersect_ray_sphere(const glm::vec3& rayOrigin, const glm::vec3& ra
 
 	tOut = t;
 	return true;
+}
+
+static bool intersect_ray_triangle(const glm::vec3& orig, const glm::vec3& dirUnnorm, const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2, bool doubleSided, float& t, glm::vec2& baryCoords)
+{
+	constexpr float EPSILON = 1e-7f;
+	glm::vec3 edge1 = v1 - v0;
+	glm::vec3 edge2 = v2 - v0;
+	glm::vec3 h = glm::cross(dirUnnorm, edge2);
+	float a = glm::dot(edge1, h);
+
+	// Backface & parallel culling
+	if (!doubleSided) {
+		if (a < EPSILON) return false;
+	}
+	else {
+		if (a > -EPSILON && a < EPSILON) return false;
+	}
+
+	float f = 1.0f / a;
+	glm::vec3 s = orig - v0;
+	float u = f * glm::dot(s, h);
+	if (u < 0.0f || u > 1.0f) return false;
+
+	glm::vec3 q = glm::cross(s, edge1);
+	float v = f * glm::dot(dirUnnorm, q);
+	if (v < 0.0f || u + v > 1.0f) return false;
+
+	float t_val = f * glm::dot(edge2, q);
+
+	// t_val is natively world distance because dirUnnorm holds world scale
+	if (t_val > EPSILON) {
+		t = t_val;
+		baryCoords = glm::vec2(u, v);
+		return true;
+	}
+	return false;
 }
 
 // recursively traverse scene graph to test submesh bounding box in local space
@@ -227,71 +267,83 @@ void Editor::process_viewport_picking(EditorContext& ctx)
 	float ndcX = (2.0f * relX) / ctx.viewportSize.x - 1.0f;
 	float ndcY = (2.0f * relY) / ctx.viewportSize.y - 1.0f;
 
-	// unproject using scenes viewproj matrix (matching the viewport aspect ratio)
+	// generate world space ray
 	glm::mat4 invVP = glm::inverse(ctx.sceneData.viewproj);
-	glm::vec4 p0 = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
-	glm::vec4 p1 = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
 
-	if (p0.w == 0.0f || p1.w == 0.0f) return;
-	p0 /= p0.w;
-	p1 /= p1.w;
+	glm::vec4 target = invVP * glm::vec4(ndcX, ndcY, 0.5f, 1.0f);
+	target /= target.w;
 
 	glm::vec3 rayOrigin = glm::vec3(ctx.sceneData.cameraPosition);
-	glm::vec3 p0_3 = glm::vec3(p0);
-	glm::vec3 p1_3 = glm::vec3(p1);
-	glm::vec3 farPoint = (glm::distance(rayOrigin, p0_3) > glm::distance(rayOrigin, p1_3)) ? p0_3 : p1_3;
-	glm::vec3 rayDir = glm::normalize(farPoint - rayOrigin);
+	glm::vec3 rayDir = glm::normalize(glm::vec3(target) - rayOrigin);
 
-	float closestDist = std::numeric_limits<float>::max();
-	entt::entity hitEntity = entt::null;
+	RaycastHit bestHit;
 
-	// test renderable mesh components
+	// iterate renderable entities
 	auto meshView = ctx.registry.view<const MeshComponent>();
 	for (auto [entity, mc] : meshView.each()) {
-		if (!mc.visible || !mc.mesh.is_valid())
-			continue;
-		glm::mat4 worldMatrix(1.0f);
-		if (const auto* tc = ctx.registry.try_get<TransformComponent>(entity)) {
-			glm::mat4 worldMatrix = compute_world_transform(ctx.registry, entity);
-		}
+		if (!mc.visible || !mc.mesh.is_valid() || !mc.mesh->has_picking_data()) continue;
+
+		glm::mat4 worldMatrix = compute_world_transform(ctx.registry, entity);
+		glm::mat4 invWorld = glm::inverse(worldMatrix);
+
+		// transform ray to local mesh space
+		glm::vec3 localRayOrigin = glm::vec3(invWorld * glm::vec4(rayOrigin, 1.0f));
+		glm::vec3 localRayDirUnnorm = glm::vec3(invWorld * glm::vec4(rayDir, 0.0f));
+
+		// AABB check
 		glm::vec3 bMin = mc.bounds.origin - mc.bounds.extents;
 		glm::vec3 bMax = mc.bounds.origin + mc.bounds.extents;
-		float t;
+		float tBox;
 
-		glm::mat4 invMat = glm::inverse(worldMatrix);
-		glm::vec3 localRayOrigin = glm::vec3(invMat * glm::vec4(rayOrigin, 1.0f));
-		glm::vec3 localRayDir = glm::vec3(invMat * glm::vec4(rayDir, 0.0f));
+		if (!intersect_ray_aabb(localRayOrigin, localRayDirUnnorm, bMin, bMax, tBox)) continue;
+		if (tBox > bestHit.distance) continue; // box is further than a confirmed narrowphase hit
 
-		if (intersect_ray_aabb(localRayOrigin, localRayDir, bMin, bMax, t)) {
-			glm::vec3 localHit = localRayOrigin + localRayDir * t;
-			glm::vec3 worldHit = glm::vec3(worldMatrix * glm::vec4(localHit, 1.0f));
-			float worldDist = glm::distance(rayOrigin, worldHit);
-			if (worldDist < closestDist) {
-				closestDist = worldDist;
-				hitEntity = entity;
+		// triangle Setup
+		std::span<const glm::vec3> positions = mc.mesh->get_picking_positions();
+		std::span<const uint32_t> indices = mc.mesh->get_picking_indices();
+
+		bool doubleSided = false;
+		if (const auto* mat = ctx.registry.try_get<MaterialComponent>(entity)) {
+			doubleSided = mat->doubleSided;
+		}
+
+		// triangle Query
+		uint32_t endIdx = mc.startIndex + mc.count;
+		for (uint32_t i = mc.startIndex; i < endIdx; i += 3) {
+			const glm::vec3& v0 = positions[indices[i]];
+			const glm::vec3& v1 = positions[indices[i + 1]];
+			const glm::vec3& v2 = positions[indices[i + 2]];
+
+			float tTri;
+			glm::vec2 bary;
+			if (intersect_ray_triangle(localRayOrigin, localRayDirUnnorm, v0, v1, v2, doubleSided, tTri, bary)) {
+
+				if (tTri < bestHit.distance) {
+					bestHit.distance = tTri;
+					bestHit.hitEntity = entity;
+					bestHit.triangleIndex = i / 3;
+					bestHit.barycentricCoords = bary;
+
+					glm::vec3 localNormal = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+
+					if (doubleSided && glm::dot(localRayDirUnnorm, localNormal) > 0.0f) {
+						localNormal = -localNormal;
+					}
+
+					// convert normal to world space 
+					glm::mat3 normalMatrix = glm::transpose(glm::mat3(invWorld));
+					bestHit.worldNormal = glm::normalize(normalMatrix * localNormal);
+					bestHit.worldPosition = rayOrigin + rayDir * tTri;
+				}
 			}
 		}
 	}
 
-	// test point light components
-	auto lightView = ctx.registry.view<const PointLightComponent>();
-	for (auto [entity, pl] : lightView.each()) {
-		if (!pl.visible) continue;
-
-		glm::vec3 lightPos(0.0f);
-		if (const auto* tc = ctx.registry.try_get<TransformComponent>(entity)) {
-			lightPos = tc->position;
-		}
-
-		float t;
-		if (intersect_ray_sphere(rayOrigin, rayDir, lightPos, 0.5f, t)) {
-			if (t < closestDist) {
-				closestDist = t;
-				hitEntity = entity;
-			}
-		}
+	if (bestHit.hitEntity != entt::null) {
+		ctx.selectedEntity = bestHit.hitEntity;
 	}
-
-	// update selected entity
-	ctx.selectedEntity = hitEntity;
+	else {
+		// drop selection if clicked on negative space
+		ctx.selectedEntity = entt::null;
+	}
 }
