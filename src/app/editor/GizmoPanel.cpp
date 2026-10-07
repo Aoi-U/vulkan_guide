@@ -4,6 +4,24 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <imgui.h>
 
+static glm::mat4 compute_world_transform(entt::registry& registry, entt::entity e)
+{
+	glm::mat4 world(1.0f);
+	entt::entity current = e;
+	while (current != entt::null) {
+		if (const auto* tc = registry.try_get<TransformComponent>(current)) {
+			world = tc->get_transform() * world;
+		}
+		if (const auto* hc = registry.try_get<HierarchyComponent>(current)) {
+			current = hc->parent;
+		}
+		else {
+			current = entt::null;
+		}
+	}
+	return world;
+}
+
 void GizmoPanel::on_draw(EditorContext& ctx)
 {
 	if (!is_open) return;
@@ -91,13 +109,13 @@ void GizmoPanel::on_draw(EditorContext& ctx)
 				glm::mat4 view = ctx.sceneData.view;
 
 				// build transform matrix from position, rotation, scale
-				glm::mat4 transformMatrix(1.0f);
-				ImGuizmo::RecomposeMatrixFromComponents(
-					&tc->position.x,
-					&tc->rotation.x,
-					&tc->scale.x,
-					glm::value_ptr(transformMatrix)
-				);
+				glm::mat4 parentWorld(1.0f);
+				if (auto* hc = ctx.registry.try_get<HierarchyComponent>(ctx.selectedEntity)) {
+					if (hc->parent != entt::null) {
+						parentWorld = compute_world_transform(ctx.registry, hc->parent);
+					}
+				}
+				glm::mat4 transformMatrix = parentWorld * tc->get_transform();
 
 				float* snapValues = nullptr;
 				if (_useSnap) {
@@ -119,8 +137,9 @@ void GizmoPanel::on_draw(EditorContext& ctx)
 
 				// decompose transform matrix back into component
 				if (manipulated && ImGuizmo::IsUsing()) {
+					glm::mat4 localMatrix = glm::inverse(parentWorld) * transformMatrix;
 					ImGuizmo::DecomposeMatrixToComponents(
-						glm::value_ptr(transformMatrix),
+						glm::value_ptr(localMatrix),
 						&tc->position.x,
 						&tc->rotation.x,
 						&tc->scale.x

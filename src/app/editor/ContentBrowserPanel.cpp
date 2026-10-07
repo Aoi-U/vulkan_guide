@@ -1,6 +1,7 @@
 #include "app/editor/ContentBrowserPanel.h"
 
 #include <resources/AssetRegistry.h>
+#include <resources/ModelSpawner.h>
 #include <resources/Model.h>
 #include <core/Components.h>
 #include <imgui.h>
@@ -80,12 +81,7 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
               ctx.resourceManager.force_unload<Model>(assetRec->id);
             }
             if (ImGui::MenuItem("Spawn Entity")) {
-              entt::entity e = ctx.registry.create();
-              ctx.registry.emplace<TagComponent>(e, assetRec->id);
-              ctx.registry.emplace<TransformComponent>(e);
-              auto handle = ctx.resourceManager.load<Model>(assetRec->id, assetRec->path, &ctx.resourceManager);
-              ctx.registry.emplace<MeshComponent>(e, handle);
-              ctx.selectedEntity = e;
+              ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, assetRec->id, assetRec->path);
             }
           }
           ImGui::EndPopup();

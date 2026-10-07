@@ -42,6 +42,7 @@ public:
 	VkDescriptorSet get_descriptor_set() const { return _descriptorSet; }
 	MaterialPassType get_pass_type() const { return _passType; }
 	MaterialConstants& get_constants() { return _constants; }
+	ResourceHandle<Texture> get_texture(TextureSlot slot) const;
 	
 	static void init_descriptor_layout(VulkanCore* core);
 	static void cleanup_descriptor_layout(VulkanCore* core);

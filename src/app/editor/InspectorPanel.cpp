@@ -5,6 +5,7 @@
 #include <core/Components.h>
 #include <resources/Model.h>
 #include <graphics/utils/UIWidgets.h>
+#include <glm/gtc/type_ptr.hpp>
 #include <array>
 
 InspectorPanel::InspectorPanel()
@@ -97,35 +98,155 @@ void InspectorPanel::register_engine_components()
   reg.register_component<MeshComponent>("Mesh", [](MeshComponent& mc, EditorContext& ctx) {
     ImGui::Checkbox("Visible", &mc.visible);
 
-    // browse all indexed models 
-    auto assets = AssetRegistry::get().get_assets_by_type(AssetType::Model);
-    std::string currentName = mc.model.is_valid() ? mc.model.get_id() : "None";
+    std::vector<std::string> loadedMeshes = ctx.resourceManager.get_loaded_resources<Mesh>();
+    std::string currentMeshId = mc.mesh.is_valid() ? mc.mesh.get_id() : "None";
 
-    if (ImGui::BeginCombo("Scene Asset", currentName.c_str())) {
-      if (ImGui::Selectable("None", !mc.model.is_valid())) {
-        mc.model = ResourceHandle<Model>();
+    if (ImGui::BeginCombo("Mesh Asset", currentMeshId.c_str())) {
+      if (ImGui::Selectable("None", !mc.mesh.is_valid())) {
+        mc.mesh = ResourceHandle<Mesh>();
+        mc.startIndex = 0;
+        mc.count = 0;
       }
-      for (const auto& asset : assets) {
-        bool isSelected = (asset.id == currentName);
-        if (ImGui::Selectable(asset.id.c_str(), isSelected)) {
-          // fetch from disk if it drops reference count and was previously purged
-          mc.model = ctx.resourceManager.load<Model>(asset.id, asset.path, &ctx.resourceManager);
+      for (const auto& meshId : loadedMeshes) {
+        bool isSelected = (currentMeshId == meshId);
+        if (ImGui::Selectable(meshId.c_str(), isSelected)) {
+          mc.mesh = ResourceHandle<Mesh>(meshId, &ctx.resourceManager);
+          if (mc.mesh.is_valid()) {
+            mc.startIndex = 0;
+            mc.count = mc.mesh->get_index_count();
+          }
         }
         if (isSelected) ImGui::SetItemDefaultFocus();
       }
       ImGui::EndCombo();
     }
 
-    // drag and drop 
     if (ImGui::BeginDragDropTarget()) {
-      if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_ID")) {
+      if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MESH_ID")) {
         std::string draggedId = (const char*)payload->Data;
-        auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
-        if (assetRec) {
-          mc.model = ctx.resourceManager.load<Model>(draggedId, assetRec->path, &ctx.resourceManager);
+        mc.mesh = ResourceHandle<Mesh>(draggedId, &ctx.resourceManager);
+        if (mc.mesh.is_valid()) {
+          mc.startIndex = 0;
+          mc.count = mc.mesh->get_index_count();
         }
       }
       ImGui::EndDragDropTarget();
+    }
+
+    if (mc.mesh.is_valid()) {
+      ImGui::Separator();
+      ImGui::Text("Vertices: %u", mc.mesh->get_vertex_count());
+      ImGui::Text("Device Address: 0x%llx", (unsigned long long)mc.mesh->get_vertex_buffer_address());
+
+      int startIdx = static_cast<int>(mc.startIndex);
+      int count = static_cast<int>(mc.count);
+
+      if (ImGui::DragInt("Start Index", &startIdx, 1, 0, mc.mesh->get_index_count())) {
+        mc.startIndex = static_cast<uint32_t>(std::max(0, startIdx));
+      }
+      if (ImGui::DragInt("Count", &count, 1, 0, mc.mesh->get_index_count() - mc.startIndex)) {
+        mc.count = static_cast<uint32_t>(std::max(0, count));
+      }
+
+      if (ImGui::Button("Reset to Full Mesh")) {
+        mc.startIndex = 0;
+        mc.count = mc.mesh->get_index_count();
+      }
+
+      ImGui::Spacing();
+      ImGui::Text("Bounds:");
+      ImGui::DragFloat3("Origin", &mc.bounds.origin.x, 0.1f);
+      ImGui::DragFloat("Radius", &mc.bounds.sphereRadius, 0.1f);
+      ImGui::DragFloat3("Extents", &mc.bounds.extents.x, 0.1f);
+    }
+    else {
+      ImGui::TextDisabled("No geometry attached.");
+    }
+    });
+
+  // material component
+  reg.register_component<MaterialComponent>("Material", [](MaterialComponent& mat, EditorContext& ctx) {
+    bool dirty = false;
+
+    if (ImGui::ColorEdit4("Albedo Color", glm::value_ptr(mat.albedoColor))) dirty = true;
+
+    auto draw_tex_selector = [&](const char* label, ResourceHandle<Texture>& tex) {
+      ImGui::PushID(label);
+      std::string current = tex.is_valid() ? tex.get_id() : "None";
+      if (ImGui::BeginCombo(label, current.c_str())) {
+        if (ImGui::Selectable("None", !tex.is_valid())) { tex = ResourceHandle<Texture>(); dirty = true; }
+
+        // show dynamically generated / model-embedded textures via ResourceManager
+        std::vector<std::string> loadedTextures = ctx.resourceManager.get_loaded_resources<Texture>();
+        for (const auto& texName : loadedTextures) {
+          if (ImGui::Selectable(texName.c_str(), current == texName)) {
+            tex = ResourceHandle<Texture>(texName, &ctx.resourceManager);
+            dirty = true;
+          }
+        }
+
+        // show unloaded files from disk via AssetRegistry
+        for (const auto& asset : AssetRegistry::get().get_assets_by_type(AssetType::Texture)) {
+          if (std::find(loadedTextures.begin(), loadedTextures.end(), asset.id) == loadedTextures.end()) {
+            if (ImGui::Selectable(asset.id.c_str(), current == asset.id)) {
+              tex = ctx.resourceManager.load<Texture>(asset.id, asset.path, VK_FORMAT_R8G8B8A8_UNORM);
+              dirty = true;
+            }
+          }
+        }
+        ImGui::EndCombo();
+      }
+      if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_TEXTURE_ID")) {
+          std::string draggedId = (const char*)payload->Data;
+          if (auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId)) {
+            tex = ctx.resourceManager.load<Texture>(draggedId, assetRec->path, VK_FORMAT_R8G8B8A8_UNORM);
+            dirty = true;
+          }
+        }
+        ImGui::EndDragDropTarget();
+      }
+      ImGui::PopID();
+      };
+
+    draw_tex_selector("Albedo Texture", mat.albedoTexture);
+    draw_tex_selector("Metallic-Roughness Texture", mat.metallicRoughnessTexture);
+    draw_tex_selector("Normal Map", mat.normalTexture);
+    draw_tex_selector("Emissive Texture", mat.emissiveTexture);
+    draw_tex_selector("Occlusion Texture", mat.occlusionTexture);
+
+    if (ImGui::SliderFloat("Metallic", &mat.metallic, 0.0f, 1.0f)) dirty = true;
+    if (ImGui::SliderFloat("Roughness", &mat.roughness, 0.0f, 1.0f)) dirty = true;
+    if (ImGui::SliderFloat("Normal Strength", &mat.normalStrength, 0.0f, 2.0f)) dirty = true;
+
+    if (ImGui::ColorEdit3("Emissive Color", glm::value_ptr(mat.emissiveColor))) dirty = true;
+    if (ImGui::DragFloat("Emissive Intensity", &mat.emissiveIntensity, 0.1f, 0.0f, 100.0f, "%.1f")) dirty = true;
+
+    if (ImGui::SliderFloat("Occlusion Strength", &mat.occlusionStrength, 0.0f, 1.0f)) dirty = true;
+
+    const char* alphaModes[] = { "Opaque", "Mask", "Blend" };
+    int currentAlpha = static_cast<int>(mat.alphaMode);
+    if (ImGui::Combo("Alpha Mode", &currentAlpha, alphaModes, 3)) {
+      mat.alphaMode = static_cast<AlphaMode>(currentAlpha);
+      dirty = true;
+    }
+
+    if (mat.alphaMode == AlphaMode::Mask) {
+      if (ImGui::SliderFloat("Alpha Cutoff", &mat.alphaCutoff, 0.0f, 1.0f)) dirty = true;
+    }
+
+    if (ImGui::Checkbox("Double Sided", &mat.doubleSided)) dirty = true;
+
+    if (dirty) mat.isDirty = true;
+    });
+
+  reg.register_component<HierarchyComponent>("Hierarchy", [](HierarchyComponent& hc, EditorContext& ctx) {
+    ImGui::Text("Parent Entity ID: %d", hc.parent != entt::null ? static_cast<uint32_t>(hc.parent) : -1);
+    if (ImGui::TreeNode("Children", "Children Count: %zu", hc.children.size())) {
+      for (auto child : hc.children) {
+        ImGui::BulletText("Entity ID: %d", static_cast<uint32_t>(child));
+      }
+      ImGui::TreePop();
     }
     });
 

@@ -84,6 +84,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 		_frames[i]._gpuInstanceBuffer.unload(_vulkanCore);
 		_frames[i]._gpuIndirectBuffer.unload(_vulkanCore);
 		_frames[i]._gpuCountBuffer.unload(_vulkanCore);
+		_frames[i]._materialDataBuffer.unload(_vulkanCore);
 
 
 		_frames[i]._deletionQueue.flush(_vulkanCore->get_device(), _vulkanCore->get_allocator());
@@ -140,11 +141,12 @@ void Renderer::set_viewport_extent(VkExtent2D extent)
 
 void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData)
 {
-	DrawContext drawCtx;
-	extract_scene_data(registry, drawCtx);
-	drawCtx.environment = _iblSystem.get_environment_resources();
 
 	if (VkCommandBuffer cmd = begin_frame()) {
+		DrawContext drawCtx;
+		drawCtx.environment = _iblSystem.get_environment_resources();
+		extract_scene_data(registry, drawCtx);
+
 		RenderContext ctx(cmd);
 		FrameData& currentFrame = get_current_frame();
 
@@ -375,22 +377,125 @@ void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 
 void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
 {
-	ctx.clear();
+	auto compute_world_transform = [&](entt::entity entity) -> glm::mat4 {
+		glm::mat4 world(1.0f);
+		entt::entity current = entity;
+		while (current != entt::null) {
+			if (const auto* tc = registry.try_get<TransformComponent>(current)) {
+				world = tc->get_transform() * world;
+			}
+			if (const auto* hc = registry.try_get<HierarchyComponent>(current)) {
+				current = hc->parent;
+			}
+			else {
+				current = entt::null;
+			}
+		}
+		return world;
+		};
+
+	FrameData& currentFrame = get_current_frame();
+	size_t capacity = currentFrame._materialDataBuffer.get_size() / sizeof(MaterialConstants); // material data buffer capacity
+	uint32_t materialCount = 0; 
+	MaterialConstants* matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer.get_mapped_data()); // pointer to the buffers mapped data
 
 	auto view = registry.view<const MeshComponent>();
-	for (auto [entity, mesh] : view.each()) {
-		if (!mesh.visible || !mesh.model) {
+	for (auto [entity, meshComp] : view.each()) {
+		if (!meshComp.visible || !meshComp.mesh.is_valid()) {
 			continue;
 		}
+		glm::mat4 worldMatrix = compute_world_transform(entity);
+		auto* matComp = registry.try_get<MaterialComponent>(entity);
 
-		glm::mat4 worldMatrix(1.0f);
-		
-		if (const auto* tc = registry.try_get<TransformComponent>(entity)) {
-			worldMatrix = tc->get_transform();
+		VkDescriptorSet descriptorSet = VK_NULL_HANDLE;
+		MaterialPassType passType = MaterialPassType::Opaque;
+		bool isDoubleSided = false;
+
+		if (matComp) {
+			passType = (matComp->alphaMode == AlphaMode::Blend) ? MaterialPassType::Transparent : MaterialPassType::Opaque;
+			isDoubleSided = matComp->doubleSided;
+
+			// expand buffer capacity if needed
+			if (materialCount >= capacity) {
+				currentFrame._materialDataBuffer.resize(_vulkanCore, (capacity + 1000) * sizeof(MaterialConstants), true);
+				capacity = currentFrame._materialDataBuffer.get_size() / sizeof(MaterialConstants);
+				matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer.get_mapped_data()); // update the pointer to the buffers mapped data
+			}
+
+			matDataMap[materialCount] = get_material_constants(*matComp); // copy material constants into the buffer
+			size_t bufferOffset = sizeof(MaterialConstants) * materialCount; // offset in the buffer for this material
+			materialCount++; // increment material count for next material
+
+			descriptorSet = currentFrame._frameDescriptors.allocate(_vulkanCore->get_device(), Material::get_descriptor_layout()); 
+
+			DescriptorWriter writer;
+			writer.write_buffer(0, currentFrame._materialDataBuffer.get_buffer(), sizeof(MaterialConstants), bufferOffset, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+
+			VkImageView albedoView = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_image_view() : _vulkanCore->_greyImage.get_image_view();
+			VkSampler albedoSampler = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+
+			VkImageView metalRoughView = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_image_view() : _vulkanCore->_whiteImage.get_image_view();
+			VkSampler metalRoughSampler = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+
+			VkImageView occlusionView = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_image_view() : _vulkanCore->_whiteImage.get_image_view();
+			VkSampler occlusionSampler = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+
+			VkImageView normalView = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_image_view() : _vulkanCore->_defaultNormalImage.get_image_view();
+			VkSampler normalSampler = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+
+			VkImageView emissiveView = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_image_view() : _vulkanCore->_blackImage.get_image_view();
+			VkSampler emissiveSampler = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+
+			writer.write_image(1, albedoView, albedoSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(2, metalRoughView, metalRoughSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(3, occlusionView, occlusionSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(4, normalView, normalSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(5, emissiveView, emissiveSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+
+			writer.update_set(_vulkanCore->get_device(), descriptorSet); // update descriptor set for this material
+			matComp->isDirty = false;
+		}
+		else { // no material component for this entity
+			// fallback material
+			static Buffer fallbackBuffer;
+			if (!fallbackBuffer.get_buffer()) {
+				MaterialConstants defaultConstants{};
+				defaultConstants.colorFactors = glm::vec4(1.0f);
+				defaultConstants.metalRoughFactors = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
+				defaultConstants.extraFactors = glm::vec4(1.0f, 1.0f, 0.0f, 0.5f);
+				defaultConstants.emissiveFactor = glm::vec4(0.0f);
+				fallbackBuffer = Buffer("fallback_mat_buf", sizeof(MaterialConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+				fallbackBuffer.load(_vulkanCore);
+				fallbackBuffer.copy_data(&defaultConstants, sizeof(MaterialConstants));
+			}
+
+			descriptorSet = currentFrame._frameDescriptors.allocate(_vulkanCore->get_device(), Material::get_descriptor_layout());
+			DescriptorWriter writer;
+			writer.write_buffer(0, fallbackBuffer.get_buffer(), sizeof(MaterialConstants), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			writer.write_image(1, _vulkanCore->_greyImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(2, _vulkanCore->_whiteImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(3, _vulkanCore->_whiteImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(4, _vulkanCore->_defaultNormalImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(5, _vulkanCore->_blackImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.update_set(_vulkanCore->get_device(), descriptorSet);
 		}
 
-		for (const auto& topNode : mesh.model->rootNodes) {
-			collect_draw_nodes(topNode, worldMatrix, ctx);
+		RenderObject def;
+		def.indexCount = meshComp.count;
+		def.firstIndex = meshComp.startIndex;
+		def.indexBuffer = meshComp.mesh->get_index_buffer();
+		def.vertexBufferAddress = meshComp.mesh->get_vertex_buffer_address();
+		def.bounds = meshComp.bounds;
+		def.transform = worldMatrix;
+		def.materialSet = descriptorSet;
+		def.passType = passType;
+		def.isDoubleSided = isDoubleSided;
+
+		if (def.passType == MaterialPassType::Transparent) {
+			ctx.transparentObjects.push_back(def);
+		}
+		else {
+			ctx.opaqueObjects.push_back(def);
 		}
 	}
 
@@ -449,42 +554,6 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	ctx.opaqueBatches.push_back(currentBatch);
 }
 
-void Renderer::collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, DrawContext& ctx)
-{
-	glm::mat4 nodeMatrix = parentMatrix * node->localTransform;
-
-	auto modelNode = std::dynamic_pointer_cast<ModelNode>(node);
-
-	if (modelNode) {
-		for (auto& sm : modelNode->submeshes) {
-			if (!sm.mesh || !sm.material) 
-				continue;
-
-			RenderObject def;
-			def.indexCount = sm.count;
-			def.firstIndex = sm.startIndex;
-			def.indexBuffer = sm.mesh->get_index_buffer();
-			def.materialSet = sm.material->get_descriptor_set();
-			def.passType = sm.material->get_pass_type();
-			def.bounds = sm.bounds;
-			def.transform = nodeMatrix;
-			def.vertexBufferAddress = sm.mesh->get_vertex_buffer_address();
-
-			def.isDoubleSided = sm.material->get_constants().extraFactors.z > 0.5f;
-			if (def.passType == MaterialPassType::Transparent) {
-				ctx.transparentObjects.push_back(def);
-			}
-			else {
-				ctx.opaqueObjects.push_back(def);
-			}
-		}
-	}
-
-	// recurse down
-	for (auto& child : node->children) {
-		collect_draw_nodes(child, nodeMatrix, ctx);
-	}
-}
 
 void Renderer::recreate_swapchain()
 {
@@ -614,6 +683,9 @@ void Renderer::create_sync_structures()
 		_frames[i]._gpuInstanceBuffer = Buffer("gpuInstance", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 		_frames[i]._gpuIndirectBuffer = Buffer("gpuIndirect", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		_frames[i]._gpuCountBuffer = Buffer("gpuCount", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+		_frames[i]._materialDataBuffer = Buffer("materialData", sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._materialDataBuffer.load(_vulkanCore);
 	}
 }
 

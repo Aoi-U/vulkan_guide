@@ -66,6 +66,24 @@ void Material::update_buffer(VulkanCore * core)
 	writer.update_set(core->get_device(), _descriptorSet);
 }
 
+ResourceHandle<Texture> Material::get_texture(TextureSlot slot) const
+{
+	switch (slot) {
+	case TextureSlot::BaseColor:          
+		return _baseColorTexture;
+	case TextureSlot::MetallicRoughness:  
+		return _metalRoughTexture;
+	case TextureSlot::Occlusion:          
+		return _occlusionTexture;
+	case TextureSlot::Normal:             
+		return _normalTexture;
+	case TextureSlot::Emissive:           
+		return _emissiveTexture;
+	default:                              
+		return {};
+	}
+}
+
 void Material::init_descriptor_layout(VulkanCore * core)
 {
 	DescriptorLayoutBuilder builder;

@@ -84,6 +84,8 @@ struct FrameData
 	Buffer _gpuInstanceBuffer; // buffer for instance ids for visible objects
 	Buffer _gpuIndirectBuffer; // buffer for indirect draw commands
 	Buffer _gpuCountBuffer; // buffer for draw counts per batch
+
+	Buffer _materialDataBuffer; // buffer for material data for each entity in the scene
 };
 
 class Renderer
@@ -161,6 +163,5 @@ private:
 	void blit_to_swapchain(VkCommandBuffer cmd);
 
 	void extract_scene_data(const entt::registry& registry, DrawContext& ctx);
-	void collect_draw_nodes(const std::shared_ptr<Node>& node, const glm::mat4& parentMatrix, DrawContext& ctx);
 
 };

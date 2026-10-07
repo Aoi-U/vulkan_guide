@@ -2,9 +2,10 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <resources/Mesh.h>
+#include <resources/Texture.h>
+#include <resources/Material.h>
 #include <string>
-
-class Model;
 
 struct TagComponent
 {
@@ -28,11 +29,77 @@ struct TransformComponent
 	}
 };
 
+struct HierarchyComponent
+{
+	entt::entity parent{ entt::null };
+	std::vector<entt::entity> children;
+
+	HierarchyComponent() = default;
+	HierarchyComponent(entt::entity p)
+		: parent(p) {}
+};
+
 struct MeshComponent
 {
-	ResourceHandle<Model> model;
+	ResourceHandle<Mesh> mesh;
+	Bounds bounds{};
+	uint32_t startIndex{ 0 };
+	uint32_t count{ 0 };
 	bool visible{ true };
 };
+
+enum class AlphaMode : uint8_t
+{
+	Opaque = 0,
+	Mask = 1,
+	Blend = 2
+};
+
+struct MaterialComponent {
+	// albedo / base Color
+	glm::vec4 albedoColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+	ResourceHandle<Texture> albedoTexture;
+
+	// metallic roughness
+	float metallic{ 1.0f };
+	float roughness{ 1.0f };
+	ResourceHandle<Texture> metallicRoughnessTexture;
+
+	// normal map
+	ResourceHandle<Texture> normalTexture;
+	float normalStrength{ 1.0f };
+
+	// emissive
+	glm::vec3 emissiveColor{ 0.0f, 0.0f, 0.0f };
+	float emissiveIntensity{ 1.0f };
+	ResourceHandle<Texture> emissiveTexture;
+
+	// ambient occlusion
+	ResourceHandle<Texture> occlusionTexture;
+	float occlusionStrength{ 1.0f };
+
+	// surface and blending
+	AlphaMode alphaMode{ AlphaMode::Opaque };
+	float alphaCutoff{ 0.5f };
+	bool doubleSided{ false };
+
+	// optional handle to an underlying base Material asset
+	ResourceHandle<Material> baseMaterial;
+
+	// flag to mark GPU descriptor/uniform buffer as dirty when parameters change
+	mutable bool isDirty{ true };
+};
+
+// utility function to convert material component into vulkan material constants
+inline MaterialConstants get_material_constants(const MaterialComponent& mat)
+{
+	MaterialConstants constants{};
+	constants.colorFactors = glm::vec4(mat.albedoColor.r, mat.albedoColor.g, mat.albedoColor.b, mat.albedoColor.a);
+	constants.metalRoughFactors = glm::vec4(mat.metallic, mat.roughness, 0.0f, 0.0f);
+	constants.extraFactors = glm::vec4(mat.occlusionStrength, mat.normalStrength, mat.doubleSided ? 1.0f : 0.0f, 0.0f);
+	constants.emissiveFactor = glm::vec4(mat.emissiveColor.r, mat.emissiveColor.g, mat.emissiveColor.b, mat.emissiveIntensity);
+	return constants;
+}
 
 struct PointLightComponent
 {

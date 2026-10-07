@@ -179,6 +179,24 @@ static void raycast_node(const std::shared_ptr<Node>& node, const glm::mat4& par
 	}
 }
 
+static glm::mat4 compute_world_transform(entt::registry& registry, entt::entity e)
+{
+	glm::mat4 world(1.0f);
+	entt::entity current = e;
+	while (current != entt::null) {
+		if (const auto* tc = registry.try_get<TransformComponent>(current)) {
+			world = tc->get_transform() * world;
+		}
+		if (const auto* hc = registry.try_get<HierarchyComponent>(current)) {
+			current = hc->parent;
+		}
+		else {
+			current = entt::null;
+		}
+	}
+	return world;
+}
+
 void Editor::process_viewport_picking(EditorContext& ctx)
 {
 	ImGuiIO& io = ImGui::GetIO();
@@ -230,14 +248,28 @@ void Editor::process_viewport_picking(EditorContext& ctx)
 	// test renderable mesh components
 	auto meshView = ctx.registry.view<const MeshComponent>();
 	for (auto [entity, mc] : meshView.each()) {
-		if (!mc.visible || !mc.model.is_valid())
+		if (!mc.visible || !mc.mesh.is_valid())
 			continue;
 		glm::mat4 worldMatrix(1.0f);
 		if (const auto* tc = ctx.registry.try_get<TransformComponent>(entity)) {
-			worldMatrix = tc->get_transform();
+			glm::mat4 worldMatrix = compute_world_transform(ctx.registry, entity);
 		}
-		for (const auto& topNode : mc.model->rootNodes) {
-			raycast_node(topNode, worldMatrix, rayOrigin, rayDir, closestDist, hitEntity, entity);
+		glm::vec3 bMin = mc.bounds.origin - mc.bounds.extents;
+		glm::vec3 bMax = mc.bounds.origin + mc.bounds.extents;
+		float t;
+
+		glm::mat4 invMat = glm::inverse(worldMatrix);
+		glm::vec3 localRayOrigin = glm::vec3(invMat * glm::vec4(rayOrigin, 1.0f));
+		glm::vec3 localRayDir = glm::vec3(invMat * glm::vec4(rayDir, 0.0f));
+
+		if (intersect_ray_aabb(localRayOrigin, localRayDir, bMin, bMax, t)) {
+			glm::vec3 localHit = localRayOrigin + localRayDir * t;
+			glm::vec3 worldHit = glm::vec3(worldMatrix * glm::vec4(localHit, 1.0f));
+			float worldDist = glm::distance(rayOrigin, worldHit);
+			if (worldDist < closestDist) {
+				closestDist = worldDist;
+				hitEntity = entity;
+			}
 		}
 	}
 
