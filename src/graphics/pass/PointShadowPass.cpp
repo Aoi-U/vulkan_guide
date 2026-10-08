@@ -44,10 +44,10 @@ void PointShadowPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderResourceManager & resources, DrawContext & drawCtx, const GPUSceneData & sceneData)
+void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext & drawCtx, const GPUSceneData & sceneData)
 {
 	int shadowLightCount = static_cast<int>(sceneData.lightCount.y);
-	VkExtent2D extent = resources.get_extent("PointShadowMap");
+	VkExtent2D extent = renderTargets.find("PointShadowMap")->second->get_extent_2d();
 
 	// begin clock
 	auto start = std::chrono::system_clock::now();
@@ -74,13 +74,13 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 
 
 	VkDescriptorSet shadowDescriptor = VK_NULL_HANDLE;
-	if (drawCtx.indirectDrawCount > 0 && frameData._gpuIndirectBuffer.get_buffer() != VK_NULL_HANDLE) {
+	if (drawCtx.indirectDrawCount > 0 && frameData._gpuIndirectBuffer->get_buffer() != VK_NULL_HANDLE) {
 		shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 
 		// update the descriptor set with the object buffer and instance buffer
 		DescriptorWriter writer;
-		writer.write_buffer(0, frameData._gpuObjectBuffer.get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		writer.write_buffer(1, frameData._gpuInstanceBuffer.get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		writer.write_buffer(0, frameData._gpuObjectBuffer->get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		writer.write_buffer(1, frameData._gpuInstanceBuffer->get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
 
 		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
@@ -91,7 +91,7 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 		RenderDesc desc{};
 		desc.renderExtent = extent;
 		desc.depthAttachment = DepthAttachmentDesc{
-			.view = resources.get_face_view("PointShadowMap", face),
+			.view = renderTargets.at("PointShadowMap")->get_face_view(face),
 			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 			.clearDepth = 1.0f,
@@ -100,7 +100,6 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 
 		ctx.begin_rendering(desc);
 		ctx.set_viewport_scissor(extent);
-
 		ctx.bind_pipeline(_pipeline);
 
 		if (shadowLightCount >= 0 && shadowDescriptor != VK_NULL_HANDLE && !drawCtx.opaqueBatches.empty()) {
@@ -121,7 +120,7 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, RenderR
 				// draw batch
 				VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 				VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-				ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.get_buffer(), indirectOffset, frameData._gpuCountBuffer.get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+				ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer->get_buffer(), indirectOffset, frameData._gpuCountBuffer->get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 			}
 		}
 

@@ -45,9 +45,9 @@ void GBufferPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResourceManager & resources, DrawContext & drawCtx, const GPUSceneData & sceneData)
+void GBufferPass::render(RenderContext & ctx, FrameData & frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext & drawCtx, const GPUSceneData & sceneData)
 {
-	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer.get_buffer() == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
+	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer->get_buffer() == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
 		return;
 	}
 
@@ -56,9 +56,9 @@ void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResou
 
 	VkDescriptorSet globalDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _sceneDataDescriptorLayout);
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer.get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_buffer(1, frameData._gpuObjectBuffer.get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(2, frameData._gpuInstanceBuffer.get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, frameData.sceneDataBuffer->get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(1, frameData._gpuObjectBuffer->get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, frameData._gpuInstanceBuffer->get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	ctx.bind_pipeline(_pipeline);
@@ -87,7 +87,7 @@ void GBufferPass::render(RenderContext & ctx, FrameData & frameData, RenderResou
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer.get_buffer(), indirectOffset, frameData._gpuCountBuffer.get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer->get_buffer(), indirectOffset, frameData._gpuCountBuffer->get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
 
 	auto end = std::chrono::system_clock::now();

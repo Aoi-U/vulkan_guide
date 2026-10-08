@@ -8,84 +8,44 @@
 #include <cmath>
 #include <algorithm>
 
-Texture::Texture(const std::string& id, const std::filesystem::path& filepath, VkFormat format, VkImageUsageFlags usage, bool generateMips)
-	: Resource(id), _sourceType(SourceType::File), _filePath(filepath), _format(format), _usage(usage), _mipmapped(generateMips) {
+Texture::Texture(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, const std::filesystem::path& filepath, VkFormat format, VkImageUsageFlags usage, bool generateMips)
+	: Resource(id, core, resourceManager), _sourceType(SourceType::File), _filePath(filepath), _format(format), _usage(usage), _mipmapped(generateMips) {
 	if (_filePath.empty()) {
 		_filePath = std::filesystem::path("assets/textures") / (id + ".png");
 	}
 }
 
-Texture::Texture(const std::string& id, std::span<const uint8_t> data, VkFormat format, VkImageUsageFlags usage, bool generateMips)
-	: Resource(id), _sourceType(SourceType::Encoded), _bufferData(data.begin(), data.end()), _format(format), _usage(usage), _mipmapped(generateMips) {}
+Texture::Texture(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, std::span<const uint8_t> data, VkFormat format, VkImageUsageFlags usage, bool generateMips)
+	: Resource(id, core, resourceManager), _sourceType(SourceType::Encoded), _bufferData(data.begin(), data.end()), _format(format), _usage(usage), _mipmapped(generateMips) {}
 
-Texture::Texture(const std::string& id, const TextureDescription& desc, std::span<const uint8_t> data)
-	: Resource(id), _sourceType(SourceType::Description), _bufferData(data.begin(), data.end()), _desc(desc), _format(desc.format), _usage(desc.usage), _mipmapped(desc.mipLevels > 1), _extent(desc.extent), _mipLevels(desc.mipLevels) {}
+Texture::Texture(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, const TextureDescription& desc, std::span<const uint8_t> data)
+	: Resource(id, core, resourceManager), _sourceType(SourceType::Description), _bufferData(data.begin(), data.end()), _desc(desc), _format(desc.format), _usage(desc.usage), _mipmapped(desc.mipLevels > 1), _extent(desc.extent), _mipLevels(desc.mipLevels) {}
 
-Texture::Texture(Texture&& other) noexcept
-	: Resource(std::move(other)), _sourceType(other._sourceType), _filePath(std::move(other._filePath)),
-	_bufferData(std::move(other._bufferData)), _desc(other._desc), _format(other._format),
-	_usage(other._usage), _mipmapped(other._mipmapped), _image(other._image),
-	_allocation(other._allocation), _imageView(other._imageView), _sampler(other._sampler),
-	_extent(other._extent), _mipLevels(other._mipLevels), _core(other._core)
-{
-	other._image = VK_NULL_HANDLE;
-	other._allocation = VK_NULL_HANDLE;
-	other._imageView = VK_NULL_HANDLE;
-	other._sampler = VK_NULL_HANDLE;
-}
-
-Texture& Texture::operator=(Texture&& other) noexcept {
-	if (this != &other) {
-		if (_core != nullptr) {
-			if (_sampler) _core->globalDeletionQueue.push(_sampler);
-			if (_imageView) _core->globalDeletionQueue.push(_imageView);
-			if (_image) _core->globalDeletionQueue.push(_image, _allocation);
-		}
-		Resource::operator=(std::move(other));
-		_sourceType = other._sourceType; _filePath = std::move(other._filePath);
-		_bufferData = std::move(other._bufferData); _desc = other._desc; _format = other._format;
-		_usage = other._usage; _mipmapped = other._mipmapped; _image = other._image;
-		_allocation = other._allocation; _imageView = other._imageView; _sampler = other._sampler;
-		_extent = other._extent; _mipLevels = other._mipLevels; _core = other._core;
-
-		other._image = VK_NULL_HANDLE; other._allocation = VK_NULL_HANDLE;
-		other._imageView = VK_NULL_HANDLE; other._sampler = VK_NULL_HANDLE;
-	}
-	return *this;
-}
-
-Texture::~Texture() {
-	if (_core != nullptr) {
-		if (_sampler != VK_NULL_HANDLE)
-			_core->globalDeletionQueue.push(_sampler);
-		if (_imageView != VK_NULL_HANDLE)
-			_core->globalDeletionQueue.push(_imageView);
-		if (_image != VK_NULL_HANDLE)
-			_core->globalDeletionQueue.push(_image, _allocation);
-	}
-}
-
-void Texture::destroy_immediate(VulkanCore* core)
+void Texture::destroy_immediate() 
 {
 	if (_image != VK_NULL_HANDLE) {
-		vmaDestroyImage(core->get_allocator(), _image, _allocation);
+		vmaDestroyImage(_core->get_allocator(), _image, _allocation);
 		_image = VK_NULL_HANDLE;
 		_allocation = VK_NULL_HANDLE;
 	}
 	if (_imageView != VK_NULL_HANDLE) {
-		vkDestroyImageView(core->get_device(), _imageView, nullptr);
+		vkDestroyImageView(_core->get_device(), _imageView, nullptr);
 		_imageView = VK_NULL_HANDLE;
 	}
 	if (_sampler != VK_NULL_HANDLE) {
-		vkDestroySampler(core->get_device(), _sampler, nullptr);
+		vkDestroySampler(_core->get_device(), _sampler, nullptr);
 		_sampler = VK_NULL_HANDLE;
 	}
+	for (VkImageView view : _faceViews) {
+		if (view != VK_NULL_HANDLE) {
+			vkDestroyImageView(_core->get_device(), view, nullptr);
+		}
+	}
+	_faceViews.clear();
 }
 
-bool Texture::doLoad(VulkanCore* core)
+bool Texture::doLoad()
 {
-	_core = core;
-
 	int width = 0, height = 0, channels = 0;
 	stbi_uc* pixels = nullptr;
 	bool isRaw = false;
@@ -139,7 +99,7 @@ bool Texture::doLoad(VulkanCore* core)
 
 	// create the image and allocate memory for it
 	VmaAllocationCreateInfo allocInfo{ .usage = VMA_MEMORY_USAGE_GPU_ONLY, .requiredFlags = VkMemoryPropertyFlags(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT) };
-	if (vmaCreateImage(core->get_allocator(), &imgInfo, &allocInfo, &_image, &_allocation, nullptr) != VK_SUCCESS) {
+	if (vmaCreateImage(_core->get_allocator(), &imgInfo, &allocInfo, &_image, &_allocation, nullptr) != VK_SUCCESS) {
 		fmt::print("Texture: failed to create vulkan image for: {}\n", get_id());
 		return false;
 	}
@@ -156,9 +116,20 @@ bool Texture::doLoad(VulkanCore* core)
 	viewInfo.subresourceRange.aspectMask = (_sourceType == SourceType::Description) ? _desc.aspectMask : VK_IMAGE_ASPECT_COLOR_BIT;
 
 	// create the image view
-	if (vkCreateImageView(core->get_device(), &viewInfo, nullptr, &_imageView) != VK_SUCCESS) {
+	if (vkCreateImageView(_core->get_device(), &viewInfo, nullptr, &_imageView) != VK_SUCCESS) {
 		fmt::print("Texture: failed to create image view for: {}\n", get_id());
 		return false;
+	}
+
+	if (imgInfo.arrayLayers > 1) {
+		_faceViews.resize(imgInfo.arrayLayers, VK_NULL_HANDLE);
+		for (uint32_t i = 0; i < imgInfo.arrayLayers; i++) {
+			VkImageViewCreateInfo faceInfo = viewInfo;
+			faceInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			faceInfo.subresourceRange.baseArrayLayer = i;
+			faceInfo.subresourceRange.layerCount = 1;
+			vkCreateImageView(_core->get_device(), &faceInfo, nullptr, &_faceViews[i]);
+		}
 	}
 
 	if (pixels) { // if there is pixel data, upload to GPU
@@ -166,26 +137,29 @@ bool Texture::doLoad(VulkanCore* core)
 		if (isRaw)
 			dataSize = _bufferData.size();
 
-		Buffer staging(get_id() + "_staging", dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		staging.load(core);
-		staging.copy_data(pixels, dataSize);
+		//Buffer staging(get_id() + "_staging", _core, dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//staging.load();
+		//staging.copy_data(pixels, dataSize);
+		ResourceHandle<Buffer> staging = _resourceManager->load<Buffer>(get_id() + "_staging", std::span<const uint8_t>(pixels, dataSize), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		staging->copy_data(pixels, dataSize);
 
-		core->immediate_submit([&](VkCommandBuffer cmd) {
-			vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		_core->immediate_submit([&](VkCommandBuffer cmd) {
+			vkutil::image_mem_barrier2(cmd, _image, _format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, imgInfo.arrayLayers, _mipLevels, 0);
+
 			VkBufferImageCopy copyRegion = {};
 			copyRegion.imageSubresource.aspectMask = viewInfo.subresourceRange.aspectMask;
 			copyRegion.imageSubresource.layerCount = imgInfo.arrayLayers;
 			copyRegion.imageExtent = _extent;
-			vkCmdCopyBufferToImage(cmd, staging.get_buffer(), _image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+			vkCmdCopyBufferToImage(cmd, staging->get_buffer(), _image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
 
 			if (_mipmapped && _mipLevels > 1) {
 				vkutil::generate_mipmaps(cmd, _image, { _extent.width, _extent.height });
 			}
 			else {
-				vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				vkutil::image_mem_barrier2(cmd, _image, _format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, imgInfo.arrayLayers, _mipLevels, 0);
 			}
 			});
-		staging.destroy_immediate(core);
+		//staging.destroy_immediate();
 
 		if (!isRaw) {
 			stbi_image_free(pixels);
@@ -198,7 +172,7 @@ bool Texture::doLoad(VulkanCore* core)
 		// leave undefined; RenderGraph manages runtime transitions
 	}
 	else if (_sourceType == SourceType::Description) { 
-		core->immediate_submit([&](VkCommandBuffer cmd) {
+		_core->immediate_submit([&](VkCommandBuffer cmd) {
 			vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 			});
 	}
@@ -217,7 +191,7 @@ bool Texture::doLoad(VulkanCore* core)
 		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
 		samplerInfo.unnormalizedCoordinates = VK_FALSE;
 
-		if (vkCreateSampler(core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
+		if (vkCreateSampler(_core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
 			fmt::print("Texture: failed to create sampler for: {}\n", get_id());
 			return false;
 		}
@@ -235,7 +209,7 @@ bool Texture::doLoad(VulkanCore* core)
 		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
 		samplerInfo.unnormalizedCoordinates = VK_FALSE;
 
-		if (vkCreateSampler(core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
+		if (vkCreateSampler(_core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
 			fmt::print("Texture: failed to create sampler for: {}\n", get_id());
 			return false;
 		}
@@ -244,21 +218,28 @@ bool Texture::doLoad(VulkanCore* core)
 	return true;
 }
 
-bool Texture::doUnload(VulkanCore* core)
+bool Texture::doUnload()
 {
 	if (_sampler != VK_NULL_HANDLE) { 
-		core->globalDeletionQueue.push(_sampler); 
+		_core->globalDeletionQueue.push(_sampler);
 		_sampler = VK_NULL_HANDLE; 
 	}
 	if (_imageView != VK_NULL_HANDLE) { 
-		core->globalDeletionQueue.push(_imageView); 
+		_core->globalDeletionQueue.push(_imageView);
 		_imageView = VK_NULL_HANDLE;
 	}
 	if (_image != VK_NULL_HANDLE) { 
-		core->globalDeletionQueue.push(_image, _allocation); 
+		_core->globalDeletionQueue.push(_image, _allocation);
 		_image = VK_NULL_HANDLE;
 		_allocation = VK_NULL_HANDLE; 
 	}
+
+	for (VkImageView view : _faceViews) {
+		if (view != VK_NULL_HANDLE) {
+			_core->globalDeletionQueue.push(view);
+		}
+	}
+	_faceViews.clear();
 
 	return true;
 }

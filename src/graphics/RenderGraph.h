@@ -2,8 +2,6 @@
 
 #include <core/vk_types.h>
 #include <graphics/RenderContext.h>
-#include <graphics/RenderResourceManager.h>
-#include <graphics/utils/RenderSync.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -12,26 +10,50 @@
 #include <optional>
 
 
+struct RGTextureState
+{
+	VkImage image{ VK_NULL_HANDLE };
+	VkFormat format{ VK_FORMAT_UNDEFINED };
+	VkImageLayout currentLayout{ VK_IMAGE_LAYOUT_UNDEFINED };
+	uint32_t layerCount{ 1 };
+	uint32_t mipLevels{ 0 };
+	uint32_t baseMiplevel{ 0 };
+};
+
+struct RGBufferState
+{
+	VkBuffer buffer{ VK_NULL_HANDLE };
+	VkPipelineStageFlags2 currentStage{ VK_PIPELINE_STAGE_2_NONE };
+};
+
+struct RGTextureTransition
+{
+	std::string name;
+	VkImageLayout targetLayout;
+};
+
+struct RGBufferTransition
+{
+	std::string name;
+	VkPipelineStageFlags2 targetStage;
+};
+
 struct RGColorAttachment
 {
 	std::string name;
-	VkAttachmentLoadOp loadOp{ VK_ATTACHMENT_LOAD_OP_CLEAR };
-	VkAttachmentStoreOp storeOp{ VK_ATTACHMENT_STORE_OP_STORE };
-	VkClearColorValue clearColor{ 0.0f, 0.0f, 0.0f, 1.0f };
+	VkImageView view;
+	VkAttachmentLoadOp loadOp;
+	VkAttachmentStoreOp storeOp;
+	VkClearColorValue clearColor;
 };
 
 struct RGDepthAttachment
 {
 	std::string name;
-	VkAttachmentLoadOp loadOp{ VK_ATTACHMENT_LOAD_OP_CLEAR };
-	VkAttachmentStoreOp storeOp{ VK_ATTACHMENT_STORE_OP_STORE };
-	float clearDepth{ 0.0f };
-};
-
-struct RGResourceUsage
-{
-	std::string name;
-	ResourceState state;
+	VkImageView view;
+	VkAttachmentLoadOp loadOp;
+	VkAttachmentStoreOp storeOp;
+	float clearDepth;
 };
 
 using ExecutionFn = std::function<void(RenderContext& ctx)>;
@@ -39,83 +61,62 @@ using ExecutionFn = std::function<void(RenderContext& ctx)>;
 struct RGPass
 {
 	std::string name;
-	std::vector<RGResourceUsage> reads;
-	std::vector<RGResourceUsage> writes;
+	std::vector<RGTextureTransition> textureTransitions;
+	std::vector<RGBufferTransition> bufferTransitions;
+
 	std::vector<RGColorAttachment> colorAttachments;
-	std::optional<RGDepthAttachment> depthAttachments;
+	std::optional<RGDepthAttachment> depthAttachment;
 	std::optional<VkExtent2D> renderExtent;
+
 	ExecutionFn executeCallback;
 };
+
+class RenderGraph;
 
 class RGPassBuilder
 {
 public:
-	explicit RGPassBuilder(RGPass& pass) : _pass(pass) {}
+	RGPassBuilder(RenderGraph& graph, RGPass& pass)
+		: _graph(graph), _pass(pass) {}
 
-	// resource this pass reads from
-	RGPassBuilder& read(const std::string& name, ResourceState state = ResourceState::ShaderReadOnly)
-	{
-		_pass.reads.push_back({ name, state });
-		return *this;
-	}
+	RGPassBuilder& read_texture(const std::string& name, VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	RGPassBuilder& write_texture(const std::string& name, VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL);
 
-	// resource this pass writes to
-	RGPassBuilder& write(const std::string& name, ResourceState state = ResourceState::StorageImage)
-	{
-		_pass.writes.push_back({ name, state });
-		return *this;
-	}
+	RGPassBuilder& read_buffer(const std::string& name, VkPipelineStageFlags2 stage);
+	RGPassBuilder& write_buffer(const std::string& name, VkPipelineStageFlags2 stage);
+	
+	RGPassBuilder& set_color_attachment(const std::string& name, VkImageView view, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, const VkClearColorValue& clearColor = { 0.0f, 0.0f, 0.0f, 1.0f });
+	RGPassBuilder& set_depth_attachment(const std::string& name, VkImageView view, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, float clearDepth = 1.0f);
 
-	// set color attachment for this pass
-	RGPassBuilder& set_color_attachment(const std::string& name, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, VkClearColorValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f })
-	{
-		_pass.writes.push_back({ name, ResourceState::ColorAttachment });
-		_pass.colorAttachments.push_back({ name, loadOp, VK_ATTACHMENT_STORE_OP_STORE, clearColor });
-		return *this;
-	}
-
-	// set depth attachment for this pass
-	RGPassBuilder& set_depth_attachment(const std::string& name, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, float clearDepth = 0.0f)
-	{
-		_pass.writes.push_back({ name, ResourceState::DepthAttachment });
-		_pass.depthAttachments = RGDepthAttachment{ name, loadOp, VK_ATTACHMENT_STORE_OP_STORE, clearDepth };
-		return *this;
-	}
-
-	// set the render extent for this pass
-	RGPassBuilder& set_extent(VkExtent2D extent)
-	{
-		_pass.renderExtent = extent;
-		return *this;
-	}
-
-	// set the execute callback for this pass
-	RGPassBuilder& set_execute_callback(ExecutionFn fn)
-	{
-		_pass.executeCallback = std::move(fn);
-		return *this;
-	}
+	RGPassBuilder& set_extent(VkExtent2D extent);
+	RGPassBuilder& set_execute_callback(ExecutionFn function);
 
 private:
+	RenderGraph& _graph;
 	RGPass& _pass;
 };
 
 class RenderGraph
 {
 public:
-	explicit RenderGraph(RenderResourceManager& resources) : _resources(resources) {}
+	void clear_passes();
 
-	// add a new pass to the graph
-	RGPassBuilder add_pass(const std::string& name);
+	void register_texture(const std::string& name, VkImage image, VkFormat format, VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, uint32_t layerCount = 1, uint32_t mipLevels = 1, uint32_t baseMiplevel = 0);
+	void register_buffer(const std::string& name, VkBuffer buffer, VkPipelineStageFlags2 initialStage = VK_PIPELINE_STAGE_2_NONE);
 
-	// compile the graph to determine execution order and resource transitions
-	void compile();
+	RGPassBuilder add_pass(const std::string name);
 
-	// execute the graph by running each pass in order
 	void execute(RenderContext& ctx);
 
+	// immediate transitions
+	void transition_texture(VkCommandBuffer cmd, const std::string& name, VkImageLayout newLayout);
+	void transition_buffer(VkCommandBuffer cmd, const std::string& name, VkPipelineStageFlags2 newStage);
+
+	RGTextureState* get_texture(const std::string& name);
+	RGBufferState* get_buffer(const std::string& name);
+
 private:
-	RenderResourceManager& _resources;
+	std::unordered_map<std::string, RGTextureState> _textures;
+	std::unordered_map<std::string, RGBufferState> _buffers;
 	std::vector<RGPass> _passes;
-	std::vector<uint32_t> _executionOrder;
 };

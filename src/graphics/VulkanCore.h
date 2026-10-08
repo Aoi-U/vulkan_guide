@@ -25,20 +25,8 @@ public:
 
 	DeletionQueue globalDeletionQueue;
 
-	// default samplers and images
-	Texture _whiteImage;
-	Texture _blackImage;
-	Texture _greyImage;
-	Texture _errorCheckerboardImage;
-	Texture _defaultNormalImage;
-	VkSampler _defaultSamplerLinear{ VK_NULL_HANDLE };
-	VkSampler _defaultSamplerNearest{ VK_NULL_HANDLE };
-
-	VkSampler _shadowSampler{ VK_NULL_HANDLE };
-
 private:
 	void init_immediate_submit();
-	void init_default_data();
 
 	// vulkan instance handles
 	VkInstance _instance; // vulkan library handle

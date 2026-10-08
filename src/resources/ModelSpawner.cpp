@@ -116,10 +116,8 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 	return nodeEntity;
 }
 
-entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceManager,
-	const std::string& modelId, const std::filesystem::path& path,
-	const glm::vec3& position) {
-	auto modelHandle = resourceManager.load<Model>(modelId, path, &resourceManager);
+entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceManager, const std::string& modelId, const std::filesystem::path& path, const glm::vec3& position) {
+	auto modelHandle = resourceManager.load<Model>(modelId, path);
 	if (!modelHandle.is_valid()) return entt::null;
 
 	entt::entity firstRootEntity = registry.create();

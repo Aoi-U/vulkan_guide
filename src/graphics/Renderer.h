@@ -12,9 +12,9 @@
 #include <graphics/pass/SSAOPass.h>
 #include <graphics/pass/SSAOBlurPass.h>
 
+#include "graphics/RenderGraph.h"
 #include <resources/Buffer.h>
 #include <graphics/IBLSystem.h>
-#include <graphics/RenderResourceManager.h>
 #include <window/window.h>
 #include <utils/vk_descriptors.h>
 #include <memory>
@@ -76,16 +76,16 @@ struct FrameData
 	DescriptorAllocatorGrowable _frameDescriptors;
 
 
-	Buffer sceneDataBuffer; // uniform buffer for scene data
+	ResourceHandle<Buffer> sceneDataBuffer; // uniform buffer for scene data
 
 	// indirect draw buffers
-	Buffer _cullStatsBuffer; // buffer for frustum cull statistics
-	Buffer _gpuObjectBuffer; // buffer for object data used in frustum culling
-	Buffer _gpuInstanceBuffer; // buffer for instance ids for visible objects
-	Buffer _gpuIndirectBuffer; // buffer for indirect draw commands
-	Buffer _gpuCountBuffer; // buffer for draw counts per batch
+	ResourceHandle<Buffer> _cullStatsBuffer; // buffer for frustum cull statistics
+	ResourceHandle<Buffer> _gpuObjectBuffer; // buffer for object data used in frustum culling
+	ResourceHandle<Buffer> _gpuInstanceBuffer; // buffer for instance ids for visible objects
+	ResourceHandle<Buffer> _gpuIndirectBuffer; // buffer for indirect draw commands
+	ResourceHandle<Buffer> _gpuCountBuffer; // buffer for draw counts per batch
 
-	Buffer _materialDataBuffer; // buffer for material data for each entity in the scene
+	ResourceHandle<Buffer> _materialDataBuffer; // buffer for material data for each entity in the scene
 };
 
 class Renderer
@@ -112,7 +112,7 @@ public:
 	VkImageView get_current_swapchain_image_view() const { return _swapchain.get_image_views()[_swapchainImageIndex]; }
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-	RenderResourceManager& get_resources() { return _renderResourceManager; }
+	const std::unordered_map<std::string, ResourceHandle<Texture>>& get_render_targets() const { return _renderTargets; }
 	IBLSystem& get_ibl() { return _iblSystem; }
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
 
@@ -124,8 +124,8 @@ public:
 private:
 	Window* _window;
 	VulkanCore* _vulkanCore;
+	ResourceManager* _resourceManager;
 	Swapchain _swapchain;
-	RenderResourceManager _renderResourceManager;
 	VkExtent2D _drawExtent;
 	VkExtent2D _viewportExtent{ 1280, 720 };
 	FrameData _frames[FRAME_OVERLAP];
@@ -146,6 +146,9 @@ private:
 	std::unique_ptr<DeferredLightingPass> _deferredLightingPass;
 	std::unique_ptr<SSAOPass> _ssaoPass;
 	std::unique_ptr<SSAOBlurPass> _ssaoBlurPass;
+
+	std::unordered_map<std::string, ResourceHandle<Texture>> _renderTargets;	
+	RenderGraph _renderGraph{};
 
 	IBLSystem _iblSystem;
 

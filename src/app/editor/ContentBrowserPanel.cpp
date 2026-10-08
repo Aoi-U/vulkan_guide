@@ -75,7 +75,7 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
         if (ImGui::BeginPopupContextItem()) {
           if (assetRec->type == AssetType::Model) {
             if (ImGui::MenuItem("Preload to Memory")) {
-              ctx.resourceManager.preload<Model>(assetRec->id, assetRec->path, &ctx.resourceManager);
+              ctx.resourceManager.preload<Model>(assetRec->id, assetRec->path);
             }
             if (ImGui::MenuItem("Unload from Memory")) {
               ctx.resourceManager.force_unload<Model>(assetRec->id);

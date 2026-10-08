@@ -26,19 +26,18 @@ struct ModelNode : public Node
 class Model : public Resource
 {
 public:
-	Model(const std::string& id, const std::filesystem::path& path, ResourceManager* manager);
-	~Model() override = default;
+	Model(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, const std::filesystem::path& path);
+	~Model() override { Resource::unload(); }
 
 	std::vector<std::shared_ptr<ModelNode>> rootNodes;
 	std::vector<std::shared_ptr<Node>> allNodes;
 
 protected:
-	bool doLoad(VulkanCore* core) override;
-	bool doUnload(VulkanCore* core) override;
+	bool doLoad() override;
+	bool doUnload() override;
 
 private:
 	std::filesystem::path _filePath;
-	ResourceManager* _resourceManager;
 
 	std::vector<ResourceHandle<Texture>> _textures;
 	std::vector<ResourceHandle<Material>> _materials;

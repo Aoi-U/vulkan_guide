@@ -7,8 +7,6 @@
 #include <resources/Buffer.h>
 #include <string>
 
-class VulkanCore;
-
 // data that is sent to shader for a material instance
 struct MaterialConstants
 {
@@ -32,12 +30,12 @@ public:
 		Emissive = 4
 	};
 
-	Material(const std::string& id, ResourceManager* manager, MaterialPassType passType = MaterialPassType::Opaque);
-	~Material() override = default;
+	Material(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, MaterialPassType passType = MaterialPassType::Opaque);
+	~Material() { Resource::unload(); }
 
 	void set_texture(const TextureSlot slot, ResourceHandle<Texture> texture);
 	void set_constants(const MaterialConstants& constants);
-	void update_buffer(VulkanCore* core);
+	void update_buffer();
 
 	VkDescriptorSet get_descriptor_set() const { return _descriptorSet; }
 	MaterialPassType get_pass_type() const { return _passType; }
@@ -49,11 +47,10 @@ public:
 	static VkDescriptorSetLayout get_descriptor_layout() { return _layout; }
 
 protected:
-	bool doLoad(VulkanCore* core) override;
-	bool doUnload(VulkanCore* core) override;
+	bool doLoad() override;
+	bool doUnload() override;
 
 private:
-	ResourceManager* _resourceManager;
 	ResourceHandle<Texture> _baseColorTexture;
 	ResourceHandle<Texture> _metalRoughTexture;
 	ResourceHandle<Texture> _occlusionTexture;
@@ -63,7 +60,7 @@ private:
 	MaterialConstants _constants{};
 	MaterialPassType _passType;
 
-	Buffer _materialBuffer{};
+	ResourceHandle<Buffer> _materialBuffer{};
 	VkDescriptorSet _descriptorSet{ VK_NULL_HANDLE };
 
 	static VkDescriptorSetLayout _layout;

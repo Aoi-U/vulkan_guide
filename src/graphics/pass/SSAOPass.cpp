@@ -2,6 +2,9 @@
 
 #include <utils/vk_descriptors.h>
 #include <graphics/Renderer.h>
+#include <graphics/utils/vk_utils.h>
+#include <resources/DefaultResources.h>
+#include <resources/ResourceManager.h>
 #include <random>
 #include <chrono>
 
@@ -12,6 +15,7 @@ extern AutoCVar_Float cvSSAOPower;
 void SSAOPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
+	_resourceManager = resourceManager;
 
 	generate_kernal_and_noise();
 
@@ -46,29 +50,29 @@ void SSAOPass::cleanup()
 		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _descriptorLayout, nullptr);
 		_descriptorLayout = VK_NULL_HANDLE;
 	}
-	if (_noiseSampler != VK_NULL_HANDLE) {
-		vkDestroySampler(_vulkanCore->get_device(), _noiseSampler, nullptr);
-		_noiseSampler = VK_NULL_HANDLE;
-	}
+	//if (_noiseSampler != VK_NULL_HANDLE) {
+	//	vkDestroySampler(_vulkanCore->get_device(), _noiseSampler, nullptr);
+	//	_noiseSampler = VK_NULL_HANDLE;
+	//}
 	
-	_noiseImage.unload(_vulkanCore);
-	_kernelBuffer.unload(_vulkanCore);
+	//_noiseImage.unload();
+	//_kernelBuffer.unload();
 
 	_vulkanCore = nullptr;
 }
 
-void SSAOPass::render(RenderContext & ctx, FrameData & frameData, RenderResourceManager & resources, DrawContext & drawCtx, const GPUSceneData & sceneData)
+void SSAOPass::render(RenderContext & ctx, FrameData & frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext & drawCtx, const GPUSceneData & sceneData)
 {
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
 	VkDescriptorSet ssaoSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer.get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_buffer(1, _kernelBuffer.get_buffer(), sizeof(glm::vec4) * 64, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_image(2, resources.get_view("GBufferPosition"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(3, resources.get_view("GBufferNormal"), _vulkanCore->_defaultSamplerNearest, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(4, _noiseImage.get_image_view(), _noiseSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	writer.write_buffer(0, frameData.sceneDataBuffer->get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_buffer(1, _kernelBuffer->get_buffer(), sizeof(glm::vec4) * 64, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+	writer.write_image(2, renderTargets.find("GBufferPosition")->second->get_image_view(), DefaultResources::get().defaultSamplerNearest->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	writer.write_image(3, renderTargets.find("GBufferNormal")->second->get_image_view(), DefaultResources::get().defaultSamplerNearest->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+	writer.write_image(4, _noiseImage->get_image_view(), _noiseSampler->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), ssaoSet);
 
 	ctx.bind_pipeline(_pipeline);
@@ -121,9 +125,10 @@ void SSAOPass::generate_kernal_and_noise()
 		ssaoKernel.emplace_back(sample, 1.0);
 	}
 
-	_kernelBuffer = Buffer("ssao_kernel", sizeof(glm::vec4) * KERNEL_SIZE, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	_kernelBuffer.load(_vulkanCore);
-	_kernelBuffer.copy_data(ssaoKernel.data(), sizeof(glm::vec4) * KERNEL_SIZE);
+	//_kernelBuffer = Buffer("ssao_kernel", sizeof(glm::vec4) * KERNEL_SIZE, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+	//_kernelBuffer.load();
+	//_kernelBuffer.copy_data(ssaoKernel.data(), sizeof(glm::vec4) * KERNEL_SIZE);
+	_kernelBuffer = _resourceManager->load<Buffer>("ssao_kernel", std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(ssaoKernel.data()), sizeof(glm::vec4) * KERNEL_SIZE), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 	constexpr int NOISE_DIM = 16;
 	// generate noise texture
@@ -134,9 +139,11 @@ void SSAOPass::generate_kernal_and_noise()
 		ssaoNoise.emplace_back(noise, 1.0);
 	}
 
-	Buffer staging("ssao_noise_staging", sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
-	staging.load(_vulkanCore);
-	staging.copy_data(ssaoNoise.data(), sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM);
+	//Buffer staging("ssao_noise_staging", _vulkanCore, _resourceManager, sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+	//staging.load();
+	//staging.copy_data(ssaoNoise.data(), sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM);
+	ResourceHandle<Buffer> staging = _resourceManager->load<Buffer>("ssao_noise_staging", std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(ssaoNoise.data()), sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+	staging->copy_data(ssaoNoise.data(), sizeof(glm::vec4) * NOISE_DIM * NOISE_DIM);
 
 	TextureDescription desc{
 		.extent = { 4, 4, 1 },
@@ -148,22 +155,24 @@ void SSAOPass::generate_kernal_and_noise()
 		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
 	};
 
-	_noiseImage = Texture("ssao_noise", desc);
-	_noiseImage.load(_vulkanCore);
+	//_noiseImage = Texture("ssao_noise", desc);
+	//_noiseImage.load();
+	_noiseImage = _resourceManager->load<Texture>("ssao_noise", desc);
 
 	// copy noise data staging buffer to noise image
 	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
-		RenderSync::transition_image(cmd, _noiseImage.get_image(), ResourceState::Undefined, ResourceState::TransferDst);
+		vkutil::image_mem_barrier2(cmd, _noiseImage->get_image(), VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
 		VkBufferImageCopy copyRegion{
 			.imageSubresource = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .mipLevel = 0, .baseArrayLayer = 0, .layerCount = 1 },
 			.imageExtent = { 4, 4, 1}
 		};
-		vkCmdCopyBufferToImage(cmd, staging.get_buffer(), _noiseImage.get_image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-		RenderSync::transition_image(cmd, _noiseImage.get_image(), ResourceState::TransferDst, ResourceState::ShaderReadOnly);
+		vkCmdCopyBufferToImage(cmd, staging->get_buffer(), _noiseImage->get_image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
+		vkutil::image_mem_barrier2(cmd, _noiseImage->get_image(), VK_FORMAT_R32G32B32A32_SFLOAT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		});
 
 	// destroy staging buffer
-	staging.destroy_immediate(_vulkanCore);
+	//staging.destroy_immediate();
 
 	// repeat sampler for tiling across screen
 	VkSamplerCreateInfo samplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
@@ -173,5 +182,6 @@ void SSAOPass::generate_kernal_and_noise()
 	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
 	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-	VK_CHECK(vkCreateSampler(_vulkanCore->get_device(), &samplerInfo, nullptr, &_noiseSampler));
+	//VK_CHECK(vkCreateSampler(_vulkanCore->get_device(), &samplerInfo, nullptr, &_noiseSampler));
+	_noiseSampler = _resourceManager->load<Sampler>("ssao_noise_sampler", samplerInfo);
 }

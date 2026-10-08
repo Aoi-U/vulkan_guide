@@ -4,8 +4,8 @@
 #include <graphics/Pipeline.h>
 #include <string>
 #include <filesystem>
-#include <graphics/utils/RenderSync.h>
 #include <resources/Texture.h>
+#include <resources/Sampler.h>
 
 class VulkanCore;
 
@@ -24,12 +24,12 @@ public:
 
 	EnvironmentResources get_environment_resources() const {
 		return EnvironmentResources{
-			.environmentView = _envCubemap.get_image_view(),
-			.irradianceView = _irradianceCubemap.get_image_view(),
-			.prefilterView = _prefilterCubemap.get_image_view(),
-			.brdfLutView = _brdfLut.get_image_view(),
-			.cubemapSampler = _cubemapSampler,
-			.lutSampler = _lutSampler
+			.environmentView = _envCubemap->get_image_view(),
+			.irradianceView = _irradianceCubemap->get_image_view(),
+			.prefilterView = _prefilterCubemap->get_image_view(),
+			.brdfLutView = _brdfLut->get_image_view(),
+			.cubemapSampler = _cubemapSampler->get_sampler(),
+			.lutSampler = _lutSampler->get_sampler()
 		};
 	}
 
@@ -39,18 +39,19 @@ private:
 	void generate_brdf_lut();
 	void destroy_current_environment();
 
-	void generate_cubemap_mips(VkCommandBuffer cmd, VkImage image, uint32_t size, uint32_t mipLevels, ResourceState baseState);
+	void generate_cubemap_mips(VkCommandBuffer cmd, VkImage image, uint32_t size, uint32_t mipLevels, VkImageLayout layout, VkFormat format);
 
 	VulkanCore* _vulkanCore;
+	ResourceManager* _resourceManager;
 
-	Texture _envCubemap;
-	Texture _irradianceCubemap;
-	Texture _prefilterCubemap;
-	Texture _brdfLut;
+	ResourceHandle<Texture> _envCubemap;
+	ResourceHandle<Texture> _irradianceCubemap;
+	ResourceHandle<Texture> _prefilterCubemap;
+	ResourceHandle<Texture> _brdfLut;
 
-	VkSampler _cubemapSampler;
-	VkSampler _lutSampler;
-	VkSampler _hdrSampler;
+	ResourceHandle<Sampler> _cubemapSampler;
+	ResourceHandle<Sampler> _lutSampler;
+	ResourceHandle<Sampler> _hdrSampler;
 
 	// Compute pipelines
 	ComputePipeline _equirectToCubemapPipeline;

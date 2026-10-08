@@ -11,7 +11,12 @@ void RenderTargetViewPanel::on_draw(EditorContext& ctx)
 
   ImGui::Begin(get_name(), &is_open);
 
-  auto targetNames = ctx.renderer.get_resources().get_target_names();
+  const auto& renderTargets = ctx.renderer.get_render_targets();
+  std::vector<std::string> targetNames;
+  for (const auto& [name, texture] : renderTargets) {
+    targetNames.push_back(name);
+  } 
+
   if (targetNames.empty()) {
     ImGui::TextDisabled("No render targets registered.");
     ImGui::End();
@@ -37,16 +42,14 @@ void RenderTargetViewPanel::on_draw(EditorContext& ctx)
     ImGui::EndCombo();
   }
 
-  const auto& desc = ctx.renderer.get_resources().get_description(_selectedTarget);
-  VkExtent2D currentExtent = ctx.renderer.get_resources().get_extent(_selectedTarget);
-
-  bool isCube = (desc.flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) ||
-    (desc.arrayLayers == 6 && desc.viewType == VK_IMAGE_VIEW_TYPE_CUBE);
+  //const Texture& selectedTex = renderTargets.at(_selectedTarget);
+	const ResourceHandle<Texture> selectedTexHandle = renderTargets.at(_selectedTarget);
+  VkFormat format = selectedTexHandle->get_format();
+  VkExtent2D currentExtent = selectedTexHandle->get_extent_2d();
+  bool isCube = selectedTexHandle->get_face_views().size() > 1;
 
   // metadata Bar
-  ImGui::Text("Size: %u x %u | Format: %s",
-    currentExtent.width, currentExtent.height,
-    string_VkFormat(desc.format));
+  ImGui::Text("Size: %u x %u | Format: %s", currentExtent.width, currentExtent.height, string_VkFormat(format));
 
   // cubemap face controls
   if (isCube) {

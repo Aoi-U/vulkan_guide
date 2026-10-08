@@ -41,11 +41,12 @@ static VkSamplerAddressMode extractWrap(fastgltf::Wrap wrap) {
 	}
 }
 
-Model::Model(const std::string& id, const std::filesystem::path& path, ResourceManager* manager)
-	: Resource(id), _filePath(path), _resourceManager(manager)
+
+Model::Model(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, const std::filesystem::path& path)
+	: Resource(id, core, resourceManager), _filePath(path)
 {}
 
-bool Model::doLoad(VulkanCore* core)
+bool Model::doLoad()
 {
 	fastgltf::Parser parser{};
 	constexpr auto gltfOptions =
@@ -153,7 +154,7 @@ bool Model::doLoad(VulkanCore* core)
 		std::string matName = get_id() + "_mat_" + std::to_string(i);
 
 		MaterialPassType passType = mat.alphaMode == fastgltf::AlphaMode::Blend ? MaterialPassType::Transparent : MaterialPassType::Opaque;
-		materials[i] = _resourceManager->load<Material>(matName, _resourceManager, passType); // get default material handle 
+		materials[i] = _resourceManager->load<Material>(matName, passType); // get default material handle 
 
 		MaterialConstants constants;
 		constants.colorFactors.x = mat.pbrData.baseColorFactor[0];
@@ -204,12 +205,12 @@ bool Model::doLoad(VulkanCore* core)
 			materials[i]->set_texture(Material::TextureSlot::Emissive, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
 
-		materials[i]->update_buffer(core);
+		materials[i]->update_buffer();
 	}
 	_materials = materials;
 
 	// load default material if no materials were found
-	auto defaultMat = _resourceManager->load<Material>(get_id() + "_defaultMat", _resourceManager, MaterialPassType::Opaque);
+	auto defaultMat = _resourceManager->load<Material>(get_id() + "_defaultMat", MaterialPassType::Opaque);
 
 	// load meshes
 	std::vector<uint32_t> indices;
@@ -419,7 +420,7 @@ bool Model::doLoad(VulkanCore* core)
 	return true;
 }
 
-bool Model::doUnload(VulkanCore* core)
+bool Model::doUnload()
 {
 	rootNodes.clear();
 	allNodes.clear();

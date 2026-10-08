@@ -10,6 +10,7 @@
 #include <utility>
 #include <typeinfo>
 #include <fmt/std.h>
+#include <assert.h>
 
 // resource management classes heavily based off vulkan resource management tutorial: 
 // https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.html#_resource_management
@@ -24,11 +25,11 @@ class ResourceHandle
 public:
 	ResourceHandle();
 	ResourceHandle(const std::string& id, ResourceManager* manager);
-	ResourceHandle(const ResourceHandle& other);
-	ResourceHandle& operator=(const ResourceHandle& other);
-	ResourceHandle(ResourceHandle&& other) noexcept;
-	ResourceHandle& operator=(ResourceHandle&& other) noexcept;
-	~ResourceHandle();
+	//ResourceHandle(const ResourceHandle& other);
+	//ResourceHandle& operator=(const ResourceHandle& other);
+	//ResourceHandle(ResourceHandle&& other) noexcept;
+	//ResourceHandle& operator=(ResourceHandle&& other) noexcept;
+	//~ResourceHandle();
 
 	T* get() const;
 	bool is_valid() const;
@@ -49,58 +50,69 @@ private:
 class Resource
 {
 public:
-	explicit Resource(const std::string& id)
-		: resourceId(id) {}
+	explicit Resource(const std::string& id, VulkanCore* core, ResourceManager* manager)
+		: resourceId(id), _core(core), _resourceManager(manager) {}
 
 	virtual ~Resource() = default;
 
 	const std::string& get_id() const { return resourceId; }
 	bool is_loaded() const { return loaded; }
 
-	bool load(VulkanCore* core)
+	bool load()
 	{
 		if (loaded)
 			return true;
 
-		loaded = doLoad(core);
+		loaded = doLoad();
 		return loaded;
 	}
 
-	void unload(VulkanCore* core)
+	void unload()
 	{
 		if (!loaded)
 			return;
 
-		doUnload(core);
+		doUnload();
 		loaded = false;
 		
 	}
 
 protected:
-	virtual bool doLoad(VulkanCore* core) = 0;
-	virtual bool doUnload(VulkanCore* core) = 0;
+	virtual bool doLoad() = 0;
+	virtual bool doUnload() = 0;
 
 	Resource() = default;
 	Resource(Resource&& other) noexcept
-		: resourceId(std::move(other.resourceId)), loaded(other.loaded) 
+		: resourceId(std::move(other.resourceId)), loaded(other.loaded), _core(other._core)
 	{
 		other.loaded = false;
+		other._core = nullptr;
+		other._resourceManager = nullptr;
 	}
 
 	Resource& operator=(Resource&& other) noexcept {
 		if (this != &other) {
 			resourceId = std::move(other.resourceId);
 			loaded = other.loaded;
+			_core = other._core;
+			_resourceManager = other._resourceManager;
+
 			other.loaded = false;
+			other._core = nullptr;
+			other._resourceManager = nullptr;
 		}
 		return *this;
 	}
 	Resource(const Resource&) = delete;
 	Resource& operator=(const Resource&) = delete;
 
+	VulkanCore* _core{ nullptr };
+	ResourceManager* _resourceManager{ nullptr };
+
 private:
 	std::string resourceId;
 	bool loaded = false;
+
 };
 
 // resource manager
@@ -116,9 +128,8 @@ public:
 		bool isPersistent{ false }; // marks asset for persistent preloading
 	};
 
-	ResourceManager() = default;
-	explicit ResourceManager(VulkanCore* vulkanCore)
-		: _vulkanCore(vulkanCore) {}
+	explicit ResourceManager(VulkanCore* core)
+		: _vulkanCore(core) {}
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> preload(const std::string& resourceId, Args&&... args) {
@@ -144,8 +155,8 @@ public:
 		}
 
 		// create new resource instance and attempt loading
-		auto resource = std::make_shared<T>(resourceId, std::forward<Args>(args)...);
-		if (!resource->load(_vulkanCore)) {
+		auto resource = std::make_shared<T>(resourceId, _vulkanCore, this, std::forward<Args>(args)...);
+		if (!resource->load()) {
 			return ResourceHandle<T>(); // return invalid handle if loading fails
 		}
 
@@ -257,7 +268,7 @@ public:
 			if (resourceIt == typeResources.end())
 				return;
 
-			resourceIt->second->unload(_vulkanCore);
+			resourceIt->second->unload();
 			typeResources.erase(resourceIt);
 			typeIt->second.erase(it);
 		}
@@ -267,7 +278,7 @@ public:
 	void force_unload(const std::string& resourceId) {
 		auto typeKey = std::type_index(typeid(T));
 		if (_resources.contains(typeKey) && _resources[typeKey].contains(resourceId)) {
-			_resources[typeKey][resourceId]->unload(_vulkanCore);
+			_resources[typeKey][resourceId]->unload();
 			_resources[typeKey].erase(resourceId);
 			_refCounts[typeKey].erase(resourceId);
 		}
@@ -277,7 +288,7 @@ public:
 		for (auto& [type, typeCounts] : _refCounts) {
 			for (auto it = typeCounts.begin(); it != typeCounts.end(); ) {
 				if (it->second.refCount <= 0 && !it->second.isPersistent) {
-					_resources[type][it->first]->unload(_vulkanCore);
+					_resources[type][it->first]->unload();
 					_resources[type].erase(it->first);
 					it = typeCounts.erase(it);
 				}
@@ -292,7 +303,7 @@ public:
 	{
 		for (auto& [type, typeResources] : _resources) {
 			for (auto& [id, resource] : typeResources) {
-				resource->unload(_vulkanCore); // ensure all resources clean up properly
+				resource->unload(); // ensure all resources clean up properly
 			}
 			typeResources.clear(); // clear type specific container
 		}
@@ -302,7 +313,8 @@ public:
 
 
 private:
-	VulkanCore* _vulkanCore;
+	VulkanCore* _vulkanCore{ nullptr };
+
 	// two level storage system
 	// organize by type first, then by unique id
 	std::unordered_map<std::type_index, std::unordered_map<std::string, std::shared_ptr<Resource>>> _resources;
@@ -318,61 +330,61 @@ template<typename T>
 inline ResourceHandle<T>::ResourceHandle(const std::string& id, ResourceManager* manager)
 	: resourceId(id), resourceManager(manager) {}
 
-template<typename T>
-inline ResourceHandle<T>::ResourceHandle(const ResourceHandle& other)
-	: resourceId(other.resourceId), resourceManager(other.resourceManager)
-{
-	if (resourceManager && !resourceId.empty()) {
-		resourceManager->add_ref<T>(resourceId);
-	}
-}
-
-template<typename T>
-inline ResourceHandle<T>& ResourceHandle<T>::operator=(const ResourceHandle& other)
-{
-	if (this != &other) {
-		if (resourceManager && !resourceId.empty()) {
-			resourceManager->release<T>(resourceId);
-		}
-		resourceId = other.resourceId;
-		resourceManager = other.resourceManager;
-		if (resourceManager && !resourceId.empty()) {
-			resourceManager->add_ref<T>(resourceId);
-		}
-	}
-	return *this;
-}
-
-template<typename T>
-inline ResourceHandle<T>::ResourceHandle(ResourceHandle&& other) noexcept
-	: resourceId(std::move(other.resourceId)), resourceManager(other.resourceManager)
-{
-	other.resourceId.clear();
-	other.resourceManager = nullptr;
-}
-
-template<typename T>
-inline ResourceHandle<T>& ResourceHandle<T>::operator=(ResourceHandle&& other) noexcept
-{
-	if (this != &other) {
-		if (resourceManager && !resourceId.empty()) {
-			resourceManager->release<T>(resourceId);
-		}
-		resourceId = std::move(other.resourceId);
-		resourceManager = other.resourceManager;
-		other.resourceId.clear();
-		other.resourceManager = nullptr;
-	}
-	return *this;
-}
-
-template<typename T>
-inline ResourceHandle<T>::~ResourceHandle()
-{
-	if (resourceManager && !resourceId.empty()) {
-		resourceManager->release<T>(resourceId);
-	}
-}
+//template<typename T>
+//inline ResourceHandle<T>::ResourceHandle(const ResourceHandle& other)
+//	: resourceId(other.resourceId), resourceManager(other.resourceManager)
+//{
+//	if (resourceManager && !resourceId.empty()) {
+//		resourceManager->add_ref<T>(resourceId);
+//	}
+//}
+//
+//template<typename T>
+//inline ResourceHandle<T>& ResourceHandle<T>::operator=(const ResourceHandle& other)
+//{
+//	if (this != &other) {
+//		if (resourceManager && !resourceId.empty()) {
+//			resourceManager->release<T>(resourceId);
+//		}
+//		resourceId = other.resourceId;
+//		resourceManager = other.resourceManager;
+//		if (resourceManager && !resourceId.empty()) {
+//			resourceManager->add_ref<T>(resourceId);
+//		}
+//	}
+//	return *this;
+//}
+//
+//template<typename T>
+//inline ResourceHandle<T>::ResourceHandle(ResourceHandle&& other) noexcept
+//	: resourceId(std::move(other.resourceId)), resourceManager(other.resourceManager)
+//{
+//	other.resourceId.clear();
+//	other.resourceManager = nullptr;
+//}
+//
+//template<typename T>
+//inline ResourceHandle<T>& ResourceHandle<T>::operator=(ResourceHandle&& other) noexcept
+//{
+//	if (this != &other) {
+//		if (resourceManager && !resourceId.empty()) {
+//			resourceManager->release<T>(resourceId);
+//		}
+//		resourceId = std::move(other.resourceId);
+//		resourceManager = other.resourceManager;
+//		other.resourceId.clear();
+//		other.resourceManager = nullptr;
+//	}
+//	return *this;
+//}
+//
+//template<typename T>
+//inline ResourceHandle<T>::~ResourceHandle()
+//{
+//	if (resourceManager && !resourceId.empty()) {
+//		resourceManager->release<T>(resourceId);
+//	}
+//}
 
 template<typename T>
 inline T* ResourceHandle<T>::get() const
@@ -390,7 +402,12 @@ inline bool ResourceHandle<T>::is_valid() const
 }
 
 template<typename T>
-inline T* ResourceHandle<T>::operator->() const { return get(); }
+inline T* ResourceHandle<T>::operator->() const 
+{ 
+	T* ptr = get();
+	assert(ptr != nullptr && "ResourceHandle: attempted to dereference an invalid or unloaded ResourceHandle");
+	return ptr; 
+}
 
 template<typename T>
 inline T& ResourceHandle<T>::operator*() const { return *get(); }

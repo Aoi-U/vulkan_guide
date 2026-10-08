@@ -5,8 +5,8 @@
 #include <algorithm>
 #include <resources/Model.h>
 #include <core/Components.h>
+#include <resources/DefaultResources.h>
 #include "graphics/GuiRenderer.h"
-#include "graphics/RenderGraph.h"
 
 AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0, 0.1, 1.0, CVarFlags::EditFloatSlider);
 
@@ -19,11 +19,13 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 {
 	_window = window;
 	_vulkanCore = vulkanCore;
+	_resourceManager = resourceManager;
 
 	_viewportExtent = _window->get_extent();
 
-	_renderResourceManager.init(_vulkanCore);
 	_iblSystem.init(_vulkanCore, resourceManager);
+
+	//DefaultResources defaultResources(resourceManager);
 
 	recreate_swapchain();
 	create_command_buffers();
@@ -39,25 +41,25 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 
 	// create render passes
 	_shadowPass = std::make_unique<ShadowPass>();
-	_shadowPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
+	_shadowPass->init(_vulkanCore, resourceManager, matLayout, _renderTargets.find("SceneColor")->second->get_format(), _renderTargets.find("SceneDepth")->second->get_format());
 
 	_pointShadowPass = std::make_unique<PointShadowPass>();
-	_pointShadowPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_D32_SFLOAT);
+	_pointShadowPass->init(_vulkanCore, resourceManager, matLayout, _renderTargets.find("SceneColor")->second->get_format(), VK_FORMAT_D32_SFLOAT);
 
 	_skyboxPass = std::make_unique<SkyboxPass>();
-	_skyboxPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
+	_skyboxPass->init(_vulkanCore, resourceManager, matLayout, _renderTargets.find("SceneColor")->second->get_format(), _renderTargets.find("SceneDepth")->second->get_format());
 
 	_gbufferPass = std::make_unique<GBufferPass>();
-	_gbufferPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), _renderResourceManager.get_format("SceneDepth"));
+	_gbufferPass->init(_vulkanCore, resourceManager, matLayout, _renderTargets.find("SceneColor")->second->get_format(), _renderTargets.find("SceneDepth")->second->get_format());
 
 	_deferredLightingPass = std::make_unique<DeferredLightingPass>();
-	_deferredLightingPass->init(_vulkanCore, resourceManager, matLayout, _renderResourceManager.get_format("SceneColor"), VK_FORMAT_UNDEFINED);
+	_deferredLightingPass->init(_vulkanCore, resourceManager, matLayout, _renderTargets.find("SceneColor")->second->get_format(), VK_FORMAT_UNDEFINED);
 
 	_ssaoPass = std::make_unique<SSAOPass>();
-	_ssaoPass->init(_vulkanCore, resourceManager, nullptr, _renderResourceManager.get_format("SSAOColor"), VK_FORMAT_UNDEFINED);
+	_ssaoPass->init(_vulkanCore, resourceManager, nullptr, _renderTargets.find("SSAOColor")->second->get_format(), VK_FORMAT_UNDEFINED);
 
 	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
-	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, _renderResourceManager.get_format("SSAOBlur"), VK_FORMAT_UNDEFINED);
+	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, _renderTargets.find("SSAOBlur")->second->get_format(), VK_FORMAT_UNDEFINED);
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -75,16 +77,20 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_ssaoPass->cleanup();
 	_ssaoBlurPass->cleanup();
 	_iblSystem.cleanup();
-	_renderResourceManager.cleanup();
+
+	//for (auto& [name, tex] : _renderTargets) {
+	//	tex->unload();
+	//}
+	_renderTargets.clear();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
-		_frames[i]._cullStatsBuffer.unload(_vulkanCore);
-		_frames[i].sceneDataBuffer.unload(_vulkanCore);
-		_frames[i]._gpuObjectBuffer.unload(_vulkanCore);
-		_frames[i]._gpuInstanceBuffer.unload(_vulkanCore);
-		_frames[i]._gpuIndirectBuffer.unload(_vulkanCore);
-		_frames[i]._gpuCountBuffer.unload(_vulkanCore);
-		_frames[i]._materialDataBuffer.unload(_vulkanCore);
+		_frames[i]._cullStatsBuffer->unload();
+		_frames[i].sceneDataBuffer->unload();
+		_frames[i]._gpuObjectBuffer->unload();
+		_frames[i]._gpuInstanceBuffer->unload();
+		_frames[i]._gpuIndirectBuffer->unload();
+		_frames[i]._gpuCountBuffer->unload();
+		_frames[i]._materialDataBuffer->unload();
 
 
 		_frames[i]._deletionQueue.flush(_vulkanCore->get_device(), _vulkanCore->get_allocator());
@@ -130,12 +136,12 @@ void Renderer::set_viewport_extent(VkExtent2D extent)
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
 	_drawExtent.height = std::max(1u, static_cast<uint32_t>(_viewportExtent.height * _currentRenderScale));
 
-	_renderResourceManager.on_window_resize(_drawExtent);
+	create_render_targets();
 
 	// update the descriptor 
 	if (_guiRenderer) {
-		VkImageView newView = _renderResourceManager.get_view("SceneColor");
-		_guiRenderer->get_image_descriptor(newView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		VkImageView newView = _renderTargets.find("SceneColor")->second->get_image_view();
+		_guiRenderer->get_image_descriptor(newView, DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	}
 }
 
@@ -151,97 +157,113 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		FrameData& currentFrame = get_current_frame();
 
 		// upload scene data 
-		currentFrame.sceneDataBuffer.resize(_vulkanCore, sizeof(GPUSceneData));
-		currentFrame.sceneDataBuffer.copy_data(&sceneData, sizeof(GPUSceneData));
+		currentFrame.sceneDataBuffer->resize(sizeof(GPUSceneData));
+		currentFrame.sceneDataBuffer->copy_data(&sceneData, sizeof(GPUSceneData));
 
-		RenderGraph graph(_renderResourceManager);
+		uint32_t drawCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueObjects.size()));
+		uint32_t batchCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueBatches.size()));
+		currentFrame._gpuObjectBuffer->resize(sizeof(GPUObjectData) * drawCount);
+		currentFrame._gpuInstanceBuffer->resize(sizeof(uint32_t) * drawCount);
+		currentFrame._gpuIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * drawCount);
+		currentFrame._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
 
-		graph.add_pass("FrustumCull")
+		_renderGraph.clear_passes();
+
+		_renderGraph.register_buffer("GPUObjectBuffer", currentFrame._gpuObjectBuffer->get_buffer(), VK_PIPELINE_STAGE_2_NONE);
+		_renderGraph.register_buffer("GPUIndirectBuffer", currentFrame._gpuIndirectBuffer->get_buffer(), VK_PIPELINE_STAGE_2_NONE);
+
+		_renderGraph.add_pass("FrustumCull")
+			.write_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
+			.write_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
 			.set_execute_callback([&](RenderContext& ctx) {
 			_frustumCullPass->dispatch(ctx, currentFrame, drawCtx, sceneData, _drawExtent);
 				});
 
-		graph.add_pass("ShadowPass")
-			.set_depth_attachment("ShadowMap", VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f)
+		_renderGraph.add_pass("ShadowPass")
+			.read_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT)
+			.read_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT)
+			.set_extent({ 2048, 2048 })
+			.set_depth_attachment("ShadowMap", _renderTargets.at("ShadowMap")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
-			_shadowPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
-		});
-
-		graph.add_pass("PointShadowPass")
-			.write("PointShadowMap", ResourceState::DepthAttachment)
-			.set_execute_callback([&](RenderContext& ctx) {
-			_pointShadowPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
+			_shadowPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
 				});
 
-		// gbuffer geometry pass
-		graph.add_pass("GBufferPass")
-			.set_color_attachment("GBufferPosition")
-			.set_color_attachment("GBufferNormal")
-			.set_color_attachment("GBufferAlbedo")
-			.set_color_attachment("GBufferMetalRough")
-			.set_color_attachment("GBufferEmissive")
-			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
+		_renderGraph.add_pass("PointShadowPass")
+			.read_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT)
+			.read_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT)
+			.write_texture("PointShadowMap", VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) // self-managed loops in PointShadowPass
 			.set_execute_callback([&](RenderContext& ctx) {
-			_gbufferPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
+				_pointShadowPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
 				});
 
-		// SSAO generation pass
-		graph.add_pass("SSAOPass")
-			.read("GBufferPosition", ResourceState::ShaderReadOnly)
-			.read("GBufferNormal", ResourceState::ShaderReadOnly)
-			.set_color_attachment("SSAOColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
+		_renderGraph.add_pass("GBufferPass")
+			.read_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT)
+			.read_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT)
+			.set_extent(_drawExtent)
+			.set_color_attachment("GBufferPosition", _renderTargets.at("GBufferPosition")->get_image_view())
+			.set_color_attachment("GBufferNormal", _renderTargets.at("GBufferNormal")->get_image_view())
+			.set_color_attachment("GBufferAlbedo", _renderTargets.at("GBufferAlbedo")->get_image_view())
+			.set_color_attachment("GBufferMetalRough", _renderTargets.at("GBufferMetalRough")->get_image_view())
+			.set_color_attachment("GBufferEmissive", _renderTargets.at("GBufferEmissive")->get_image_view())
+			.set_depth_attachment("SceneDepth", _renderTargets.at("SceneDepth")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
 			.set_execute_callback([&](RenderContext& ctx) {
-			_ssaoPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
+			_gbufferPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
 				});
 
-		// SSAO blue pass
-		graph.add_pass("SSAOBlurPass")
-			.read("SSAOColor", ResourceState::ShaderReadOnly)
-			.set_color_attachment("SSAOBlur", VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
+		_renderGraph.add_pass("SSAOPass")
+			.read_texture("GBufferPosition", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("GBufferNormal", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.set_extent(_drawExtent)
+			.set_color_attachment("SSAOColor", _renderTargets.at("SSAOColor")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
 			.set_execute_callback([&](RenderContext& ctx) {
-			_ssaoBlurPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
+			_ssaoPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
 				});
 
-		// deferred lighting pass
-		graph.add_pass("DeferredLightingPass")
-			.read("GBufferPosition", ResourceState::ShaderReadOnly)
-			.read("GBufferNormal", ResourceState::ShaderReadOnly)
-			.read("GBufferAlbedo", ResourceState::ShaderReadOnly)
-			.read("GBufferMetalRough", ResourceState::ShaderReadOnly)
-			.read("GBufferEmissive", ResourceState::ShaderReadOnly)
-			.read("ShadowMap", ResourceState::ShaderReadOnly)
-			.read("PointShadowMap", ResourceState::ShaderReadOnly)
-			.read("SSAOBlur", ResourceState::ShaderReadOnly)
-			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
+		_renderGraph.add_pass("SSAOBlurPass")
+			.read_texture("SSAOColor", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.set_extent(_drawExtent)
+			.set_color_attachment("SSAOBlur", _renderTargets.at("SSAOBlur")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
 			.set_execute_callback([&](RenderContext& ctx) {
-			_deferredLightingPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
+			_ssaoBlurPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
 				});
 
-		// skybox pass
-		graph.add_pass("SkyboxPass")
-			.read("SkyCubemap", ResourceState::ShaderReadOnly)
-			.set_color_attachment("SceneColor", VK_ATTACHMENT_LOAD_OP_LOAD)
-			.set_depth_attachment("SceneDepth", VK_ATTACHMENT_LOAD_OP_LOAD)
+		_renderGraph.add_pass("DeferredLightingPass")
+			.read_texture("GBufferPosition", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("GBufferNormal", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("GBufferAlbedo", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("GBufferMetalRough", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("GBufferEmissive", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("ShadowMap", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("PointShadowMap", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.read_texture("SSAOBlur", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+			.set_extent(_drawExtent)
+			.set_color_attachment("SceneColor", _renderTargets.at("SceneColor")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
 			.set_execute_callback([&](RenderContext& ctx) {
-			_skyboxPass->render(ctx, currentFrame, _renderResourceManager, drawCtx, sceneData);
+			_deferredLightingPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
 				});
 
-		graph.compile();
-		graph.execute(ctx);
+		_renderGraph.add_pass("SkyboxPass")
+			.read_texture("SceneDepth", VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+			.set_extent(_drawExtent)
+			.set_color_attachment("SceneColor", _renderTargets.at("SceneColor")->get_image_view(), VK_ATTACHMENT_LOAD_OP_LOAD)
+			.set_depth_attachment("SceneDepth", _renderTargets.at("SceneDepth")->get_image_view(), VK_ATTACHMENT_LOAD_OP_LOAD)
+			.set_execute_callback([&](RenderContext& ctx) {
+			_skyboxPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
+				});
 
-		// transition scene color to shaderreadonly so imgui can sample it in the viewport window
-		//_resourceManager.transition(cmd, "SceneColor", ResourceState::ShaderReadOnly);
+		_renderGraph.execute(ctx);
 
-		// transition al render targets to shaderreadonly for viewing in imgui
-		_renderResourceManager.transition_all_to_read_only(cmd);
+		// ImGui Transition Requirement
+		for (const auto& [name, tex] : _renderTargets) {
+			_renderGraph.transition_texture(cmd, name, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		}
 
-		// transition swapchain image to color attachment for imgui rendering
+		// Swapchain presentation
 		VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-		RenderSync::transition_image(cmd, swapchainImage, ResourceState::Undefined, ResourceState::ColorAttachment);
-		
+		vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1, 0);
+
 		if (_guiRenderer) {
-			VkImageView swapchainImageView = _swapchain.get_image_views()[_swapchainImageIndex];
-			_guiRenderer->render(cmd, swapchainImageView, _swapchain.get_extent());
+			_guiRenderer->render(cmd, _swapchain.get_image_views()[_swapchainImageIndex], _swapchain.get_extent());
 		}
 
 		end_frame();
@@ -272,7 +294,7 @@ VkCommandBuffer Renderer::begin_frame()
 
 	VK_CHECK(vkResetFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence));
 
-	_isFrameStarted = true;	
+	_isFrameStarted = true;
 
 	// begin rendering commands
 	VkCommandBuffer cmd = currentFrame._mainCommandBuffer;
@@ -280,7 +302,7 @@ VkCommandBuffer Renderer::begin_frame()
 	// now that we are sure the commands finished executing, we can safely reset the command buffer to begin recording again
 	VK_CHECK(vkResetCommandBuffer(cmd, 0));
 
-	VkExtent2D sceneColorExtent = _renderResourceManager.get_extent("SceneColor");
+	VkExtent2D sceneColorExtent = _renderTargets.find("SceneColor")->second->get_extent_2d();
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
 
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(sceneColorExtent.width * scale));
@@ -305,7 +327,7 @@ void Renderer::end_frame()
 
 	// set swapchain image layout to present so we can draw it
 	VkImage currentSwapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	RenderSync::transition_image(cmd, currentSwapchainImage, ResourceState::ColorAttachment, ResourceState::Present);
+	vkutil::image_mem_barrier2(cmd, currentSwapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, 1, 0);
 
 	// finalize the command buffer
 	// can no longer add commands, but can now be executed
@@ -359,20 +381,22 @@ void Renderer::end_frame()
 void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 {
 	VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	Texture& sceneColor = _renderResourceManager.get_image("SceneColor");
+	ResourceHandle<Texture> sceneColor = _renderTargets.find("SceneColor")->second;
 
 	// transition the draw image and the swapchain image into their correct transfer layouts
 	// so we can blit from the draw image to the swapchain image
-	_renderResourceManager.transition(cmd, "SceneColor", ResourceState::TransferSrc);
+	//_renderGraph.transition_texture(cmd, "SceneColor", ResourceState::TransferSrc);
+	_renderGraph.transition_texture(cmd, "SceneColor", VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
 	// transition swapchain image to transferdst to copy into it
-	RenderSync::transition_image(cmd, swapchainImage, ResourceState::Undefined, ResourceState::TransferDst);
+	vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
 
 	// copy SceneColor into the swapchain
-	vkutil::copy_image_to_image(cmd, sceneColor.get_image(), swapchainImage, _drawExtent, _swapchain.get_extent());
+	vkutil::copy_image_to_image(cmd, sceneColor->get_image(), swapchainImage, _drawExtent, _swapchain.get_extent());
 
 	// set swapchain image layout to color attachment optimal for imgui 
-	RenderSync::transition_image(cmd, swapchainImage, ResourceState::TransferDst, ResourceState::ColorAttachment);
+	vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
 
 void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
@@ -395,9 +419,9 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 		};
 
 	FrameData& currentFrame = get_current_frame();
-	size_t capacity = currentFrame._materialDataBuffer.get_size() / sizeof(MaterialConstants); // material data buffer capacity
-	uint32_t materialCount = 0; 
-	MaterialConstants* matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer.get_mapped_data()); // pointer to the buffers mapped data
+	size_t capacity = currentFrame._materialDataBuffer->get_size() / sizeof(MaterialConstants); // material data buffer capacity
+	uint32_t materialCount = 0;
+	MaterialConstants* matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer->get_mapped_data()); // pointer to the buffers mapped data
 
 	auto view = registry.view<const MeshComponent>();
 	for (auto [entity, meshComp] : view.each()) {
@@ -417,34 +441,34 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 			// expand buffer capacity if needed
 			if (materialCount >= capacity) {
-				currentFrame._materialDataBuffer.resize(_vulkanCore, (capacity + 1000) * sizeof(MaterialConstants), true);
-				capacity = currentFrame._materialDataBuffer.get_size() / sizeof(MaterialConstants);
-				matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer.get_mapped_data()); // update the pointer to the buffers mapped data
+				currentFrame._materialDataBuffer->resize((capacity + 1000) * sizeof(MaterialConstants), true);
+				capacity = currentFrame._materialDataBuffer->get_size() / sizeof(MaterialConstants);
+				matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer->get_mapped_data()); // update the pointer to the buffers mapped data
 			}
 
 			matDataMap[materialCount] = get_material_constants(*matComp); // copy material constants into the buffer
 			size_t bufferOffset = sizeof(MaterialConstants) * materialCount; // offset in the buffer for this material
 			materialCount++; // increment material count for next material
 
-			descriptorSet = currentFrame._frameDescriptors.allocate(_vulkanCore->get_device(), Material::get_descriptor_layout()); 
+			descriptorSet = currentFrame._frameDescriptors.allocate(_vulkanCore->get_device(), Material::get_descriptor_layout());
 
 			DescriptorWriter writer;
-			writer.write_buffer(0, currentFrame._materialDataBuffer.get_buffer(), sizeof(MaterialConstants), bufferOffset, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			writer.write_buffer(0, currentFrame._materialDataBuffer->get_buffer(), sizeof(MaterialConstants), bufferOffset, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 
-			VkImageView albedoView = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_image_view() : _vulkanCore->_greyImage.get_image_view();
-			VkSampler albedoSampler = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+			VkImageView albedoView = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_image_view() : DefaultResources::get().greyImage->get_image_view();
+			VkSampler albedoSampler = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_sampler() : DefaultResources::get().defaultSamplerLinear->get_sampler();
 
-			VkImageView metalRoughView = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_image_view() : _vulkanCore->_whiteImage.get_image_view();
-			VkSampler metalRoughSampler = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+			VkImageView metalRoughView = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_image_view() : DefaultResources::get().whiteImage->get_image_view();
+			VkSampler metalRoughSampler = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_sampler() : DefaultResources::get().defaultSamplerLinear->get_sampler();
 
-			VkImageView occlusionView = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_image_view() : _vulkanCore->_whiteImage.get_image_view();
-			VkSampler occlusionSampler = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+			VkImageView occlusionView = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_image_view() : DefaultResources::get().whiteImage->get_image_view();
+			VkSampler occlusionSampler = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_sampler() : DefaultResources::get().defaultSamplerLinear->get_sampler();
 
-			VkImageView normalView = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_image_view() : _vulkanCore->_defaultNormalImage.get_image_view();
-			VkSampler normalSampler = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+			VkImageView normalView = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_image_view() : DefaultResources::get().defaultNormalImage->get_image_view();
+			VkSampler normalSampler = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_sampler() : DefaultResources::get().defaultSamplerLinear->get_sampler();
 
-			VkImageView emissiveView = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_image_view() : _vulkanCore->_blackImage.get_image_view();
-			VkSampler emissiveSampler = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_sampler() : _vulkanCore->_defaultSamplerLinear;
+			VkImageView emissiveView = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_image_view() : DefaultResources::get().blackImage->get_image_view();
+			VkSampler emissiveSampler = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_sampler() : DefaultResources::get().defaultSamplerLinear->get_sampler();
 
 			writer.write_image(1, albedoView, albedoSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 			writer.write_image(2, metalRoughView, metalRoughSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
@@ -456,27 +480,32 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			matComp->isDirty = false;
 		}
 		else { // no material component for this entity
-			// fallback material
-			static Buffer fallbackBuffer;
-			if (!fallbackBuffer.get_buffer()) {
-				MaterialConstants defaultConstants{};
-				defaultConstants.colorFactors = glm::vec4(1.0f);
-				defaultConstants.metalRoughFactors = glm::vec4(0.0f, 1.0f, 0.0f, 0.0f);
-				defaultConstants.extraFactors = glm::vec4(1.0f, 1.0f, 0.0f, 0.5f);
-				defaultConstants.emissiveFactor = glm::vec4(0.0f);
-				fallbackBuffer = Buffer("fallback_mat_buf", sizeof(MaterialConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-				fallbackBuffer.load(_vulkanCore);
-				fallbackBuffer.copy_data(&defaultConstants, sizeof(MaterialConstants));
+			if (materialCount >= capacity) {
+				currentFrame._materialDataBuffer->resize((capacity + 1000) * sizeof(MaterialConstants), true);
+				capacity = currentFrame._materialDataBuffer->get_size() / sizeof(MaterialConstants);
+				matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer->get_mapped_data());
 			}
 
+			// write default material constants into the mapped data
+			MaterialConstants defaultConstants{};
+			defaultConstants.colorFactors = glm::vec4(1.0f);
+			defaultConstants.metalRoughFactors = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+			defaultConstants.extraFactors = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f);
+			defaultConstants.emissiveFactor = glm::vec4(0.0f);
+
+			matDataMap[materialCount] = defaultConstants;
+			size_t bufferOffset = sizeof(MaterialConstants) * materialCount;
+			materialCount++;
+
+			// allocate descriptor set and write the buffer offset
 			descriptorSet = currentFrame._frameDescriptors.allocate(_vulkanCore->get_device(), Material::get_descriptor_layout());
 			DescriptorWriter writer;
-			writer.write_buffer(0, fallbackBuffer.get_buffer(), sizeof(MaterialConstants), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-			writer.write_image(1, _vulkanCore->_greyImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-			writer.write_image(2, _vulkanCore->_whiteImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-			writer.write_image(3, _vulkanCore->_whiteImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-			writer.write_image(4, _vulkanCore->_defaultNormalImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-			writer.write_image(5, _vulkanCore->_blackImage.get_image_view(), _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_buffer(0, currentFrame._materialDataBuffer->get_buffer(), sizeof(MaterialConstants), bufferOffset, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
+			writer.write_image(1, DefaultResources::get().greyImage->get_image_view(), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(2, DefaultResources::get().whiteImage->get_image_view(), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(3, DefaultResources::get().whiteImage->get_image_view(), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(4, DefaultResources::get().defaultNormalImage->get_image_view(), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+			writer.write_image(5, DefaultResources::get().blackImage->get_image_view(), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 			writer.update_set(_vulkanCore->get_device(), descriptorSet);
 		}
 
@@ -505,18 +534,18 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 	// sort opaque objects 
 	std::sort(ctx.opaqueObjects.begin(), ctx.opaqueObjects.end(), [](const RenderObject& a, const RenderObject& b) {
-		if (a.isDoubleSided != b.isDoubleSided) 
+		if (a.isDoubleSided != b.isDoubleSided)
 			return a.isDoubleSided < b.isDoubleSided;
 
-		if (a.materialSet != b.materialSet) 
+		if (a.materialSet != b.materialSet)
 			return a.materialSet < b.materialSet;
-		
-		if (a.indexBuffer != b.indexBuffer) 
+
+		if (a.indexBuffer != b.indexBuffer)
 			return a.indexBuffer < b.indexBuffer;
-		
-		if (a.firstIndex != b.firstIndex) 
+
+		if (a.firstIndex != b.firstIndex)
 			return a.firstIndex < b.firstIndex;
-		
+
 		return a.indexCount < b.indexCount;;
 		});
 
@@ -526,7 +555,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	currentBatch.batchIndex = 0;
 	currentBatch.materialSet = ctx.opaqueObjects[0].materialSet;
 	currentBatch.indexBuffer = ctx.opaqueObjects[0].indexBuffer;
-	currentBatch.isDoubleSided = ctx.opaqueObjects[0].isDoubleSided; 
+	currentBatch.isDoubleSided = ctx.opaqueObjects[0].isDoubleSided;
 
 	// compact same objects into multidraw batches
 	for (uint32_t i = 0; i < static_cast<uint32_t>(ctx.opaqueObjects.size()); i++) {
@@ -576,43 +605,24 @@ void Renderer::recreate_swapchain()
 	_swapchain.destroy_swapchain();
 	_swapchain.init(_vulkanCore->get_physical_device(), _vulkanCore->get_device(), _vulkanCore->get_surface(), actualExtent.width, actualExtent.height);
 
-	if (!_renderResourceManager.has_target("SceneColor")) {
-		create_render_targets();
-	}
-	else {
-		_renderResourceManager.on_window_resize(_pendingResizeExtent);
-	}
+	create_render_targets();
 
 	if (_guiRenderer) {
-		VkImageView newView = _renderResourceManager.get_view("SceneColor");
-		_guiRenderer->get_image_descriptor(newView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		VkImageView newView = _renderTargets.find("SceneColor")->second->get_image_view();
+		//_guiRenderer->get_image_descriptor(newView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		_guiRenderer->get_image_descriptor(newView, DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	}
 }
 
 VkDescriptorSet Renderer::get_target_descriptor(const std::string& name, uint32_t faceIndex)
 {
-	if (!_guiRenderer || !_renderResourceManager.has_target(name)) {
+	if (!_guiRenderer || _renderTargets.find(name) == _renderTargets.end()) {
 		return VK_NULL_HANDLE;
 	}
-
-	const auto& desc = _renderResourceManager.get_description(name);
-	VkImageView imageView = VK_NULL_HANDLE;
-
-	bool isCube = (desc.flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) || (desc.arrayLayers == 6 && desc.viewType == VK_IMAGE_VIEW_TYPE_CUBE);
-	if (isCube) {
-		if (faceIndex < 6) {
-			imageView = _renderResourceManager.get_face_view(name, faceIndex);
-		}
-	}
-	else {
-		imageView = _renderResourceManager.get_view(name);
-	}
-
-	if (imageView == VK_NULL_HANDLE) {
-		return VK_NULL_HANDLE;
-	}
-
-	return _guiRenderer->get_image_descriptor(imageView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	const ResourceHandle<Texture> tex = _renderTargets.at(name);
+	VkImageView targetView = (faceIndex < tex->get_face_views().size()) ? tex->get_face_view(faceIndex) : tex->get_image_view();
+	//return _guiRenderer->get_image_descriptor(targetView, _vulkanCore->_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	return _guiRenderer->get_image_descriptor(targetView, DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 }
 
 VkDescriptorSet Renderer::get_scene_color_descriptor()
@@ -630,7 +640,7 @@ const std::vector<PassStats> Renderer::get_stats() const
 	stats.push_back(_ssaoPass->get_stats());
 	stats.push_back(_ssaoBlurPass->get_stats());
 	stats.push_back(_deferredLightingPass->get_stats());
-	
+
 	stats.push_back(_skyboxPass->get_stats());
 
 	return stats;
@@ -673,24 +683,36 @@ void Renderer::create_sync_structures()
 		VK_CHECK(vkCreateFence(_vulkanCore->get_device(), &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
 		VK_CHECK(vkCreateSemaphore(_vulkanCore->get_device(), &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
 
-		_frames[i]._cullStatsBuffer = Buffer("cullStats", sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._cullStatsBuffer.load(_vulkanCore);
+		//_frames[i]._cullStatsBuffer = Buffer("cullStats", sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//_frames[i]._cullStatsBuffer.load();
+		_frames[i]._cullStatsBuffer = _resourceManager->load<Buffer>("cullStats", sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-		_frames[i].sceneDataBuffer = Buffer("sceneData", sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i].sceneDataBuffer.load(_vulkanCore);
+		//_frames[i].sceneDataBuffer = Buffer("sceneData", sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//_frames[i].sceneDataBuffer.load();
+		_frames[i].sceneDataBuffer = _resourceManager->load<Buffer>("sceneData", sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-		_frames[i]._gpuObjectBuffer = Buffer("gpuObject", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._gpuInstanceBuffer = Buffer("gpuInstance", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-		_frames[i]._gpuIndirectBuffer = Buffer("gpuIndirect", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._gpuCountBuffer = Buffer("gpuCount", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//_frames[i]._gpuObjectBuffer = Buffer("gpuObject", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//_frames[i]._gpuInstanceBuffer = Buffer("gpuInstance", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+		//_frames[i]._gpuIndirectBuffer = Buffer("gpuIndirect", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//_frames[i]._gpuCountBuffer = Buffer("gpuCount", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuObjectBuffer = _resourceManager->load<Buffer>("gpuObject", sizeof(GPUObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuInstanceBuffer = _resourceManager->load<Buffer>("gpuInstance", sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+		_frames[i]._gpuIndirectBuffer = _resourceManager->load<Buffer>("gpuIndirect", sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuCountBuffer = _resourceManager->load<Buffer>("gpuCount", sizeof(MaterialConstants), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-		_frames[i]._materialDataBuffer = Buffer("materialData", sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._materialDataBuffer.load(_vulkanCore);
+		//_frames[i]._materialDataBuffer = Buffer("materialData", sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		//_frames[i]._materialDataBuffer.load();
+		_frames[i]._materialDataBuffer = _resourceManager->load<Buffer>("materialData", sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	}
 }
 
 void Renderer::create_render_targets()
 {
+	//for (auto& [name, handle] : _renderTargets) {
+	//	_resourceManager->force_unload<Texture>(name);
+	//}
+	//_renderTargets.clear();
+
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
 	_currentRenderScale = scale;
 	_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
@@ -701,141 +723,59 @@ void Renderer::create_render_targets()
 		targetExtent = _window->get_extent();
 	}
 
-	// create primary scene color 
-	_renderResourceManager.register_target({
-		.name = "SceneColor",
-		.sizePolicy = TargetSizePolicy::WindowRelative,
-		.relativeScale = 1.0f,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-	
-	// create primary scene depth
-	_renderResourceManager.register_target({
-		.name = "SceneDepth",
-		.sizePolicy = TargetSizePolicy::WindowRelative,
-		.relativeScale = 1.0f,
-		.format = VK_FORMAT_D32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
-		}, targetExtent);
+	auto make_target = [&](const std::string& name, VkFormat format, VkImageUsageFlags usage, VkExtent3D ext, int layers = 1, VkImageCreateFlags flags = 0, VkImageViewType viewType = VK_IMAGE_VIEW_TYPE_2D) {
+		TextureDescription desc{
+			.extent = ext,
+			.format = format,
+			.usage = usage,
+			.mipLevels = 1,
+			.arrayLayers = (uint32_t)layers,
+			.flags = flags,
+			.viewType = viewType,
+			.aspectMask = static_cast<VkImageAspectFlags>((usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT) 
+		};
+		_renderTargets[name] = _resourceManager->load<Texture>(name, desc);
 
-	// create shadow map target
-	_renderResourceManager.register_target({
-		.name = "ShadowMap",
-		.sizePolicy = TargetSizePolicy::Absolute,
-		.absoluteExtent = { 2048, 2048 },
-		.format = VK_FORMAT_D32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
-		}, targetExtent);
+		// Register newly created image to the render graph
+		_renderGraph.register_texture(name, _renderTargets[name]->get_image(), format, VK_IMAGE_LAYOUT_UNDEFINED, layers, 1, 0);
+		};
 
-	// create point shadow target
-	_renderResourceManager.register_target({
-		.name = "PointShadowMap",
-		.sizePolicy = TargetSizePolicy::Absolute,
-		.absoluteExtent = { 1024, 1024 },
-		.format = VK_FORMAT_D32_SFLOAT,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.mipLevels = 1,
-		.arrayLayers = 6,
-		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-		.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT
-		}, targetExtent);
-
-	// create skybox target
-	_renderResourceManager.register_target({
-		.name = "SkyCubemap",
-		.sizePolicy = TargetSizePolicy::Absolute,
-		.absoluteExtent = { 256, 256 },
-		.format = VK_FORMAT_R8G8B8A8_UNORM,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
-		.mipLevels = 1,
-		.arrayLayers = 6,
-		.flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
-		.viewType = VK_IMAGE_VIEW_TYPE_CUBE,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create gbuffer position target
-	_renderResourceManager.register_target({
-		.name = "GBufferPosition",
-		.sizePolicy = TargetSizePolicy::WindowRelative,
-		.relativeScale = 1.0f,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create gbuffer normal target
-	_renderResourceManager.register_target({
-			.name = "GBufferNormal",
-			.sizePolicy = TargetSizePolicy::WindowRelative,
-			.relativeScale = 1.0f,
-			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create gbuffer albedo target
-	_renderResourceManager.register_target({
-			.name = "GBufferAlbedo",
-			.sizePolicy = TargetSizePolicy::WindowRelative,
-			.relativeScale = 1.0f,
-			.format = VK_FORMAT_R8G8B8A8_UNORM,
-			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create gbuffer metallic/roughness target
-	_renderResourceManager.register_target({
-			.name = "GBufferMetalRough",
-			.sizePolicy = TargetSizePolicy::WindowRelative,
-			.relativeScale = 1.0f,
-			.format = VK_FORMAT_R8G8B8A8_UNORM,
-			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create gbuffer emissive target
-	_renderResourceManager.register_target({
-		.name = "GBufferEmissive",
-		.sizePolicy = TargetSizePolicy::WindowRelative,
-		.relativeScale = 1.0f,
-		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
-		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create ssao color target
-	_renderResourceManager.register_target({
-				.name = "SSAOColor",
-				.sizePolicy = TargetSizePolicy::WindowRelative,
-				.relativeScale = 1.0f,
-				.format = VK_FORMAT_R8_UNORM,
-				.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-
-	// create ssao blur target
-	_renderResourceManager.register_target({
-			.name = "SSAOBlur",
-			.sizePolicy = TargetSizePolicy::WindowRelative,
-			.relativeScale = 1.0f,
-			.format = VK_FORMAT_R8_UNORM,
-			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT
-		}, targetExtent);
-	
+	make_target("SceneColor", VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("SceneDepth", VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("ShadowMap", VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { 2048, 2048, 1 });
+	make_target("PointShadowMap", VK_FORMAT_D32_SFLOAT, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { 1024, 1024, 1 }, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
+	make_target("SkyCubemap", VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT, { 256, 256, 1 }, 6, VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, VK_IMAGE_VIEW_TYPE_CUBE);
+	make_target("GBufferPosition", VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("GBufferNormal", VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("GBufferAlbedo", VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("GBufferMetalRough", VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("GBufferEmissive", VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("SSAOColor", VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+	make_target("SSAOBlur", VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
 }
 
 void Renderer::update_render_extent()
 {
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
-	_currentRenderScale = scale;
-	_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
-	_drawExtent.height = std::max(1u, static_cast<uint32_t>(_viewportExtent.height * _currentRenderScale));
-	_renderResourceManager.on_window_resize(_drawExtent);
+
+	// Only recreate if the scale actually changed
+	if (std::abs(scale - _currentRenderScale) > 0.001f) {
+		vkDeviceWaitIdle(_vulkanCore->get_device());
+		if (_guiRenderer) {
+			_guiRenderer->clear_image_descriptors();
+		}
+
+		_currentRenderScale = scale;
+		_drawExtent.width = std::max(1u, static_cast<uint32_t>(_viewportExtent.width * _currentRenderScale));
+		_drawExtent.height = std::max(1u, static_cast<uint32_t>(_viewportExtent.height * _currentRenderScale));
+
+		create_render_targets();
+
+		if (_guiRenderer) {
+			
+			VkImageView newView = _renderTargets.at("SceneColor")->get_image_view();
+			//_guiRenderer->get_image_descriptor(newView, _vulkanCore-_defaultSamplerLinear, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			_guiRenderer->get_image_descriptor(newView, DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		}
+	}
 }

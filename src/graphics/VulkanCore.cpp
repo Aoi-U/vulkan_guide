@@ -77,23 +77,10 @@ void VulkanCore::init(Window& window)
 
 	init_immediate_submit();
 
-	init_default_data();
 }
 
 void VulkanCore::cleanup()
 {
-	// destroy samplers and images
-	vkDestroySampler(_device, _shadowSampler, nullptr);
-	vkDestroySampler(_device, _defaultSamplerNearest, nullptr);
-	vkDestroySampler(_device, _defaultSamplerLinear, nullptr);
-
-	// destroy default images
-	_whiteImage.unload(this);
-	_greyImage.unload(this);
-	_blackImage.unload(this);
-	_errorCheckerboardImage.unload(this);
-	_defaultNormalImage.unload(this);
-
 	// destroy immediate submit resources
 	vkDestroyFence(_device, _immFence, nullptr);
 	vkDestroyCommandPool(_device, _immCommandPool, nullptr);
@@ -148,56 +135,4 @@ void VulkanCore::init_immediate_submit()
 	// fence to control when the gpu has finished rendering the frame
 	VkFenceCreateInfo fenceCreateInfo = vkinit::fence_create_info(VK_FENCE_CREATE_SIGNALED_BIT);
 	VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_immFence));
-}
-
-void VulkanCore::init_default_data()
-{
-	// 3 default textures (white, grey, black) 1 pixel each
-	uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
-	TextureDescription desc1{ .extent = {1, 1, 1}, .format = VK_FORMAT_R8G8B8A8_UNORM, .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT };
-	_whiteImage = Texture("default_white", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&white), sizeof(uint32_t)));
-	_whiteImage.load(this);
-
-	uint32_t grey = glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1.f));
-	_greyImage = Texture("default_grey", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&grey), sizeof(uint32_t)));
-	_greyImage.load(this);
-
-	uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));
-	_blackImage = Texture("default_black", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&black), sizeof(uint32_t)));
-	_blackImage.load(this);
-
-	uint32_t normal = glm::packUnorm4x8(glm::vec4(0.5f, 0.5f, 1.0f, 1.0f));
-	_defaultNormalImage = Texture("default_normal", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&normal), sizeof(uint32_t)));
-	_defaultNormalImage.load(this);
-
-	// checkerboard image
-	uint32_t magenta = glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
-	std::array<uint32_t, 16 * 16> pixels; // 16x16 checkerboard texture
-	for (int x = 0; x < 16; x++) {
-		for (int y = 0; y < 16; y++) {
-			pixels[y * 16 + x] = ((x % 2) ^ (y % 2)) ? magenta : black;
-		}
-	}
-	TextureDescription desc2{ .extent = {16, 16, 1}, .format = VK_FORMAT_R8G8B8A8_UNORM, .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT };
-	_errorCheckerboardImage = Texture("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
-	_errorCheckerboardImage.load(this);
-
-	VkSamplerCreateInfo samplerInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-	samplerInfo.magFilter = VK_FILTER_NEAREST;
-	samplerInfo.minFilter = VK_FILTER_NEAREST;
-	vkCreateSampler(_device, &samplerInfo, nullptr, &_defaultSamplerNearest);
-
-	samplerInfo.magFilter = VK_FILTER_LINEAR;
-	samplerInfo.minFilter = VK_FILTER_LINEAR;
-	vkCreateSampler(_device, &samplerInfo, nullptr, &_defaultSamplerLinear);
-
-	VkSamplerCreateInfo shadowSamplerInfo{ .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-	shadowSamplerInfo.magFilter = VK_FILTER_LINEAR;
-	shadowSamplerInfo.minFilter = VK_FILTER_LINEAR;
-	shadowSamplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
-	shadowSamplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-	shadowSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-	shadowSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
-	shadowSamplerInfo.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE;
-	vkCreateSampler(_device, &shadowSamplerInfo, nullptr, &_shadowSampler);
 }

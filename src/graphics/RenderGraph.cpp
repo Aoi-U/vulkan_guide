@@ -1,189 +1,133 @@
-#include "graphics/RenderGraph.h"
-#include <queue>
-#include <unordered_set>
-#include <fmt/core.h>
+#include "RenderGraph.h"
+#include <graphics/utils/vk_utils.h>
 
-RGPassBuilder RenderGraph::add_pass(const std::string& name)
+RGPassBuilder& RGPassBuilder::read_texture(const std::string& name, VkImageLayout layout)
+{
+	_pass.textureTransitions.push_back({ name, layout });
+	return* this;
+}
+
+RGPassBuilder& RGPassBuilder::write_texture(const std::string& name, VkImageLayout layout)
+{
+	_pass.textureTransitions.push_back({ name, layout });
+	return* this;
+}
+
+RGPassBuilder& RGPassBuilder::read_buffer(const std::string& name, VkPipelineStageFlags2 stage)
+{
+	_pass.bufferTransitions.push_back({ name, stage });
+	return *this;
+}
+
+RGPassBuilder& RGPassBuilder::write_buffer(const std::string& name, VkPipelineStageFlags2 stage)
+{ 
+	_pass.bufferTransitions.push_back({ name, stage });
+	return *this;
+}
+
+RGPassBuilder& RGPassBuilder::set_color_attachment(const std::string& name, VkImageView view, VkAttachmentLoadOp loadOp, const VkClearColorValue& clearColor)
+{
+	_pass.textureTransitions.push_back({ name, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL });
+	_pass.colorAttachments.push_back({ name, view, loadOp, VK_ATTACHMENT_STORE_OP_STORE, clearColor });
+	return *this;
+}
+
+RGPassBuilder& RGPassBuilder::set_depth_attachment(const std::string& name, VkImageView view, VkAttachmentLoadOp loadOp, float clearDepth)
+{
+	_pass.textureTransitions.push_back({ name, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL });
+	_pass.depthAttachment = RGDepthAttachment{ name, view, loadOp, VK_ATTACHMENT_STORE_OP_STORE, clearDepth };
+	return *this;
+}
+
+RGPassBuilder& RGPassBuilder::set_extent(VkExtent2D extent)
+{
+	_pass.renderExtent = extent;
+	return *this;
+}
+
+RGPassBuilder& RGPassBuilder::set_execute_callback(ExecutionFn function)
+{
+	_pass.executeCallback = std::move(function);
+	return *this;
+}
+
+void RenderGraph::clear_passes()
+{
+	_passes.clear();
+}
+
+void RenderGraph::register_texture(const std::string & name, VkImage image, VkFormat format, VkImageLayout initialLayout, uint32_t layerCount, uint32_t mipLevels, uint32_t baseMiplevel)
+{
+	_textures[name] = RGTextureState{ image, format, initialLayout, layerCount, mipLevels, baseMiplevel };
+}
+
+void RenderGraph::register_buffer(const std::string & name, VkBuffer buffer, VkPipelineStageFlags2 initialStage)
+{
+	_buffers[name] = RGBufferState{ buffer, initialStage };
+}
+
+RGPassBuilder RenderGraph::add_pass(const std::string name)
 {
 	_passes.push_back(RGPass{ .name = name });
-	return RGPassBuilder(_passes.back());
+	return RGPassBuilder(*this, _passes.back());
 }
 
-void RenderGraph::compile()
-{
-	const size_t passCount = _passes.size();
-	_executionOrder.clear();
-	_executionOrder.reserve(passCount);
-
-	if (passCount == 0) return;
-
-	// build adjacency list for DAG topological sort
-	std::vector<std::vector<uint32_t>> adj(passCount);
-	std::vector<uint32_t> inDegree(passCount, 0);
-
-	// track writes and reads for each resource
-	std::unordered_map<std::string, std::vector<uint32_t>> resourceWrites;
-	std::unordered_map<std::string, std::vector<uint32_t>> resourceReads;
-
-	for (uint32_t i = 0; i < passCount; i++) {
-		for (const RGResourceUsage& write : _passes[i].writes) {
-			// write after read
-			if (resourceReads.contains(write.name)) {
-				for (uint32_t readIndex : resourceReads[write.name]) {
-					if (readIndex != i) {
-						adj[readIndex].push_back(i);
-						inDegree[i]++;
-					}
-				}
-			}
-
-			// write after write
-			if (resourceWrites.contains(write.name)) {
-				for (uint32_t writeIndex : resourceWrites[write.name]) {
-					if (writeIndex != i) {
-						adj[writeIndex].push_back(i);
-						inDegree[i]++;
-					}
-				}
-			}
-			resourceWrites[write.name].push_back(i);
-		}
-
-		for (const RGResourceUsage& read : _passes[i].reads) {
-			// read after write
-			if (resourceWrites.contains(read.name)) {
-				for (uint32_t writeIndex : resourceWrites[read.name]) {
-					if (writeIndex != i) {
-						adj[writeIndex].push_back(i);
-						inDegree[i]++;
-					}
-				}
-			}
-			resourceReads[read.name].push_back(i);
-		}
-	}
-
-	// topological sort using kahns algorithm
-	std::priority_queue<uint32_t, std::vector<uint32_t>, std::greater<uint32_t>> readyQueue;
-	for (uint32_t i = 0; i < passCount; i++) {
-		if (inDegree[i] == 0) {
-			readyQueue.push(i);
-		}
-	}
-
-	while (!readyQueue.empty()) {
-		uint32_t u = readyQueue.top();
-		readyQueue.pop();
-		_executionOrder.push_back(u);
-
-		for (uint32_t v : adj[u]) {
-			if (--inDegree[v] == 0) {
-				readyQueue.push(v);
-			}
-		}
-	}
-
-	// fallback to original order if sort contains a cycle
-	if (_executionOrder.size() != passCount) {
-		fmt::println("RenderGraph: Dependency cycle detected. Falling back to original pass order");
-		_executionOrder.resize(passCount);
-		for (uint32_t i = 0; i < passCount; i++) {
-			_executionOrder[i] = i;
-		}
-	}
-}
-
-void RenderGraph::execute(RenderContext & ctx)
+void RenderGraph::execute(RenderContext& ctx)
 {
 	VkCommandBuffer cmd = ctx.get_cmd();
 
-	for (uint32_t passIndex : _executionOrder) {
-		RGPass& pass = _passes[passIndex];
-
-		// determine resource transitions needed for this pass
-		std::unordered_map<std::string, ResourceState> targetStates;
-		for (const RGResourceUsage& read : pass.reads) {
-			targetStates[read.name] = read.state;
-		}
-		for (const RGResourceUsage& write : pass.writes) {
-			targetStates[write.name] = write.state;
-		}
-
-		// create barriers 
-		std::vector<ImageBarrierInfo> barriers;
-		for (const auto& [name, targetState] : targetStates) {
-			if (!_resources.has_target(name))
+	for (RGPass& pass : _passes) {
+		// dispatch texture barriers
+		for (const RGTextureTransition& transition : pass.textureTransitions) {
+			RGTextureState* tex = get_texture(transition.name);
+			if (!tex) {
+				fmt::println("RenderGraph: texture {} not registered", transition.name);
 				continue;
+			}
 
-			ResourceState currentState = _resources.get_state(name);
-			// no transition needed if current state is the same as target state
-			if (currentState == targetState)
+			if (tex->currentLayout == transition.targetLayout) {
+				continue; // no transition needed, already in correct layout
+			}
+
+			vkutil::image_mem_barrier2(cmd, tex->image, tex->format, tex->currentLayout, transition.targetLayout, tex->layerCount, tex->mipLevels, tex->baseMiplevel);
+			tex->currentLayout = transition.targetLayout;
+		}
+
+		// dispatch buffer barriers
+		for (const RGBufferTransition& transition : pass.bufferTransitions) {
+			RGBufferState* buf = get_buffer(transition.name);
+			if (!buf) {
+				fmt::println("RenderGraph: buffer {} not registered", transition.name);
 				continue;
+			}
 
-			const RenderTargetDescription& desc = _resources.get_description(name);
-			Texture& img = _resources.get_image(name);
+			if (buf->currentStage == transition.targetStage) {
+				continue; // no transition needed, already in correct stage
+			}
 
-			// create an image barrier for the transition
-			ImageBarrierInfo barrier{};
-			barrier.image = img.get_image();
-			barrier.oldState = currentState;
-			barrier.newState = targetState;
-			barrier.aspectMask = desc.aspectMask;
-			barrier.baseMipLevel = 0;
-			barrier.levelCount = desc.mipLevels;
-			barrier.baseArrayLayer = 0;
-			barrier.layerCount = desc.arrayLayers;
-			barriers.push_back(barrier);
-
-			_resources.set_state(name, targetState);
+			vkutil::buffer_mem_barrier2(cmd, buf->buffer, buf->currentStage, transition.targetStage);
+			buf->currentStage = transition.targetStage; 
 		}
 
-		// execute barriers
-		if (!barriers.empty()) {
-			RenderSync::transition_images(cmd, barriers);
-		}
+		// execute the pass callback
+		bool hasColor = !pass.colorAttachments.empty();
+		bool hasDepth = pass.depthAttachment.has_value();
 
-		// setup dynamic rendering scope if attachment exists
-		const bool hasColor = !pass.colorAttachments.empty();
-		const bool hasDepth = pass.depthAttachments.has_value();
 		if (hasColor || hasDepth) {
-			VkExtent2D renderExtent{};
-			if (pass.renderExtent.has_value()) {
-				renderExtent = pass.renderExtent.value();
-			}
-			else if (hasColor) {
-				renderExtent = _resources.get_extent(pass.colorAttachments[0].name);
-			}
-			else if (hasDepth) {
-				renderExtent = _resources.get_extent(pass.depthAttachments->name);
+			RenderDesc renderDesc;
+			renderDesc.renderExtent = pass.renderExtent.value_or(VkExtent2D{ 0, 0 });
+			
+			for (const RGColorAttachment& color : pass.colorAttachments) {
+				renderDesc.colorAttachments.push_back({ color.view, color.loadOp, color.storeOp, color.clearColor });
 			}
 
-			RenderDesc renderDesc{ .renderExtent = renderExtent };
-			// setup color attachments
-			for (const auto& col : pass.colorAttachments) {
-				renderDesc.colorAttachments.push_back({
-					.view = _resources.get_view(col.name),
-					.loadOp = col.loadOp,
-					.storeOp = col.storeOp,
-					.clearColor = col.clearColor,
-					.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
-					});
-			}
-
-			// setup depth attachment
 			if (hasDepth) {
-				VkImageLayout depthLayout = (pass.depthAttachments->storeOp == VK_ATTACHMENT_STORE_OP_NONE) ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-				renderDesc.depthAttachment = DepthAttachmentDesc{
-					.view = _resources.get_view(pass.depthAttachments->name),
-					.loadOp = pass.depthAttachments->loadOp,
-					.storeOp = pass.depthAttachments->storeOp,
-					.clearDepth = pass.depthAttachments->clearDepth,
-					.layout = depthLayout
-				};
+				VkImageLayout depthLayout = (pass.depthAttachment->storeOp == VK_ATTACHMENT_STORE_OP_NONE) ? VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL : VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+				renderDesc.depthAttachment = DepthAttachmentDesc{ pass.depthAttachment->view, pass.depthAttachment->loadOp, pass.depthAttachment->storeOp, pass.depthAttachment->clearDepth, depthLayout };
 			}
 
 			ctx.begin_rendering(renderDesc);
-			ctx.set_viewport_scissor(renderExtent);
+			ctx.set_viewport_scissor(renderDesc.renderExtent);
 
 			if (pass.executeCallback) {
 				pass.executeCallback(ctx);
@@ -191,10 +135,40 @@ void RenderGraph::execute(RenderContext & ctx)
 
 			ctx.end_rendering();
 		}
-		else { // no attachments, just execute the callback
+		else {
 			if (pass.executeCallback) {
 				pass.executeCallback(ctx);
 			}
 		}
 	}
+}
+
+void RenderGraph::transition_texture(VkCommandBuffer cmd, const std::string & name, VkImageLayout newLayout)
+{
+	RGTextureState* tex = get_texture(name);
+	if (tex && tex->currentLayout != newLayout) {
+		vkutil::image_mem_barrier2(cmd, tex->image, tex->format, tex->currentLayout, newLayout, tex->layerCount, tex->mipLevels, tex->baseMiplevel);
+		tex->currentLayout = newLayout;
+	}
+}
+
+void RenderGraph::transition_buffer(VkCommandBuffer cmd, const std::string & name, VkPipelineStageFlags2 newStage)
+{
+	RGBufferState* buf = get_buffer(name);
+	if (buf && buf->currentStage != newStage) {
+		vkutil::buffer_mem_barrier2(cmd, buf->buffer, buf->currentStage, newStage);
+		buf->currentStage = newStage;
+	}
+}
+
+RGTextureState* RenderGraph::get_texture(const std::string & name)
+{
+	auto it = _textures.find(name);
+	return it != _textures.end() ? &it->second : nullptr;
+}
+
+RGBufferState* RenderGraph::get_buffer(const std::string& name)
+{
+	auto it = _buffers.find(name);
+	return it != _buffers.end() ? &it->second : nullptr;
 }

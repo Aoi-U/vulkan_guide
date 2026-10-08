@@ -44,7 +44,7 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 	// statistics
 	{
 		// read cull stats from previous frame
-		auto* statsRead = static_cast<CullStatsData*>(frameData._cullStatsBuffer.get_mapped_data());
+		auto* statsRead = static_cast<CullStatsData*>(frameData._cullStatsBuffer->get_mapped_data());
 		uint32_t visibleDraws = statsRead->visibleDraws;
 		uint32_t visibleTriangles = statsRead->visibleTriangles;
 
@@ -81,16 +81,16 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 	//_vulkanCore->check_and_resize_buffer(frameData._gpuInstanceBuffer, instanceBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
 	//_vulkanCore->check_and_resize_buffer(frameData._gpuIndirectBuffer, indirectBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	//_vulkanCore->check_and_resize_buffer(frameData._gpuCountBuffer, countBufferSize, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-	frameData._gpuObjectBuffer.resize(_vulkanCore, objectBufferSize);
-	frameData._gpuInstanceBuffer.resize(_vulkanCore, instanceBufferSize);
-	frameData._gpuIndirectBuffer.resize(_vulkanCore, indirectBufferSize);
-	frameData._gpuCountBuffer.resize(_vulkanCore, countBufferSize);
+	frameData._gpuObjectBuffer->resize(objectBufferSize);
+	frameData._gpuInstanceBuffer->resize(instanceBufferSize);
+	frameData._gpuIndirectBuffer->resize(indirectBufferSize);
+	frameData._gpuCountBuffer->resize(countBufferSize);
 
-	memset(frameData._gpuCountBuffer.get_mapped_data(), 0, sizeof(uint32_t) * batchCount);
+	memset(frameData._gpuCountBuffer->get_mapped_data(), 0, sizeof(uint32_t) * batchCount);
 
 	// get mapped pointers to the buffers
-	auto* mappedObjects = static_cast<GPUObjectData*>(frameData._gpuObjectBuffer.get_mapped_data());
-	auto* mappedCommands = static_cast<VkDrawIndexedIndirectCommand*>(frameData._gpuIndirectBuffer.get_mapped_data());
+	auto* mappedObjects = static_cast<GPUObjectData*>(frameData._gpuObjectBuffer->get_mapped_data());
+	auto* mappedCommands = static_cast<VkDrawIndexedIndirectCommand*>(frameData._gpuIndirectBuffer->get_mapped_data());
 
 	// fill object and indirect command buffers with data
 	for (uint32_t b = 0; b < batchCount; ++b) {
@@ -122,11 +122,11 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 
 	// update descriptor set with the new buffers
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData._gpuObjectBuffer.get_buffer(), sizeof(GPUObjectData) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(1, frameData._gpuInstanceBuffer.get_buffer(), sizeof(uint32_t) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(2, frameData._gpuIndirectBuffer.get_buffer(), sizeof(VkDrawIndexedIndirectCommand) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(3, frameData._cullStatsBuffer.get_buffer(), sizeof(CullStatsData), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(4, frameData._gpuCountBuffer.get_buffer(), sizeof(uint32_t) * batchCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, frameData._gpuObjectBuffer->get_buffer(), sizeof(GPUObjectData) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(1, frameData._gpuInstanceBuffer->get_buffer(), sizeof(uint32_t) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(2, frameData._gpuIndirectBuffer->get_buffer(), sizeof(VkDrawIndexedIndirectCommand) * drawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(3, frameData._cullStatsBuffer->get_buffer(), sizeof(CullStatsData), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(4, frameData._gpuCountBuffer->get_buffer(), sizeof(uint32_t) * batchCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), cullSet);
 
 	ctx.bind_pipeline(_pipeline);

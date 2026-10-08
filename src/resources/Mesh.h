@@ -11,11 +11,11 @@
 class Mesh : public Resource
 {
 public:
-	explicit Mesh(const std::string& id, std::vector<uint32_t> indices, std::vector<Vertex> vertices, bool keepCpuGeometry = true);
-	~Mesh() override = default;
+	explicit Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, std::vector<uint32_t> indices, std::vector<Vertex> vertices, bool keepCpuGeometry = true);
+	~Mesh() override { Resource::unload(); }
 
-	VkBuffer get_vertex_buffer() const { return _vertexBuffer.get_buffer(); }
-	VkBuffer get_index_buffer() const { return _indexBuffer.get_buffer(); }
+	VkBuffer get_vertex_buffer() const { return _vertexBuffer->get_buffer(); }
+	VkBuffer get_index_buffer() const { return _indexBuffer->get_buffer(); }
 	VkDeviceAddress get_vertex_buffer_address() const { return _vertexBufferAddress; }
 	uint32_t get_index_count() const { return _indexCount; }
 	uint32_t get_vertex_count() const { return _vertexCount; }
@@ -25,15 +25,15 @@ public:
 	bool has_picking_data() const { return !_pickingPositions.empty() && !_pickingIndices.empty(); }
 
 protected:
-	bool doLoad(VulkanCore* core) override;
-	bool doUnload(VulkanCore* core) override;
+	bool doLoad() override;
+	bool doUnload() override;
 
 private:
 	std::vector<uint32_t> _cpuIndices;
 	std::vector<Vertex> _cpuVertices;
 
-	Buffer _vertexBuffer{};
-	Buffer _indexBuffer{};
+	ResourceHandle<Buffer> _vertexBuffer;
+	ResourceHandle<Buffer> _indexBuffer;
 
 	VkDeviceAddress _vertexBufferAddress{ 0 };
 	uint32_t _indexCount{ 0 };

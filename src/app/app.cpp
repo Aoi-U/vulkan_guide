@@ -10,6 +10,7 @@
 #include <resources/Material.h>
 #include <resources/Model.h>
 #include <resources/AssetRegistry.h>
+#include <resources/DefaultResources.h>
 
 App::App()
 {
@@ -29,6 +30,7 @@ void App::init()
 
 	_resourceManager = std::make_unique<ResourceManager>(_vulkanCore.get());
 	Material::init_descriptor_layout(_vulkanCore.get());
+	DefaultResources::get().init(_resourceManager.get());
 
 	_renderer->init(_window.get(), _vulkanCore.get(), dispatcher, _resourceManager.get());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());
@@ -43,7 +45,7 @@ void App::init()
 	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
 	AssetRegistry::get().scan_directory("../../assets");
-	auto helmet = _resourceManager->preload<Model>("DamagedHelmet", "../../assets/DamagedHelmet.glb", _resourceManager.get());
+	auto helmet = _resourceManager->preload<Model>("DamagedHelmet", "../../assets/DamagedHelmet.glb");
 	
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
@@ -95,6 +97,7 @@ void App::cleanup()
 
 	_guiRenderer->cleanup();
 	_registry.clear();
+	DefaultResources::get().cleanup();
 	_resourceManager->unload_all();
 	Material::cleanup_descriptor_layout(_vulkanCore.get());
 	_renderer->cleanup(dispatcher);

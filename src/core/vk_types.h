@@ -106,7 +106,7 @@ struct TextureDescription {
 	VkSampleCountFlagBits samples{ VK_SAMPLE_COUNT_1_BIT };
 	VkImageCreateFlags flags{ 0 };
 	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
-	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
+	VkImageAspectFlags aspectMask = static_cast<VkImageAspectFlags>(VK_IMAGE_ASPECT_COLOR_BIT);
 	VkFilter magFilter{ VK_FILTER_LINEAR };
 	VkFilter minFilter{ VK_FILTER_LINEAR };
 	VkSamplerMipmapMode mipmapMode{ VK_SAMPLER_MIPMAP_MODE_LINEAR };

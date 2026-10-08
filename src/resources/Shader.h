@@ -10,10 +10,8 @@
 class Shader : public Resource
 {
 public:
-	Shader(const std::string& id, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath);
-	Shader(Shader&& other) noexcept;
-	Shader& operator=(Shader&& other) noexcept;
-	~Shader() override;
+	Shader(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath);
+	~Shader() override { Resource::unload(); }
 
 	// getters
 	VkShaderModule get_module() const { return _module; }
@@ -21,12 +19,10 @@ public:
 	VkPipelineShaderStageCreateInfo get_stage_info() const;
 
 protected:
-	bool doLoad(VulkanCore* core) override;
-	bool doUnload(VulkanCore* core) override;
+	bool doLoad() override;
+	bool doUnload() override;
 
 private:
-	VulkanCore* _core{ nullptr };
-
 	std::filesystem::path _filePath{};
 	VkShaderModule _module{ VK_NULL_HANDLE };
 	VkShaderStageFlagBits _stage{};

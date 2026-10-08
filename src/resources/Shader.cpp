@@ -4,8 +4,8 @@
 #include <fstream>
 #include <fmt/core.h>
 
-Shader::Shader(const std::string& id, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath)
-	: Resource(id), _stage(stage), _entryPoint(entryPoint), _filePath(customPath)
+Shader::Shader(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath)
+	: Resource(id, core, resourceManager), _stage(stage), _entryPoint(entryPoint), _filePath(customPath)
 {
 	// resolve fallback spirv file path
 	if (_filePath.empty()) {
@@ -20,32 +20,6 @@ Shader::Shader(const std::string& id, VkShaderStageFlagBits stage, std::string_v
 	}
 }
 
-Shader::Shader(Shader&& other) noexcept
-	: Resource(std::move(other)), _filePath(std::move(other._filePath)),
-	_module(other._module), _stage(other._stage), _entryPoint(std::move(other._entryPoint)), _core(other._core)
-{
-	other._module = VK_NULL_HANDLE;
-}
-
-Shader& Shader::operator=(Shader&& other) noexcept {
-	if (this != &other) {
-		if (_module != VK_NULL_HANDLE && _core != nullptr) {
-			_core->globalDeletionQueue.push(_module);
-		}
-		Resource::operator=(std::move(other));
-		_filePath = std::move(other._filePath); _module = other._module;
-		_stage = other._stage; _entryPoint = std::move(other._entryPoint); _core = other._core;
-		other._module = VK_NULL_HANDLE;
-	}
-	return *this;
-}
-
-Shader::~Shader() {
-	if (_module != VK_NULL_HANDLE && _core != nullptr) {
-		_core->globalDeletionQueue.push(_module);
-	}
-}
-
 VkPipelineShaderStageCreateInfo Shader::get_stage_info() const
 {
 	VkPipelineShaderStageCreateInfo info = {};
@@ -57,10 +31,8 @@ VkPipelineShaderStageCreateInfo Shader::get_stage_info() const
 	return info;
 }
 
-bool Shader::doLoad(VulkanCore* core)
+bool Shader::doLoad()
 {
-	_core = core;
-
 	// open the file, with cursor at end
 	std::ifstream file(_filePath, std::ios::ate | std::ios::binary);
 
@@ -95,7 +67,7 @@ bool Shader::doLoad(VulkanCore* core)
 	createInfo.codeSize = buffer.size() * sizeof(uint32_t);
 	createInfo.pCode = buffer.data();
 
-	if (vkCreateShaderModule(core->get_device(), &createInfo, nullptr, &_module) != VK_SUCCESS) {
+	if (vkCreateShaderModule(_core->get_device(), &createInfo, nullptr, &_module) != VK_SUCCESS) {
 		fmt::println("Shader: Failed to create shader module from file: {}", _filePath);
 		return false;
 	}
@@ -103,10 +75,10 @@ bool Shader::doLoad(VulkanCore* core)
 	return true;
 }
 
-bool Shader::doUnload(VulkanCore* core)
+bool Shader::doUnload()
 {
 	if (_module != VK_NULL_HANDLE) {
-		core->globalDeletionQueue.push(_module);
+		_core->globalDeletionQueue.push(_module);
 		_module = VK_NULL_HANDLE;
 	}
 	return true;
