@@ -59,6 +59,7 @@ struct GeometryPassParameters
 	RGBufferHandle gpuInstanceBuffer;
 	RGBufferHandle gpuIndirectBuffer;
 	RGBufferHandle gpuCountBuffer;
+	RGBufferHandle materialBuffer;
 
 	// outputs
 	RGTextureHandle gPosition;

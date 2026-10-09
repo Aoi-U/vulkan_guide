@@ -18,6 +18,7 @@ struct ObjectData {
     uvec2 vertexBufferAddress;
     uint batchIndex;
     uint batchOffset;
+    uint materialIndex;
 };
 
 // all objects in the scene

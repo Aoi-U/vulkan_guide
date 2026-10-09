@@ -90,17 +90,6 @@ struct MaterialComponent {
 	mutable bool isDirty{ true };
 };
 
-// utility function to convert material component into vulkan material constants
-inline MaterialConstants get_material_constants(const MaterialComponent& mat)
-{
-	MaterialConstants constants{};
-	constants.colorFactors = glm::vec4(mat.albedoColor.r, mat.albedoColor.g, mat.albedoColor.b, mat.albedoColor.a);
-	constants.metalRoughFactors = glm::vec4(mat.metallic, mat.roughness, 0.0f, 0.0f);
-	constants.extraFactors = glm::vec4(mat.occlusionStrength, mat.normalStrength, mat.doubleSided ? 1.0f : 0.0f, 0.0f);
-	constants.emissiveFactor = glm::vec4(mat.emissiveColor.r, mat.emissiveColor.g, mat.emissiveColor.b, mat.emissiveIntensity);
-	return constants;
-}
-
 struct PointLightComponent
 {
 	glm::vec3 color{ 1.0f, 1.0f, 1.0f };

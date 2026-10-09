@@ -115,14 +115,15 @@ struct TextureDescription {
 	VkSamplerAddressMode addressModeW{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
 };
 
-// object data stored in gpu contiguous buffer
+// buffer data for a single renderable object
 struct GPUObjectData
 {
 	glm::mat4 worldMatrix;
 	glm::vec4 sphereBounds;
-	VkDeviceAddress vertexBufferAddress;
+	VkDeviceAddress vertexBufferAddress; // address of the vertex buffer for this object
 	uint32_t batchIndex;
 	uint32_t batchOffset;
+	uint32_t materialIndex;
 };
 
 constexpr uint32_t MAX_POINT_LIGHTS = 256;
@@ -134,7 +135,7 @@ struct GPUPointLight
 	glm::vec4 params; // x: cast shadow, yzw: padding
 };
 
-// per frame uniform data sent to GPU
+// uniform buffer data for the scene 
 struct GPUSceneData
 {
 	glm::mat4 view;
@@ -147,6 +148,22 @@ struct GPUSceneData
 	glm::vec4 sunlightColor;
 	GPUPointLight pointLights[MAX_POINT_LIGHTS];
 	glm::vec4 lightCount; // active point light count
+};
+
+// data that is sent to shader for a material instance
+struct MaterialConstants
+{
+	glm::vec4 colorFactors;
+	glm::vec4 metalRoughFactors;
+	glm::vec4 extraFactors; // x: occlusionStrength, y: normalScale, z, isDoubleSided
+	glm::vec4 emissiveFactor; // xyz: emissiveFactor, w: emissiveStrength
+	uint32_t albedoIndex; // index in bindless texture array for albedo texture
+	uint32_t normalIndex; // index in bindless texture array for normal texture
+	uint32_t metalRoughIndex; // index in bindless texture array for metal/roughness texture
+	uint32_t occlusionIndex; // index in bindless texture array for occlusion texture
+	uint32_t emissiveIndex; // index in bindless texture array for emissive texture
+
+	uint32_t padding[3];
 };
 
 // a single vertex 
@@ -181,14 +198,14 @@ struct RenderObject
 	uint32_t indexCount;
 	uint32_t firstIndex;
 	VkBuffer indexBuffer;
-
-	VkDescriptorSet materialSet;
+	uint32_t materialIndex; // index into the bindless material buffer for this object
 	MaterialPassType passType;
 	Bounds bounds;
 	glm::mat4 transform;
 	VkDeviceAddress vertexBufferAddress;
 	bool isDoubleSided{ false };
 };
+
 
 // implementation of a scene node
 // scene nodes can hold children and will also keep a transform to propagate to them

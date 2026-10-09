@@ -204,8 +204,6 @@ bool Model::doLoad()
 			size_t imgIdx = gltf.textures[mat.emissiveTexture->textureIndex].imageIndex.value();
 			materials[i]->set_texture(Material::TextureSlot::Emissive, ResourceHandle<Texture>(get_id() + "_tex_" + std::to_string(imgIdx), _resourceManager));
 		}
-
-		materials[i]->update_buffer();
 	}
 	_materials = materials;
 

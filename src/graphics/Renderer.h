@@ -1,5 +1,5 @@
 #pragma once
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/Swapchain.h>
 
@@ -37,7 +37,6 @@ class ResourceManager;
 struct IndirectBatch
 {
 	VkBuffer indexBuffer;
-	VkDescriptorSet materialSet;
 	uint32_t first; // first index in the indirect buffer
 	uint32_t count; // number of indirect commands in this batch
 	uint32_t batchIndex; // index of this batch in the batch array
@@ -56,12 +55,14 @@ struct DrawContext
 
 	EnvironmentResources environment{}; // environment resources for the scene
 
+	VkDescriptorSet bindlessMaterialSet{ VK_NULL_HANDLE };
+
 	void clear() {
 		opaqueObjects.clear();
 		transparentObjects.clear();
 		opaqueBatches.clear();
-
 		indirectDrawCount = 0;
+		bindlessMaterialSet = VK_NULL_HANDLE;
 	}
 };
 

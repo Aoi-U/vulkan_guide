@@ -1,7 +1,7 @@
 #pragma once
 
 #include <resources/ResourceManager.h>
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <span>
 #include <vector>
 

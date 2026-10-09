@@ -102,7 +102,8 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 				.sphereBounds = glm::vec4(obj.bounds.origin, obj.bounds.sphereRadius),
 				.vertexBufferAddress = obj.vertexBufferAddress,
 				.batchIndex = b,
-				.batchOffset = batch.first
+				.batchOffset = batch.first,
+				.materialIndex = obj.materialIndex
 			};
 
 			mappedCommands[i] = VkDrawIndexedIndirectCommand{

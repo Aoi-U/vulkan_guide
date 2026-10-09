@@ -1,6 +1,6 @@
 #pragma once
 
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <filesystem>
 #include <resources/ResourceManager.h>
 #include <string>
@@ -34,6 +34,7 @@ public:
 	VkExtent3D get_extent() const { return _extent; }
 	VkExtent2D get_extent_2d() const { return { _extent.width, _extent.height }; }
 	VkFormat get_format() const { return _format; }
+	uint32_t get_bindless_index() const { return _bindlessIndex; }
 
 protected:
 	bool doLoad() override;
@@ -58,4 +59,6 @@ private:
 	VkExtent3D _extent{ 1, 1, 1 };
 	uint32_t _mipLevels{ 0 };
 	std::vector<VkImageView> _faceViews; // for cubemaps
+
+	uint32_t _bindlessIndex{ 0 }; // index in the bindless descriptor set 
 };

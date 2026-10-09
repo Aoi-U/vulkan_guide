@@ -9,9 +9,10 @@ void GBufferPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager,
 	_vulkanCore = vulkanCore;
 
 	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: uniform scene data
-	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: mesh data
-	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 2: instance buffer
+	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: scene data
+	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: object data
+	builder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 2: instance data
+	builder.add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 3: material constants
 	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	auto vert = resourceManager->load<Shader>("gbuffer_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/gbuffer.vert.spv");
@@ -60,24 +61,17 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 	writer.write_buffer(0, frameData.sceneDataBuffer->get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	writer.write_buffer(1, graph.get_buffer(params.gpuObjectBuffer), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.write_buffer(2, graph.get_buffer(params.gpuInstanceBuffer), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(3, graph.get_buffer(params.materialBuffer), frameData._materialDataBuffer->get_size(), 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), globalDescriptor);
 
 	ctx.bind_pipeline(_pipeline);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, globalDescriptor);
+	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 1,  drawCtx.bindlessMaterialSet);
 
-	VkDescriptorSet lastMaterialSet = VK_NULL_HANDLE;
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
-		if (!batch.materialSet) continue;
-
 		ctx.set_cull_mode(batch.isDoubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
-
-		// bind material descriptor set if needed
-		if (batch.materialSet != lastMaterialSet) {
-			lastMaterialSet = batch.materialSet;
-			ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 1, lastMaterialSet);
-		}
 
 		// bind index buffer if needed
 		if (batch.indexBuffer != lastIndexBuffer) {

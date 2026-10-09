@@ -2,7 +2,7 @@
 
 #include "app/editor/EditorPanel.h"
 #include <core/Events.h>
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <vector>
 #include <memory>
 

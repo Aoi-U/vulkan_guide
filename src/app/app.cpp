@@ -28,8 +28,8 @@ void App::init()
 	_window->init("Vulkan Engine", 1280, 720);
 	_vulkanCore->init(*_window);
 
-	_resourceManager = std::make_unique<ResourceManager>(_vulkanCore.get());
-	Material::init_descriptor_layout(_vulkanCore.get());
+	_resourceManager = std::make_unique<ResourceManager>();
+	_resourceManager->init(_vulkanCore.get());
 	DefaultResources::get().init(_resourceManager.get());
 
 	_renderer->init(_window.get(), _vulkanCore.get(), dispatcher, _resourceManager.get());
@@ -94,13 +94,11 @@ void App::cleanup()
 
 	auto& dispatcher = _registry.ctx().get<entt::dispatcher>();
 	dispatcher.disconnect(this);
-
 	_guiRenderer->cleanup();
 	_registry.clear();
 	DefaultResources::get().cleanup();
-	Material::cleanup_descriptor_layout(_vulkanCore.get());
 	_renderer->cleanup(dispatcher);
-	_resourceManager->unload_all();
+	_resourceManager->cleanup();
 	_vulkanCore->cleanup();
 	_window->cleanup();
 }

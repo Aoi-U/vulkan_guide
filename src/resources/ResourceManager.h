@@ -1,5 +1,6 @@
 #pragma once
 
+#include <vulkan/vulkan.h>
 #include <string>
 #include <optional>
 #include <unordered_map>
@@ -11,6 +12,7 @@
 #include <typeinfo>
 #include <fmt/std.h>
 #include <assert.h>
+#include <mutex>
 
 // resource management classes heavily based off vulkan resource management tutorial: 
 // https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.html#_resource_management
@@ -127,9 +129,17 @@ public:
 		int refCount; // reference count for this resource
 		bool isPersistent{ false }; // marks asset for persistent preloading
 	};
+	
+	void init(VulkanCore* core);
 
-	explicit ResourceManager(VulkanCore* core)
-		: _vulkanCore(core) {}
+	void cleanup();
+
+	uint32_t allocate_bindless_texture(VkImageView view, VkSampler sampler);
+
+	void free_bindless_slot(uint32_t slot);
+
+	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
+	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> preload(const std::string& resourceId, Args&&... args) {
@@ -313,13 +323,25 @@ public:
 
 
 private:
+	static constexpr uint32_t MAX_BINDLESS_TEXTURES = 10000;
+
 	VulkanCore* _vulkanCore{ nullptr };
+
+	VkDescriptorSetLayout _bindlessLayout{ VK_NULL_HANDLE };
+	VkDescriptorPool _bindlessPool{ VK_NULL_HANDLE };
+	VkDescriptorSet _bindlessSet{ VK_NULL_HANDLE };
+	std::vector<uint32_t> _freeBindlessSlots;
+	uint32_t _nextBindlessSlot{ 0 }; // 0 for invalid
+	std::mutex _bindlessMutex;
 
 	// two level storage system
 	// organize by type first, then by unique id
 	std::unordered_map<std::type_index, std::unordered_map<std::string, std::shared_ptr<Resource>>> _resources;
 
 	std::unordered_map<std::type_index, std::unordered_map<std::string, ResourceData>> _refCounts;
+
+	void init_bindless();
+	void clean_bindless();
 };
 
 template<typename T>
@@ -329,62 +351,6 @@ inline ResourceHandle<T>::ResourceHandle()
 template<typename T>
 inline ResourceHandle<T>::ResourceHandle(const std::string& id, ResourceManager* manager)
 	: resourceId(id), resourceManager(manager) {}
-
-//template<typename T>
-//inline ResourceHandle<T>::ResourceHandle(const ResourceHandle& other)
-//	: resourceId(other.resourceId), resourceManager(other.resourceManager)
-//{
-//	if (resourceManager && !resourceId.empty()) {
-//		resourceManager->add_ref<T>(resourceId);
-//	}
-//}
-//
-//template<typename T>
-//inline ResourceHandle<T>& ResourceHandle<T>::operator=(const ResourceHandle& other)
-//{
-//	if (this != &other) {
-//		if (resourceManager && !resourceId.empty()) {
-//			resourceManager->release<T>(resourceId);
-//		}
-//		resourceId = other.resourceId;
-//		resourceManager = other.resourceManager;
-//		if (resourceManager && !resourceId.empty()) {
-//			resourceManager->add_ref<T>(resourceId);
-//		}
-//	}
-//	return *this;
-//}
-//
-//template<typename T>
-//inline ResourceHandle<T>::ResourceHandle(ResourceHandle&& other) noexcept
-//	: resourceId(std::move(other.resourceId)), resourceManager(other.resourceManager)
-//{
-//	other.resourceId.clear();
-//	other.resourceManager = nullptr;
-//}
-//
-//template<typename T>
-//inline ResourceHandle<T>& ResourceHandle<T>::operator=(ResourceHandle&& other) noexcept
-//{
-//	if (this != &other) {
-//		if (resourceManager && !resourceId.empty()) {
-//			resourceManager->release<T>(resourceId);
-//		}
-//		resourceId = std::move(other.resourceId);
-//		resourceManager = other.resourceManager;
-//		other.resourceId.clear();
-//		other.resourceManager = nullptr;
-//	}
-//	return *this;
-//}
-//
-//template<typename T>
-//inline ResourceHandle<T>::~ResourceHandle()
-//{
-//	if (resourceManager && !resourceId.empty()) {
-//		resourceManager->release<T>(resourceId);
-//	}
-//}
 
 template<typename T>
 inline T* ResourceHandle<T>::get() const

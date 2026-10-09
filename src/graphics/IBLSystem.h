@@ -1,6 +1,6 @@
 #pragma once
 
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <graphics/Pipeline.h>
 #include <string>
 #include <filesystem>

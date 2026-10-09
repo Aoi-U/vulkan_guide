@@ -39,6 +39,11 @@ void VulkanCore::init(Window& window)
 	features12.bufferDeviceAddress = true;
 	features12.descriptorIndexing = true;
 	features12.drawIndirectCount = true;
+	features12.descriptorBindingSampledImageUpdateAfterBind = true;
+	features12.descriptorBindingPartiallyBound = true;
+	features12.descriptorBindingVariableDescriptorCount = true;
+	features12.runtimeDescriptorArray = true;
+	features12.shaderSampledImageArrayNonUniformIndexing = true;
 
 	VkPhysicalDeviceFeatures standardFeatures{};
 	standardFeatures.multiDrawIndirect = true;

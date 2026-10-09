@@ -215,11 +215,21 @@ bool Texture::doLoad()
 		}
 	}
 
+	// register texture in bindless descriptor set
+	if (_sourceType != SourceType::Description || (_usage & VK_IMAGE_USAGE_SAMPLED_BIT)) { // only register if it's a sampled texture
+		_bindlessIndex = _resourceManager->allocate_bindless_texture(_imageView, _sampler);
+	}
+
 	return true;
 }
 
 bool Texture::doUnload()
 {
+	if (_bindlessIndex != 0) {
+		_resourceManager->free_bindless_slot(_bindlessIndex);
+		_bindlessIndex = 0;
+	}
+
 	if (_sampler != VK_NULL_HANDLE) { 
 		_core->globalDeletionQueue.push(_sampler);
 		_sampler = VK_NULL_HANDLE; 

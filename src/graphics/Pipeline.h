@@ -1,6 +1,6 @@
 #pragma once
 
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <resources/Shader.h>
 #include <vector>
 #include <memory>

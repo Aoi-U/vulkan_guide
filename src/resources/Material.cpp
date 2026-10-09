@@ -4,9 +4,6 @@
 #include <utils/vk_initializers.h>
 #include <resources/DefaultResources.h>
 
-VkDescriptorSetLayout Material::_layout = VK_NULL_HANDLE;
-DescriptorAllocatorGrowable Material::_descriptorPool;
-
 Material::Material(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, MaterialPassType passType)
 	: Resource(id, core, resourceManager),  _passType(passType)
 {}
@@ -37,50 +34,6 @@ void Material::set_constants(const MaterialConstants & constants)
 	_constants = constants;
 }
 
-void Material::update_buffer()
-{
-	_materialBuffer->copy_data(&_constants, sizeof(MaterialConstants));
-
-	DefaultResources& defaults = DefaultResources::get();
-
-	auto resolve_view = [](const ResourceHandle<Texture>& handle, const ResourceHandle<Texture>& fallback) -> VkImageView {
-		if (handle.is_valid() && handle.get() && handle->get_image_view() != VK_NULL_HANDLE) {
-			return handle->get_image_view();
-		}
-		return (fallback.is_valid() && fallback.get()) ? fallback->get_image_view() : VK_NULL_HANDLE;
-		};
-
-	auto resolve_sampler = [](const ResourceHandle<Texture>& handle, const ResourceHandle<Sampler>& fallback) -> VkSampler {
-		if (handle.is_valid() && handle.get() && handle->get_sampler() != VK_NULL_HANDLE) {
-			return handle->get_sampler();
-		}
-		return (fallback.is_valid() && fallback.get()) ? fallback->get_sampler() : VK_NULL_HANDLE;
-		};
-
-	VkImageView baseColorView = resolve_view(_baseColorTexture, defaults.whiteImage);
-	VkSampler baseColorSampler = resolve_sampler(_baseColorTexture, defaults.defaultSamplerLinear);
-
-	VkImageView metalRoughView = resolve_view(_metalRoughTexture, defaults.whiteImage);
-	VkSampler metalRoughSampler = resolve_sampler(_metalRoughTexture, defaults.defaultSamplerLinear);
-
-	VkImageView occlusionView = resolve_view(_occlusionTexture, defaults.whiteImage);
-	VkSampler occlusionSampler = resolve_sampler(_occlusionTexture, defaults.defaultSamplerLinear);
-
-	VkImageView normalView = resolve_view(_normalTexture, defaults.defaultNormalImage);
-	VkSampler normalSampler = resolve_sampler(_normalTexture, defaults.defaultSamplerLinear);
-
-	VkImageView emissiveView = resolve_view(_emissiveTexture, defaults.blackImage);
-	VkSampler emissiveSampler = resolve_sampler(_emissiveTexture, defaults.defaultSamplerLinear);
-	// update descriptor set with the new buffer and textures
-	DescriptorWriter writer;
-	writer.write_buffer(0, _materialBuffer->get_buffer(), sizeof(MaterialConstants), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_image(1, baseColorView, baseColorSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(2, metalRoughView, metalRoughSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(3, occlusionView, occlusionSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(4, normalView, normalSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(5, emissiveView, emissiveSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.update_set(_core->get_device(), _descriptorSet);
-}
 
 ResourceHandle<Texture> Material::get_texture(TextureSlot slot) const
 {
@@ -99,51 +52,3 @@ ResourceHandle<Texture> Material::get_texture(TextureSlot slot) const
 		return {};
 	}
 }
-
-void Material::init_descriptor_layout(VulkanCore* core)
-{
-	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: uniform buffer for MaterialConstants
-	builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 1: base color texture
-	builder.add_binding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 2: metallic-roughness texture
-	builder.add_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 3: occlusion texture
-	builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 4: normal texture
-	builder.add_binding(5, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 5: emissive texture
-	_layout = builder.build(core->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
-
-	std::vector<DescriptorAllocatorGrowable::PoolSizeRatio> poolSizes = {
-		{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1.0 },
-		{ VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 5.0 }
-	};
-	_descriptorPool.init(core->get_device(), 1000, poolSizes);
-}
-
-void Material::cleanup_descriptor_layout(VulkanCore* core)
-{
-	if (_layout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(core->get_device(), _layout, nullptr);
-		_layout = VK_NULL_HANDLE;
-	}
-	_descriptorPool.destroy_pools(core->get_device());
-}
-
-bool Material::doLoad()
-{
-	//_materialBuffer = Buffer(get_id() + "_buf", sizeof(MaterialConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);	
-	//_materialBuffer.load();
-	_materialBuffer = _resourceManager->load<Buffer>(get_id() + "_buf", sizeof(MaterialConstants), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-	_descriptorSet = _descriptorPool.allocate(_core->get_device(), _layout);
-	update_buffer();
-
-
-	return true;
-}
-
-bool Material::doUnload()
-{
-	_descriptorSet = VK_NULL_HANDLE;
-
-	return true;
-}
-

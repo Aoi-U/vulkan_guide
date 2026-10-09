@@ -3,7 +3,7 @@
 #include <graphics/pass/RenderPass.h>
 #include <graphics/Pipeline.h>
 #include <graphics/RenderGraph.h>
-#include <vk_types.h>
+#include <graphics/utils/vk_types.h>
 
 class GBufferPass : public RenderPass {
 public:
