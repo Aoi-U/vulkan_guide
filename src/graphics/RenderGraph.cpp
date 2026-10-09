@@ -4,7 +4,7 @@
 #include <fmt/core.h>
 #include <algorithm>
 
-RGTextureHandle RGPassBuilder::read_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout)
+RGTextureHandle RGPassBuilder::read_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout, VkAccessFlags2 access)
 {
 	if (!handle.is_valid()) {
 		fmt::println("RenderGraph: attempting to read from invalid texture handle in pass {}", _passIndex);
@@ -17,7 +17,7 @@ RGTextureHandle RGPassBuilder::read_texture(RGTextureHandle handle, VkPipelineSt
 		{
 			.usage = RGResourceUsage::ShaderRead,
 			.stage = stage,
-			.access = VK_ACCESS_2_SHADER_READ_BIT,
+			.access = access,
 			.layout = layout
 		}
 		});
@@ -26,7 +26,7 @@ RGTextureHandle RGPassBuilder::read_texture(RGTextureHandle handle, VkPipelineSt
 	return handle;
 }
 
-RGTextureHandle RGPassBuilder::write_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout)
+RGTextureHandle RGPassBuilder::write_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout, VkAccessFlags2 access)
 {
 	if (!handle.is_valid()) {
 		fmt::println("RenderGraph: attemping to write to invalid texture handle in pass {}", _passIndex);
@@ -39,7 +39,7 @@ RGTextureHandle RGPassBuilder::write_texture(RGTextureHandle handle, VkPipelineS
 		{
 			.usage = RGResourceUsage::StorageWrite,
 			.stage = stage,
-			.access = VK_ACCESS_2_SHADER_WRITE_BIT,
+			.access = access,
 			.layout = layout
 		}
 		});
@@ -187,6 +187,7 @@ RGTextureHandle RenderGraph::import_texture(std::string_view name, VkImage image
 			.format = format,
 			.mipLevels = 1,
 			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT
 		},
 		.image = image,
 		.imageView = view,
@@ -311,7 +312,7 @@ void RenderGraph::execute(RenderContext& ctx)
 
 VkImage RenderGraph::get_image(RGTextureHandle handle) const
 {
-	if (handle.is_valid()) {
+	if (!handle.is_valid()) {
 		fmt::println("RenderGraph: attempting to get image from invalid texture handle");
 		return VK_NULL_HANDLE;
 	}
@@ -320,7 +321,7 @@ VkImage RenderGraph::get_image(RGTextureHandle handle) const
 
 VkImageView RenderGraph::get_image_view(RGTextureHandle handle) const
 {
-	if (handle.is_valid()) {
+	if (!handle.is_valid()) {
 		fmt::println("RenderGraph: attempting to get image view from invalid texture handle");
 		return VK_NULL_HANDLE;
 	}
@@ -329,7 +330,7 @@ VkImageView RenderGraph::get_image_view(RGTextureHandle handle) const
 
 VkFormat RenderGraph::get_format(RGTextureHandle handle) const
 {
-	if (handle.is_valid()) {
+	if (!handle.is_valid()) {
 		fmt::println("RenderGraph:: attemping to get image format from invalid texture handle");
 		return VK_FORMAT_UNDEFINED;
 	}
@@ -338,7 +339,7 @@ VkFormat RenderGraph::get_format(RGTextureHandle handle) const
 
 VkBuffer RenderGraph::get_buffer(RGBufferHandle handle) const
 {
-	if (handle.is_valid()) {
+	if (!handle.is_valid()) {
 		fmt::println("RenderGraph: attempting to get buffer from invalid buffer handle");
 		return VK_NULL_HANDLE;
 	}
@@ -368,7 +369,7 @@ void RenderGraph::cull_passes()
 			pass->culled = false;
 		}
 		else { // none of its write outputs ar read by subsequent nodes
-			pass->culled = pass->refCount == 0;
+			//pass->culled = pass->refCount == 0;
 		}
 	}
 }
@@ -414,11 +415,16 @@ void RenderGraph::dispatch_barriers(RenderContext& ctx, IRGPass* pass)
 			continue; // no barrier needed, already in correct layout
 		}
 
-		if (access.usage != RGResourceUsage::StorageWrite && access.usage != RGResourceUsage::ColorAttachment) {
-			continue; // no barrier needed, only read access
-		}
+		//if (access.usage != RGResourceUsage::StorageWrite && access.usage != RGResourceUsage::ColorAttachment) {
+		//	continue; // no barrier needed, only read access
+		//}
 
-		VkImageAspectFlags aspectMask = (access.layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || access.layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+		bool isDepth = (tex.desc.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0 ||
+			tex.desc.format == VK_FORMAT_D32_SFLOAT ||
+			tex.desc.format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
+			tex.desc.format == VK_FORMAT_D24_UNORM_S8_UINT ||
+			tex.desc.format == VK_FORMAT_D16_UNORM;
+		VkImageAspectFlags aspectMask = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 
 		if (vkutil::has_stencil_component(tex.desc.format)) {
 			aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT; 

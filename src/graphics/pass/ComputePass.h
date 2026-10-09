@@ -12,5 +12,4 @@ struct DrawContext;
 class ComputePass : public Pass {
 public:
 	virtual void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) = 0;
-	virtual void dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent) = 0;
 };

@@ -1,6 +1,7 @@
 #pragma once
 #include <graphics/pass/ComputePass.h>
 #include <graphics/VulkanCore.h>
+#include <graphics/RenderGraph.h>
 
 // frustum cull push constants
 struct CullPushConstants
@@ -20,7 +21,8 @@ class FrustumCullPass : public ComputePass
 public:
   void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
   void cleanup() override;
-  void dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent) override;
+
+  void dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent, const FrustumCullPassParameters& params, const RenderGraph& graph);
 
 private:
 

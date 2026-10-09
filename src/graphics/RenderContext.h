@@ -60,7 +60,7 @@ public:
 
 	// set arbitary push constants
 	template<typename T>
-	void push_constants(VkPipelineLayout layout, VkShaderStageFlags stages, const T& data, uint32_t offset = 0) {
+	void set_push_constants(VkPipelineLayout layout, VkShaderStageFlags stages, const T& data, uint32_t offset = 0) {
 		vkCmdPushConstants(_cmd, layout, stages, offset, sizeof(T), &data);
 	}
 

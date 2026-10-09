@@ -12,7 +12,8 @@
 #include <graphics/pass/SSAOPass.h>
 #include <graphics/pass/SSAOBlurPass.h>
 
-#include "graphics/RenderGraph.h"
+#include <graphics/RenderGraph.h>
+#include <graphics/utils/RGParameters.h>
 #include <resources/Buffer.h>
 #include <graphics/IBLSystem.h>
 #include <window/window.h>
@@ -163,7 +164,7 @@ private:
 
 	void update_render_extent();
 	
-	void blit_to_swapchain(VkCommandBuffer cmd);
+	//void blit_to_swapchain(VkCommandBuffer cmd);
 
 	void extract_scene_data(const entt::registry& registry, DrawContext& ctx);
 

@@ -30,30 +30,18 @@ void IBLSystem::cleanup()
 	VkDevice device = _vulkanCore->get_device();
 	destroy_current_environment();
 
-	//_brdfLut->unload();
-	
-	//if (_cubemapSampler != VK_NULL_HANDLE) {
-	//	vkDestroySampler(device, _cubemapSampler, nullptr);
-	//	_cubemapSampler = VK_NULL_HANDLE;
-	//}
-	//if (_lutSampler != VK_NULL_HANDLE) {
-	//	vkDestroySampler(device, _lutSampler, nullptr);
-	//	_lutSampler = VK_NULL_HANDLE;
-	//}
-	//if (_hdrSampler != VK_NULL_HANDLE) {
-	//	vkDestroySampler(device, _hdrSampler, nullptr);
-	//	_hdrSampler = VK_NULL_HANDLE;
-	//}
-	//if (_computeLayout != VK_NULL_HANDLE) {
-	//	vkDestroyDescriptorSetLayout(device, _computeLayout, nullptr);
-	//	_computeLayout = VK_NULL_HANDLE;
-	//}
-	//if (_lutComputeLayout != VK_NULL_HANDLE) {
-	//	vkDestroyDescriptorSetLayout(device, _lutComputeLayout, nullptr);
-	//	_lutComputeLayout = VK_NULL_HANDLE;
-	//}
-	_computeLayout = VK_NULL_HANDLE;
-	_lutComputeLayout = VK_NULL_HANDLE;
+	_cubemapSampler = {};
+	_lutSampler = {};
+	_hdrSampler = {};
+
+	if (_computeLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(device, _computeLayout, nullptr);
+		_computeLayout = VK_NULL_HANDLE;
+	}
+	if (_lutComputeLayout != VK_NULL_HANDLE) {
+		vkDestroyDescriptorSetLayout(device, _lutComputeLayout, nullptr);
+		_lutComputeLayout = VK_NULL_HANDLE;
+	}
 
 	_equirectToCubemapPipeline.cleanup();
 	_irradiancePipeline.cleanup();
@@ -535,19 +523,18 @@ void IBLSystem::init_pipelines(ResourceManager* resourceManager)
 	VkDevice device = _vulkanCore->get_device();
 
 	// generic layout for storage image output + sampled input
-	{
-		DescriptorLayoutBuilder builder;
-		builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // binding 0: output image
-		builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 1: input image
-		_computeLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
-	}
+
+	DescriptorLayoutBuilder builder;
+	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // binding 0: output image
+	builder.add_binding(1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 1: input image
+	_computeLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
+	
 
 	// layout for brdf lut
-	{
-		DescriptorLayoutBuilder builder;
-		builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // binding 0: output image
-		_lutComputeLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
-	}
+	builder.clear();
+	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE); // binding 0: output image
+	_lutComputeLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
+	
 
 	auto eqShader = resourceManager->load<Shader>("equirect_to_cubemap_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/equirect_to_cubemap.comp.spv");
 	_equirectToCubemapPipeline = ComputePipeline(device, { .computeShader = eqShader, .descriptorLayouts = { _computeLayout } });

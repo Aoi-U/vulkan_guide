@@ -37,14 +37,14 @@ void SSAOBlurPass::cleanup()
   _vulkanCore = nullptr;
 }
 
-void SSAOBlurPass::render(RenderContext & ctx, FrameData & frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext & drawCtx, const GPUSceneData & sceneData)
+void SSAOBlurPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& data, const SSAOBlurPassParameters& params, const RenderGraph& graph)
 {
   // begin clock
   auto start = std::chrono::system_clock::now();
 
   VkDescriptorSet blurSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
   DescriptorWriter writer;
-  writer.write_image(0, renderTargets.find("SSAOColor")->second->get_image_view(), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
+  writer.write_image(0, graph.get_image_view(params.ssao), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), blurSet);
 
   ctx.bind_pipeline(_pipeline);

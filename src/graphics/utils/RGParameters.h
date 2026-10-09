@@ -43,46 +43,22 @@ inline bool operator&(RGResourceUsage a, RGResourceUsage b)
 
 // https://dev.epicgames.com/documentation/unreal-engine/render-dependency-graph-in-unreal-engine
 
-struct RGBufferPassParameters
+struct FrustumCullPassParameters
 {
-	// inputs
-	RGTextureHandle position;
-	RGTextureHandle normal;
-	RGTextureHandle albedo;
-	RGTextureHandle metalRough;
-	RGTextureHandle emissive;
-	RGTextureHandle depth;
-	
-	// outputs
 	RGBufferHandle gpuObjectBuffer;
+	RGBufferHandle gpuInstanceBuffer;
 	RGBufferHandle gpuIndirectBuffer;
-};
-
-struct ShadowPassParameters
-{
-	// inputs
-	RGBufferHandle gpuObjectBuffer;
-	RGBufferHandle gpuIndirectBuffer;
-
-	// outputs
-	RGTextureHandle shadowMap;
-};
-
-struct PointShadowPassParameters
-{
-	// inputs
-	RGBufferHandle gpuObjectBuffer;
-	RGBufferHandle gpuIndirectBuffer;
-
-	// outputs
-	RGTextureHandle pointShadowMap;
+	RGBufferHandle gpuCountBuffer;
+	RGBufferHandle cullStatsBuffer;
 };
 
 struct GeometryPassParameters
 {
 	// inputs
 	RGBufferHandle gpuObjectBuffer;
+	RGBufferHandle gpuInstanceBuffer;
 	RGBufferHandle gpuIndirectBuffer;
+	RGBufferHandle gpuCountBuffer;
 
 	// outputs
 	RGTextureHandle gPosition;
@@ -92,6 +68,31 @@ struct GeometryPassParameters
 	RGTextureHandle gEmissive;
 	RGTextureHandle depth;
 };
+
+struct ShadowPassParameters
+{
+	// inputs
+	RGBufferHandle gpuObjectBuffer;
+	RGBufferHandle gpuInstanceBuffer;
+	RGBufferHandle gpuIndirectBuffer;
+	RGBufferHandle gpuCountBuffer;
+
+	// outputs
+	RGTextureHandle shadowMap;
+};
+
+struct PointShadowPassParameters
+{
+	// inputs
+	RGBufferHandle gpuObjectBuffer;
+	RGBufferHandle gpuInstanceBuffer;
+	RGBufferHandle gpuIndirectBuffer;
+	RGBufferHandle gpuCountBuffer;
+
+	// outputs
+	RGTextureHandle pointShadowMap;
+};
+
 
 struct SSAOPassParameters
 {
@@ -122,6 +123,7 @@ struct DeferredPassParameters
 	RGTextureHandle gEmissive;
 	RGTextureHandle depth;
 	RGTextureHandle shadowMap;
+	RGTextureHandle pointShadowMap;
 	RGTextureHandle ssao;
 
 	// outputs
@@ -131,9 +133,6 @@ struct DeferredPassParameters
 
 struct SkyboxPassParameters
 {
-	// inputs
-	RGTextureHandle depth;
-
 	// outputs
 	RGTextureHandle sceneColor;
 	RGTextureHandle sceneDepth;

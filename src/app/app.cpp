@@ -98,9 +98,9 @@ void App::cleanup()
 	_guiRenderer->cleanup();
 	_registry.clear();
 	DefaultResources::get().cleanup();
-	_resourceManager->unload_all();
 	Material::cleanup_descriptor_layout(_vulkanCore.get());
 	_renderer->cleanup(dispatcher);
+	_resourceManager->unload_all();
 	_vulkanCore->cleanup();
 	_window->cleanup();
 }

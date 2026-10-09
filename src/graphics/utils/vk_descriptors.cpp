@@ -1,4 +1,5 @@
 ﻿#include <utils/vk_descriptors.h>
+#include <cassert>
 
 void DescriptorLayoutBuilder::add_binding(uint32_t binding, VkDescriptorType type)
 {
@@ -142,7 +143,8 @@ VkDescriptorSet DescriptorAllocatorGrowable::allocate(VkDevice device, VkDescrip
 		allocInfo.descriptorPool = poolToUse;
 
 		// assert and crash if it fails a second time, something is wrong
-		VK_CHECK(vkAllocateDescriptorSets(device, &allocInfo, &ds));
+		VkResult result = vkAllocateDescriptorSets(device, &allocInfo, &ds);
+		assert(result == VK_SUCCESS, "Failed to allocate descriptor set");
 	}
 
 	readyPools.push_back(poolToUse);

@@ -7,7 +7,7 @@ void ShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, 
 {
 	_vulkanCore = vulkanCore;
 	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: storage buffer for scene data
+	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: storage buffer for object data
 	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
 
@@ -35,9 +35,9 @@ void ShadowPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void ShadowPass::render(RenderContext& ctx, FrameData& frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext& drawCtx, const GPUSceneData& sceneData)
+void ShadowPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, const ShadowPassParameters& params, const RenderGraph& graph)
 {
-	if (drawCtx.indirectDrawCount == 0 || frameData._gpuIndirectBuffer->get_buffer() == VK_NULL_HANDLE || drawCtx.opaqueBatches.empty()) {
+	if (drawCtx.indirectDrawCount == 0 || drawCtx.opaqueBatches.empty()) {
 		return;
 	}
 
@@ -46,14 +46,14 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, const std::uno
 
 	// bind pipeline and push constants
 	ctx.bind_pipeline(_pipeline);
-	ctx.push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT, sceneData.sunlightViewproj);
+	ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT, sceneData.sunlightViewproj);
 
-	// create a descriptor set that binds the scene data buffer and update it
 	VkDescriptorSet shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 	DescriptorWriter writer;
-	writer.write_buffer(0, frameData._gpuObjectBuffer->get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(1, frameData._gpuInstanceBuffer->get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(0, graph.get_buffer(params.gpuObjectBuffer), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+	writer.write_buffer(1, graph.get_buffer(params.gpuInstanceBuffer), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 	writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
+
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
 
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
@@ -67,7 +67,7 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, const std::uno
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-		ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer->get_buffer(), indirectOffset, frameData._gpuCountBuffer->get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+		ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
 
 	auto end = std::chrono::system_clock::now();

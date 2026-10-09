@@ -40,25 +40,23 @@ void SkyboxPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext& drawCtx, const GPUSceneData& sceneData)
+void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, const SkyboxPassParameters& params, const RenderGraph& graph)
 {
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
 	const EnvironmentResources& env = drawCtx.environment;
 
-	// bind descriptor sets
 	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 	DescriptorWriter writer;
 	writer.write_buffer(0, frameData.sceneDataBuffer->get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
 	writer.write_image(4, env.environmentView, env.cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
 	writer.update_set(_vulkanCore->get_device(), skyboxSet);
 
-	// bind pipeline and descriptor set
 	ctx.bind_pipeline(_pipeline);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, skyboxSet);
 
-	// draw full screen triangle
+	// draw full scren triangle
 	ctx.draw(3, 1, 0, 0);
 
 	auto end = std::chrono::system_clock::now();

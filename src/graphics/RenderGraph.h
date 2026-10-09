@@ -78,8 +78,8 @@ public:
 	RGPassBuilder(RenderGraph& graph, uint32_t passIndex)
 		: _graph(graph), _passIndex(passIndex) {}
 
-	RGTextureHandle read_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout);
-	RGTextureHandle write_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout);
+	RGTextureHandle read_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout, VkAccessFlags2 access = VK_ACCESS_2_SHADER_READ_BIT);
+	RGTextureHandle write_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout, VkAccessFlags2 access = VK_ACCESS_2_SHADER_WRITE_BIT);
 
 	RGTextureHandle set_color_attachment(RGTextureHandle handle, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, VkClearColorValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f });
 	RGTextureHandle set_depth_attachment(RGTextureHandle handle, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, float clearDepth = 1.0f);
@@ -151,10 +151,10 @@ public:
 		pass->index = static_cast<uint32_t>(_passes.size());
 		pass->executeFn = std::forward<ExecuteFunc>(executeFn);
 
-		RGPassBuilder builder(*this, pass->index);
-		setupFn(builder, pass->data);
-
 		_passes.push_back(std::move(pass));
+
+		RGPassBuilder builder(*this, static_cast<uint32_t>(_passes.size() - 1));
+		setupFn(builder, static_cast<RGPass<T>*>(_passes.back().get())->data);
 
 		return static_cast<RGPass<T>*>(_passes.back().get())->data;
 	}

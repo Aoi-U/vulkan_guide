@@ -167,104 +167,186 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		currentFrame._gpuIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * drawCount);
 		currentFrame._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
 
-		_renderGraph.clear_passes();
+		_renderGraph.reset();
 
-		_renderGraph.register_buffer("GPUObjectBuffer", currentFrame._gpuObjectBuffer->get_buffer(), VK_PIPELINE_STAGE_2_NONE);
-		_renderGraph.register_buffer("GPUIndirectBuffer", currentFrame._gpuIndirectBuffer->get_buffer(), VK_PIPELINE_STAGE_2_NONE);
+		RGBufferHandle objBuf = _renderGraph.import_buffer("GPUObjectBuffer", currentFrame._gpuObjectBuffer->get_buffer(), currentFrame._gpuObjectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+		RGBufferHandle instBuf = _renderGraph.import_buffer("GPUInstanceBuffer", currentFrame._gpuInstanceBuffer->get_buffer(), currentFrame._gpuInstanceBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+		RGBufferHandle indirBuf = _renderGraph.import_buffer("GPUIndirectBuffer", currentFrame._gpuIndirectBuffer->get_buffer(), currentFrame._gpuIndirectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+		RGBufferHandle countBuf = _renderGraph.import_buffer("GPUCountBuffer", currentFrame._gpuCountBuffer->get_buffer(), currentFrame._gpuCountBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+		RGBufferHandle statsBuf = _renderGraph.import_buffer("CullStatsBuffer", currentFrame._cullStatsBuffer->get_buffer(), currentFrame._cullStatsBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
 
-		_renderGraph.add_pass("FrustumCull")
-			.write_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
-			.write_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT)
-			.set_execute_callback([&](RenderContext& ctx) {
-			_frustumCullPass->dispatch(ctx, currentFrame, drawCtx, sceneData, _drawExtent);
-				});
+		auto import_tex = [&](const std::string& name) {
+			auto& tex = _renderTargets.at(name);
+			return _renderGraph.import_texture(name, tex->get_image(), tex->get_image_view(), tex->get_format(), tex->get_extent(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			};
 
-		_renderGraph.add_pass("ShadowPass")
-			.read_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT)
-			.read_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT)
-			.set_extent({ 2048, 2048 })
-			.set_depth_attachment("ShadowMap", _renderTargets.at("ShadowMap")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f)
-			.set_execute_callback([&](RenderContext& ctx) {
-			_shadowPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+		RGTextureHandle sceneColor = import_tex("SceneColor");
+		RGTextureHandle sceneDepth = import_tex("SceneDepth");
+		RGTextureHandle shadowMap = import_tex("ShadowMap");
+		RGTextureHandle pointShadowMap = import_tex("PointShadowMap");
+		RGTextureHandle gPosition = import_tex("GBufferPosition");
+		RGTextureHandle gNormal = import_tex("GBufferNormal");
+		RGTextureHandle gAlbedo = import_tex("GBufferAlbedo");
+		RGTextureHandle gMetalRough = import_tex("GBufferMetalRough");
+		RGTextureHandle gEmissive = import_tex("GBufferEmissive");
+		RGTextureHandle ssaoColor = import_tex("SSAOColor");
+		RGTextureHandle ssaoBlur = import_tex("SSAOBlur");
+		RGTextureHandle skybox = import_tex("SkyCubemap");
 
-		_renderGraph.add_pass("PointShadowPass")
-			.read_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT)
-			.read_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT)
-			.write_texture("PointShadowMap", VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL) // self-managed loops in PointShadowPass
-			.set_execute_callback([&](RenderContext& ctx) {
-				_pointShadowPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+		// frustum cull
+		_renderGraph.add_pass<FrustumCullPassParameters>("FrustumCull",
+			[&](RGPassBuilder& builder, FrustumCullPassParameters& params) {
+				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuInstanceBuffer = builder.write_buffer(instBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+				params.gpuIndirectBuffer = builder.write_buffer(indirBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+				params.gpuCountBuffer = builder.write_buffer(countBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+				params.cullStatsBuffer = builder.write_buffer(statsBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const FrustumCullPassParameters& params, RenderContext& rc) {
+				_frustumCullPass->dispatch(rc, currentFrame, drawCtx, sceneData, _drawExtent, params, _renderGraph);
+			}
+		);
 
-		_renderGraph.add_pass("GBufferPass")
-			.read_buffer("GPUObjectBuffer", VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT)
-			.read_buffer("GPUIndirectBuffer", VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT)
-			.set_extent(_drawExtent)
-			.set_color_attachment("GBufferPosition", _renderTargets.at("GBufferPosition")->get_image_view())
-			.set_color_attachment("GBufferNormal", _renderTargets.at("GBufferNormal")->get_image_view())
-			.set_color_attachment("GBufferAlbedo", _renderTargets.at("GBufferAlbedo")->get_image_view())
-			.set_color_attachment("GBufferMetalRough", _renderTargets.at("GBufferMetalRough")->get_image_view())
-			.set_color_attachment("GBufferEmissive", _renderTargets.at("GBufferEmissive")->get_image_view())
-			.set_depth_attachment("SceneDepth", _renderTargets.at("SceneDepth")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f)
-			.set_execute_callback([&](RenderContext& ctx) {
-			_gbufferPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+		// shadow map 
+		_renderGraph.add_pass<ShadowPassParameters>("ShadowPass",
+			[&](RGPassBuilder& builder, ShadowPassParameters& params) {
+				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuIndirectBuffer = builder.read_buffer(indirBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+				params.gpuInstanceBuffer = builder.read_buffer(instBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuCountBuffer = builder.read_buffer(countBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
 
-		_renderGraph.add_pass("SSAOPass")
-			.read_texture("GBufferPosition", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("GBufferNormal", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.set_extent(_drawExtent)
-			.set_color_attachment("SSAOColor", _renderTargets.at("SSAOColor")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
-			.set_execute_callback([&](RenderContext& ctx) {
-			_ssaoPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+				params.shadowMap = builder.set_depth_attachment(shadowMap, VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f);
+				builder.set_extent({ 2048, 2048 });
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const ShadowPassParameters& params, RenderContext& rc) {
+				_shadowPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
 
-		_renderGraph.add_pass("SSAOBlurPass")
-			.read_texture("SSAOColor", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.set_extent(_drawExtent)
-			.set_color_attachment("SSAOBlur", _renderTargets.at("SSAOBlur")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f })
-			.set_execute_callback([&](RenderContext& ctx) {
-			_ssaoBlurPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+		// point shadow
+		_renderGraph.add_pass<PointShadowPassParameters>("PointShadowPass",
+			[&](RGPassBuilder& builder, PointShadowPassParameters& params) {
+				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuIndirectBuffer = builder.read_buffer(indirBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+				params.gpuInstanceBuffer = builder.read_buffer(instBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuCountBuffer = builder.read_buffer(countBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
 
-		_renderGraph.add_pass("DeferredLightingPass")
-			.read_texture("GBufferPosition", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("GBufferNormal", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("GBufferAlbedo", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("GBufferMetalRough", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("GBufferEmissive", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("ShadowMap", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("PointShadowMap", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.read_texture("SSAOBlur", VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-			.set_extent(_drawExtent)
-			.set_color_attachment("SceneColor", _renderTargets.at("SceneColor")->get_image_view(), VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f })
-			.set_execute_callback([&](RenderContext& ctx) {
-			_deferredLightingPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+				params.pointShadowMap = builder.write_texture(pointShadowMap, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const PointShadowPassParameters& params, RenderContext& rc) {
+				_pointShadowPass->render(rc, currentFrame, _renderTargets, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
 
-		_renderGraph.add_pass("SkyboxPass")
-			.read_texture("SceneDepth", VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-			.set_extent(_drawExtent)
-			.set_color_attachment("SceneColor", _renderTargets.at("SceneColor")->get_image_view(), VK_ATTACHMENT_LOAD_OP_LOAD)
-			.set_depth_attachment("SceneDepth", _renderTargets.at("SceneDepth")->get_image_view(), VK_ATTACHMENT_LOAD_OP_LOAD)
-			.set_execute_callback([&](RenderContext& ctx) {
-			_skyboxPass->render(ctx, currentFrame, _renderTargets, drawCtx, sceneData);
-				});
+		// geometry
+		_renderGraph.add_pass<GeometryPassParameters>("GBufferPass",
+			[&](RGPassBuilder& builder, GeometryPassParameters& params) {
+				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuIndirectBuffer = builder.read_buffer(indirBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+				params.gpuInstanceBuffer = builder.read_buffer(instBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+				params.gpuCountBuffer = builder.read_buffer(countBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
 
+				params.gPosition = builder.set_color_attachment(gPosition, VK_ATTACHMENT_LOAD_OP_CLEAR);
+				params.gNormal = builder.set_color_attachment(gNormal, VK_ATTACHMENT_LOAD_OP_CLEAR);
+				params.gAlbedo = builder.set_color_attachment(gAlbedo, VK_ATTACHMENT_LOAD_OP_CLEAR);
+				params.gMetalRough = builder.set_color_attachment(gMetalRough, VK_ATTACHMENT_LOAD_OP_CLEAR);
+				params.gEmissive = builder.set_color_attachment(gEmissive, VK_ATTACHMENT_LOAD_OP_CLEAR);
+				params.depth = builder.set_depth_attachment(sceneDepth, VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f);
+				builder.set_extent(_drawExtent);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const GeometryPassParameters& params, RenderContext& rc) {
+				_gbufferPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
+
+		// ssao
+		_renderGraph.add_pass<SSAOPassParameters>("SSAOPass",
+			[&](RGPassBuilder& builder, SSAOPassParameters& params) {
+				params.gPosition = builder.read_texture(gPosition, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.gNormal = builder.read_texture(gNormal, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.ssao = builder.set_color_attachment(ssaoColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f });
+				builder.set_extent(_drawExtent);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const SSAOPassParameters& params, RenderContext& rc) {
+				_ssaoPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
+
+		// ssao blur
+		_renderGraph.add_pass<SSAOBlurPassParameters>("SSAOBlurPass",
+			[&](RGPassBuilder& builder, SSAOBlurPassParameters& params) {
+				params.ssao = builder.read_texture(ssaoColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.ssaoBlur = builder.set_color_attachment(ssaoBlur, VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f });
+				builder.set_extent(_drawExtent);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const SSAOBlurPassParameters& params, RenderContext& rc) {
+				_ssaoBlurPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
+
+		// deferred lighting
+		_renderGraph.add_pass<DeferredPassParameters>("DeferredLightingPass",
+			[&](RGPassBuilder& builder, DeferredPassParameters& params) {
+				params.gPosition = builder.read_texture(gPosition, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.gNormal = builder.read_texture(gNormal, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.gAlbedo = builder.read_texture(gAlbedo, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.gMetalRough = builder.read_texture(gMetalRough, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.gEmissive = builder.read_texture(gEmissive, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.shadowMap = builder.read_texture(shadowMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.pointShadowMap = builder.read_texture(pointShadowMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.ssao = builder.read_texture(ssaoBlur, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+				params.sceneColor = builder.set_color_attachment(sceneColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
+				builder.set_extent(_drawExtent);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const DeferredPassParameters& params, RenderContext& rc) {
+				_deferredLightingPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
+
+		// skybox
+		_renderGraph.add_pass<SkyboxPassParameters>("SkyboxPass",
+			[&](RGPassBuilder& builder, SkyboxPassParameters& params) {
+				params.sceneDepth = builder.read_texture(sceneDepth, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+				params.sceneColor = builder.set_color_attachment(sceneColor, VK_ATTACHMENT_LOAD_OP_LOAD);
+				params.sceneDepth = builder.set_depth_attachment(sceneDepth, VK_ATTACHMENT_LOAD_OP_LOAD);
+				builder.set_extent(_drawExtent);
+			},
+			[=, this, &currentFrame, &drawCtx, &sceneData](const SkyboxPassParameters& params, RenderContext& rc) {
+				_skyboxPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
+			}
+		);
+
+		// swapchain, set side effect to guaraantee execution
+		struct PresentPassParams { RGTextureHandle sceneColor; };
+		_renderGraph.add_pass<PresentPassParams>("PresentComposite",
+			[&](RGPassBuilder& builder, PresentPassParams& params) {
+				params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT);
+				builder.set_side_effect(true); 
+			},
+			[=, this](const PresentPassParams& params, RenderContext& rc) {
+				VkCommandBuffer graphCmd = rc.get_cmd();
+				VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
+
+				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+				vkutil::copy_image_to_image(graphCmd, _renderGraph.get_image(params.sceneColor), swapchainImage, _drawExtent, _swapchain.get_extent());
+				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+				for (const auto& [name, tex] : _renderTargets) {
+					RGTextureHandle handle = _renderGraph.find_texture(name);
+					if (handle.is_valid()) {
+						_renderGraph.transition_texture(graphCmd, handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+					}
+				}
+
+				if (_guiRenderer) {
+					_guiRenderer->render(graphCmd, _swapchain.get_image_views()[_swapchainImageIndex], _swapchain.get_extent());
+				}
+			}
+		);
+
+		_renderGraph.compile();
 		_renderGraph.execute(ctx);
-
-		// ImGui Transition Requirement
-		for (const auto& [name, tex] : _renderTargets) {
-			_renderGraph.transition_texture(cmd, name, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		}
-
-		// Swapchain presentation
-		VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-		vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, 1, 1, 0);
-
-		if (_guiRenderer) {
-			_guiRenderer->render(cmd, _swapchain.get_image_views()[_swapchainImageIndex], _swapchain.get_extent());
-		}
 
 		end_frame();
 	}
@@ -378,6 +460,7 @@ void Renderer::end_frame()
 
 }
 
+/*
 void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 {
 	VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
@@ -398,6 +481,7 @@ void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
 	// set swapchain image layout to color attachment optimal for imgui 
 	vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 }
+*/
 
 void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
 {
@@ -683,35 +767,28 @@ void Renderer::create_sync_structures()
 		VK_CHECK(vkCreateFence(_vulkanCore->get_device(), &fenceCreateInfo, nullptr, &_frames[i]._renderFence));
 		VK_CHECK(vkCreateSemaphore(_vulkanCore->get_device(), &semaphoreCreateInfo, nullptr, &_frames[i]._swapchainSemaphore));
 
-		//_frames[i]._cullStatsBuffer = Buffer("cullStats", sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		//_frames[i]._cullStatsBuffer.load();
-		_frames[i]._cullStatsBuffer = _resourceManager->load<Buffer>("cullStats", sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		std::string fi = std::to_string(i);
+		_frames[i]._cullStatsBuffer = _resourceManager->load<Buffer>("cullStats" + fi, sizeof(CullStatsData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-		//_frames[i].sceneDataBuffer = Buffer("sceneData", sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		//_frames[i].sceneDataBuffer.load();
-		_frames[i].sceneDataBuffer = _resourceManager->load<Buffer>("sceneData", sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i].sceneDataBuffer = _resourceManager->load<Buffer>("sceneData" + fi, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-		//_frames[i]._gpuObjectBuffer = Buffer("gpuObject", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		//_frames[i]._gpuInstanceBuffer = Buffer("gpuInstance", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-		//_frames[i]._gpuIndirectBuffer = Buffer("gpuIndirect", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		//_frames[i]._gpuCountBuffer = Buffer("gpuCount", 0, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._gpuObjectBuffer = _resourceManager->load<Buffer>("gpuObject", sizeof(GPUObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._gpuInstanceBuffer = _resourceManager->load<Buffer>("gpuInstance", sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
-		_frames[i]._gpuIndirectBuffer = _resourceManager->load<Buffer>("gpuIndirect", sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._gpuCountBuffer = _resourceManager->load<Buffer>("gpuCount", sizeof(MaterialConstants), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
-		//_frames[i]._materialDataBuffer = Buffer("materialData", sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		//_frames[i]._materialDataBuffer.load();
-		_frames[i]._materialDataBuffer = _resourceManager->load<Buffer>("materialData", sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuObjectBuffer = _resourceManager->load<Buffer>("gpuObject" + fi, sizeof(GPUObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuInstanceBuffer = _resourceManager->load<Buffer>("gpuInstance" + fi, sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+		_frames[i]._gpuIndirectBuffer = _resourceManager->load<Buffer>("gpuIndirect" + fi, sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuCountBuffer = _resourceManager->load<Buffer>("gpuCount" + fi, sizeof(MaterialConstants), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+
+
+		_frames[i]._materialDataBuffer = _resourceManager->load<Buffer>("materialData" + fi, sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	}
 }
 
 void Renderer::create_render_targets()
 {
-	//for (auto& [name, handle] : _renderTargets) {
-	//	_resourceManager->force_unload<Texture>(name);
-	//}
-	//_renderTargets.clear();
+	for (auto& [name, handle] : _renderTargets) {
+		_resourceManager->force_unload<Texture>(name);
+	}
+	_renderTargets.clear();
 
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
 	_currentRenderScale = scale;
@@ -736,8 +813,6 @@ void Renderer::create_render_targets()
 		};
 		_renderTargets[name] = _resourceManager->load<Texture>(name, desc);
 
-		// Register newly created image to the render graph
-		_renderGraph.register_texture(name, _renderTargets[name]->get_image(), format, VK_IMAGE_LAYOUT_UNDEFINED, layers, 1, 0);
 		};
 
 	make_target("SceneColor", VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
@@ -752,6 +827,13 @@ void Renderer::create_render_targets()
 	make_target("GBufferEmissive", VK_FORMAT_R16G16B16A16_SFLOAT, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
 	make_target("SSAOColor", VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
 	make_target("SSAOBlur", VK_FORMAT_R8_UNORM, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, { _drawExtent.width, _drawExtent.height, 1 });
+
+	_vulkanCore->immediate_submit([&](VkCommandBuffer cmd) {
+		for (const auto& [name, texHandle] : _renderTargets) {
+			uint32_t layers = texHandle->get_face_views().empty() ? 1 : static_cast<uint32_t>(texHandle->get_face_views().size());
+			vkutil::image_mem_barrier2(cmd, texHandle->get_image(), texHandle->get_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layers, 1, 0);
+		}
+		});
 }
 
 void Renderer::update_render_extent()

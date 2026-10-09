@@ -10,7 +10,7 @@ void PointShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceMana
 	_vulkanCore = vulkanCore;
 
 	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: storage buffer for scene data
+	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: storage buffer for object data
 	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
 
@@ -44,10 +44,10 @@ void PointShadowPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, const std::unordered_map<std::string, ResourceHandle<Texture>> renderTargets, DrawContext & drawCtx, const GPUSceneData & sceneData)
+void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const std::unordered_map<std::string, ResourceHandle<Texture>>& renderTargets, const DrawContext& drawCtx, const GPUSceneData& sceneData, const PointShadowPassParameters& params, const RenderGraph& graph)
 {
 	int shadowLightCount = static_cast<int>(sceneData.lightCount.y);
-	VkExtent2D extent = renderTargets.find("PointShadowMap")->second->get_extent_2d();
+	VkExtent2D extent = renderTargets.at("PointShadowMap")->get_extent_2d();
 
 	// begin clock
 	auto start = std::chrono::system_clock::now();
@@ -64,50 +64,46 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, const s
 
 		glm::mat4 shadowProj = glm::perspective(glm::radians(90.0f), 1.0f, 0.1f, farPlane);
 
-		shadowTransforms[0] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)); // +x
-		shadowTransforms[1] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f)); // -x
-		shadowTransforms[2] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)); // +y
-		shadowTransforms[3] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f)); // -y
-		shadowTransforms[4] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f)); // +z
-		shadowTransforms[5] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f)); // -z
+		shadowTransforms[0] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+		shadowTransforms[1] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(-1.0f, 0.0f, 0.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+		shadowTransforms[2] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		shadowTransforms[3] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, -1.0f, 0.0f), glm::vec3(0.0f, 0.0f, -1.0f));
+		shadowTransforms[4] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
+		shadowTransforms[5] = shadowProj * glm::lookAt(lightPos, lightPos + glm::vec3(0.0f, 0.0f, -1.0f), glm::vec3(0.0f, -1.0f, 0.0f));
 	}
 
+	if (drawCtx.indirectDrawCount > 0 && shadowLightCount >= 0 && !drawCtx.opaqueBatches.empty()) {
+		VkDescriptorSet shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
 
-	VkDescriptorSet shadowDescriptor = VK_NULL_HANDLE;
-	if (drawCtx.indirectDrawCount > 0 && frameData._gpuIndirectBuffer->get_buffer() != VK_NULL_HANDLE) {
-		shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
-
-		// update the descriptor set with the object buffer and instance buffer
+		// update the descriptor set 
 		DescriptorWriter writer;
-		writer.write_buffer(0, frameData._gpuObjectBuffer->get_buffer(), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		writer.write_buffer(1, frameData._gpuInstanceBuffer->get_buffer(), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		writer.write_buffer(0, graph.get_buffer(params.gpuObjectBuffer), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
+		writer.write_buffer(1, graph.get_buffer(params.gpuInstanceBuffer), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
 		writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
 
-		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
-	}
+		// render each cubemap face
+		for (uint32_t face = 0; face < 6; face++) {
+			RenderDesc desc{};
+			desc.renderExtent = extent;
+			desc.depthAttachment = DepthAttachmentDesc{
+				.view = renderTargets.at("PointShadowMap")->get_face_view(face),
+				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.clearDepth = 1.0f,
+				.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
+			};
 
-	// render each cubemap face
-	for (uint32_t face = 0; face < 6; face++) {
-		RenderDesc desc{};
-		desc.renderExtent = extent;
-		desc.depthAttachment = DepthAttachmentDesc{
-			.view = renderTargets.at("PointShadowMap")->get_face_view(face),
-			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-			.clearDepth = 1.0f,
-			.layout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL
-		};
+			ctx.begin_rendering(desc);
+			ctx.set_viewport_scissor(extent);
+			ctx.bind_pipeline(_pipeline);
+			ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
 
-		ctx.begin_rendering(desc);
-		ctx.set_viewport_scissor(extent);
-		ctx.bind_pipeline(_pipeline);
-
-		if (shadowLightCount >= 0 && shadowDescriptor != VK_NULL_HANDLE && !drawCtx.opaqueBatches.empty()) {
+			// set push constants
 			PointShadowPushConstants push{
 				.lightViewproj = shadowTransforms[face],
 				.lightPos = glm::vec4(lightPos, farPlane)
 			};
-			ctx.push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, push);
+			ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, push);
 
 			VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 			for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
@@ -120,11 +116,10 @@ void PointShadowPass::render(RenderContext & ctx, FrameData & frameData, const s
 				// draw batch
 				VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 				VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-				ctx.draw_indexed_indirect_count(frameData._gpuIndirectBuffer->get_buffer(), indirectOffset, frameData._gpuCountBuffer->get_buffer(), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+				ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 			}
+			ctx.end_rendering();
 		}
-
-		ctx.end_rendering();
 	}
 
 	auto end = std::chrono::system_clock::now();
