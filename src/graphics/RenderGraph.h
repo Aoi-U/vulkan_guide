@@ -2,6 +2,7 @@
 
 #include <core/vk_types.h>
 #include <graphics/RenderContext.h>
+#include <graphics/utils/RGParameters.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -10,113 +11,174 @@
 #include <optional>
 
 
-struct RGTextureState
+struct RGTextureDesc
 {
-	VkImage image{ VK_NULL_HANDLE };
+	VkExtent3D extent{ 1, 1, 1 };
 	VkFormat format{ VK_FORMAT_UNDEFINED };
+	VkImageUsageFlags usage{ 0 };
+	uint32_t mipLevels{ 1 };
+	uint32_t arrayLayers{ 1 };
+	VkSampleCountFlagBits samples{ VK_SAMPLE_COUNT_1_BIT };
+};
+
+struct RGBufferDesc
+{
+	VkDeviceSize size{ 0 };
+	VkBufferUsageFlags usage{ 0 };
+};
+
+struct RGTextureNode
+{
+	std::string name;
+	RGTextureDesc desc;
+	VkImage image{ VK_NULL_HANDLE };
+	VkImageView imageView{ VK_NULL_HANDLE };
+	VmaAllocation allocation{ VK_NULL_HANDLE };
+	VkImageLayout initialLayout{ VK_IMAGE_LAYOUT_UNDEFINED };
 	VkImageLayout currentLayout{ VK_IMAGE_LAYOUT_UNDEFINED };
-	uint32_t layerCount{ 1 };
-	uint32_t mipLevels{ 0 };
-	uint32_t baseMiplevel{ 0 };
+
+	bool isExternal{ false }; // if true, texture is managed externally and not by render graph
+	uint32_t firstPass{ UINT32_MAX };
+	uint32_t lastPass{ 0 };
+	uint32_t refCount{ 0 };
 };
 
-struct RGBufferState
+struct RGBufferNode
 {
-	VkBuffer buffer{ VK_NULL_HANDLE };
+	std::string name;
+	RGBufferDesc desc;
+	VkBuffer buffer;
+	VmaAllocation allocation{ VK_NULL_HANDLE };
 	VkPipelineStageFlags2 currentStage{ VK_PIPELINE_STAGE_2_NONE };
+	VkAccessFlags2 currentAccess{ VK_ACCESS_2_NONE };
+
+	bool isExternal{ false }; // if true, buffer is managed externally and not by render graph
+	uint32_t firstPass{ UINT32_MAX };
+	uint32_t lastPass{ 0 };
+	uint32_t refCount{ 0 };
 };
 
-struct RGTextureTransition
+struct RGResourceAccess
 {
-	std::string name;
-	VkImageLayout targetLayout;
+	RGResourceUsage usage;
+	VkPipelineStageFlags2 stage;
+	VkAccessFlags2 access;
+	VkImageLayout layout{ VK_IMAGE_LAYOUT_UNDEFINED };
+	VkAttachmentLoadOp loadOp{ VK_ATTACHMENT_LOAD_OP_DONT_CARE };
+	VkClearColorValue clearColor{};
+	float clearDepth{ 1.0f };
 };
 
-struct RGBufferTransition
-{
-	std::string name;
-	VkPipelineStageFlags2 targetStage;
-};
-
-struct RGColorAttachment
-{
-	std::string name;
-	VkImageView view;
-	VkAttachmentLoadOp loadOp;
-	VkAttachmentStoreOp storeOp;
-	VkClearColorValue clearColor;
-};
-
-struct RGDepthAttachment
-{
-	std::string name;
-	VkImageView view;
-	VkAttachmentLoadOp loadOp;
-	VkAttachmentStoreOp storeOp;
-	float clearDepth;
-};
-
-using ExecutionFn = std::function<void(RenderContext& ctx)>;
-
-struct RGPass
-{
-	std::string name;
-	std::vector<RGTextureTransition> textureTransitions;
-	std::vector<RGBufferTransition> bufferTransitions;
-
-	std::vector<RGColorAttachment> colorAttachments;
-	std::optional<RGDepthAttachment> depthAttachment;
-	std::optional<VkExtent2D> renderExtent;
-
-	ExecutionFn executeCallback;
-};
 
 class RenderGraph;
 
 class RGPassBuilder
 {
 public:
-	RGPassBuilder(RenderGraph& graph, RGPass& pass)
-		: _graph(graph), _pass(pass) {}
+	RGPassBuilder(RenderGraph& graph, uint32_t passIndex)
+		: _graph(graph), _passIndex(passIndex) {}
 
-	RGPassBuilder& read_texture(const std::string& name, VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-	RGPassBuilder& write_texture(const std::string& name, VkImageLayout layout = VK_IMAGE_LAYOUT_GENERAL);
+	RGTextureHandle read_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout);
+	RGTextureHandle write_texture(RGTextureHandle handle, VkPipelineStageFlags2 stage, VkImageLayout layout);
 
-	RGPassBuilder& read_buffer(const std::string& name, VkPipelineStageFlags2 stage);
-	RGPassBuilder& write_buffer(const std::string& name, VkPipelineStageFlags2 stage);
-	
-	RGPassBuilder& set_color_attachment(const std::string& name, VkImageView view, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, const VkClearColorValue& clearColor = { 0.0f, 0.0f, 0.0f, 1.0f });
-	RGPassBuilder& set_depth_attachment(const std::string& name, VkImageView view, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, float clearDepth = 1.0f);
+	RGTextureHandle set_color_attachment(RGTextureHandle handle, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, VkClearColorValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f });
+	RGTextureHandle set_depth_attachment(RGTextureHandle handle, VkAttachmentLoadOp loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR, float clearDepth = 1.0f);
 
-	RGPassBuilder& set_extent(VkExtent2D extent);
-	RGPassBuilder& set_execute_callback(ExecutionFn function);
+	RGBufferHandle read_buffer(RGBufferHandle handle, VkPipelineStageFlags2 stage, VkAccessFlags access);
+	RGBufferHandle write_buffer(RGBufferHandle handle, VkPipelineStageFlags2 stage, VkAccessFlags access);
+
+	void set_extent(VkExtent2D extent);
+	void set_side_effect(bool hasSideEffect = true);
 
 private:
 	RenderGraph& _graph;
-	RGPass& _pass;
+	uint32_t _passIndex;
+};
+
+struct IRGPass
+{
+	std::string name;
+	uint32_t index{ 0 };
+	bool culled{ false };
+	bool hasSideEffect{ false };
+	uint32_t refCount{ 0 };
+
+	std::vector<std::pair<RGTextureHandle, RGResourceAccess>> textureAccesses;
+	std::vector<std::pair<RGBufferHandle, RGResourceAccess>> bufferAccesses;
+	std::optional<VkExtent2D> renderExtent;
+
+	virtual ~IRGPass() = default;
+	virtual void execute(RenderContext& ctx, RenderGraph& graph) = 0;
+};
+
+
+template<typename T>
+struct RGPass : public IRGPass
+{
+	T data;
+	std::function<void(const T& data, RenderContext& ctx)> executeFn;
+
+	void execute(RenderContext& ctx, RenderGraph& graph) override // execute the pass
+	{
+		if (executeFn)
+			executeFn(data, ctx);
+	}
 };
 
 class RenderGraph
 {
 public:
-	void clear_passes();
+	RenderGraph() = default;
+	~RenderGraph() { reset(); }
 
-	void register_texture(const std::string& name, VkImage image, VkFormat format, VkImageLayout initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, uint32_t layerCount = 1, uint32_t mipLevels = 1, uint32_t baseMiplevel = 0);
-	void register_buffer(const std::string& name, VkBuffer buffer, VkPipelineStageFlags2 initialStage = VK_PIPELINE_STAGE_2_NONE);
+	void reset();
 
-	RGPassBuilder add_pass(const std::string name);
+	RGTextureHandle create_texture(std::string_view name, const RGTextureDesc& desc);
+	RGBufferHandle create_buffer(std::string_view name, const RGBufferDesc& desc);
 
+	// temporary funcs to import external resources into render graph
+	RGTextureHandle import_texture(std::string_view name, VkImage image, VkImageView view, VkFormat format, VkExtent3D extent, VkImageLayout currentLayout);
+	RGBufferHandle  import_buffer(std::string_view name, VkBuffer buffer, VkDeviceSize size, VkPipelineStageFlags2 stage, VkAccessFlags2 access);
+
+	RGTextureHandle find_texture(std::string_view name) const;
+	RGBufferHandle  find_buffer(std::string_view name) const;
+
+	template<typename T, typename SetupFunc, typename ExecuteFunc>
+	const T& add_pass(std::string_view name, SetupFunc&& setupFn, ExecuteFunc&& executeFn)
+	{
+		auto pass = std::make_unique<RGPass<T>>();
+		pass->name = std::string(name);
+		pass->index = static_cast<uint32_t>(_passes.size());
+		pass->executeFn = std::forward<ExecuteFunc>(executeFn);
+
+		RGPassBuilder builder(*this, pass->index);
+		setupFn(builder, pass->data);
+
+		_passes.push_back(std::move(pass));
+
+		return static_cast<RGPass<T>*>(_passes.back().get())->data;
+	}
+
+	void compile();
 	void execute(RenderContext& ctx);
+	
+	// getters
+	VkImage get_image(RGTextureHandle handle) const;
+	VkImageView get_image_view(RGTextureHandle handle) const;
+	VkFormat get_format(RGTextureHandle handle) const;
+	VkBuffer get_buffer(RGBufferHandle handle) const;
 
-	// immediate transitions
-	void transition_texture(VkCommandBuffer cmd, const std::string& name, VkImageLayout newLayout);
-	void transition_buffer(VkCommandBuffer cmd, const std::string& name, VkPipelineStageFlags2 newStage);
-
-	RGTextureState* get_texture(const std::string& name);
-	RGBufferState* get_buffer(const std::string& name);
+	// for side effect passes
+	void transition_texture(VkCommandBuffer cmd, RGTextureHandle handle, VkImageLayout newLayout);
 
 private:
-	std::unordered_map<std::string, RGTextureState> _textures;
-	std::unordered_map<std::string, RGBufferState> _buffers;
-	std::vector<RGPass> _passes;
+	friend class RGPassBuilder;
+
+	void cull_passes();
+	void calculate_lifetimes();
+	void dispatch_barriers(RenderContext& ctx, IRGPass* pass);
+
+	std::vector<std::unique_ptr<IRGPass>> _passes;
+	std::vector<RGTextureNode> _textures;
+	std::vector<RGBufferNode> _buffers;
 };

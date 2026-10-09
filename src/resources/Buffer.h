@@ -15,7 +15,7 @@ public:
 
   ~Buffer() override { Resource::unload(); }
 
-  void destroy_immediate();
+  //void destroy_immediate();
 
   void* map();
   void unmap();
