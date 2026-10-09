@@ -199,9 +199,9 @@ void PipelineBuilder::enable_depthtest(bool depthWriteEnable, VkCompareOp op)
 VkPipeline PipelineBuilder::build_compute_pipeline(VkDevice device)
 {
 	VkComputePipelineCreateInfo computeInfo{
-			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
-			.stage = _computeShaderStage,
-			.layout = _pipelineLayout
+		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		.stage = _computeShaderStage,
+		.layout = _pipelineLayout
 	};
 
 	VkPipeline computePipeline;

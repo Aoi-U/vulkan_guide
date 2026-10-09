@@ -17,7 +17,7 @@ void FrustumCullPass::init(VulkanCore* vulkanCore, ResourceManager* resourceMana
 	cullLayoutBuilder.add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 4: batch count buffer
 	_cullDescriptorLayout = cullLayoutBuilder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_COMPUTE_BIT);
 
-	auto cullShader = resourceManager->load<Shader>("frustumcull_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/frustumcull.comp.spv");
+	auto cullShader = resourceManager->load<Shader>("frustumcull.comp", VK_SHADER_STAGE_COMPUTE_BIT, "main");
 
 	ComputePipelineDesc pipelineDesc{
 		.computeShader = cullShader,

@@ -536,16 +536,16 @@ void IBLSystem::init_pipelines(ResourceManager* resourceManager)
 	_lutComputeLayout = builder.build(device, VK_SHADER_STAGE_COMPUTE_BIT);
 	
 
-	auto eqShader = resourceManager->load<Shader>("equirect_to_cubemap_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/equirect_to_cubemap.comp.spv");
+	auto eqShader = resourceManager->load<Shader>("equirect_to_cubemap.comp", VK_SHADER_STAGE_COMPUTE_BIT, "main");
 	_equirectToCubemapPipeline = ComputePipeline(device, { .computeShader = eqShader, .descriptorLayouts = { _computeLayout } });
 
-	auto irrShader = resourceManager->load<Shader>("irradiance_cube_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/irradiance_cube.comp.spv");
+	auto irrShader = resourceManager->load<Shader>("irradiance_cube.comp", VK_SHADER_STAGE_COMPUTE_BIT, "main");
 	_irradiancePipeline = ComputePipeline(device, { .computeShader = irrShader, .descriptorLayouts = { _computeLayout } });
 
-	auto prefShader = resourceManager->load<Shader>("prefilter_cube_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/prefilter_cube.comp.spv");
+	auto prefShader = resourceManager->load<Shader>("prefilter_cube.comp", VK_SHADER_STAGE_COMPUTE_BIT, "main");
 	_prefilterPipeline = ComputePipeline(device, { .computeShader = prefShader, .descriptorLayouts = { _computeLayout }, .pushConstants = {{ VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(PrefilterPushConstants) }} });
 
-	auto brdfShader = resourceManager->load<Shader>("brdf_lut_comp", VK_SHADER_STAGE_COMPUTE_BIT, "main", "../../shaders/brdf_lut.comp.spv");
+	auto brdfShader = resourceManager->load<Shader>("brdf_lut.comp", VK_SHADER_STAGE_COMPUTE_BIT, "main");
 	_brdfLutPipeline = ComputePipeline(device, { .computeShader = brdfShader, .descriptorLayouts = { _lutComputeLayout } });
 }
 

@@ -24,8 +24,8 @@ void DeferredLightingPass::init(VulkanCore* vulkanCore, ResourceManager* resourc
   builder.add_binding(11, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 11:: gEmissive
   _descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT);
 
-  auto vert = resourceManager->load<Shader>("deferred_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/deferred_lighting.vert.spv");
-  auto frag = resourceManager->load<Shader>("deferred_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/deferred_lighting.frag.spv");
+  auto vert = resourceManager->load<Shader>("deferred_lighting.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
+  auto frag = resourceManager->load<Shader>("deferred_lighting.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
   GraphicsPipelineDesc desc{
     .shaders = { vert, frag },

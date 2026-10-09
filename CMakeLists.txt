@@ -26,19 +26,19 @@ add_subdirectory(src/app)
 find_program(GLSL_VALIDATOR glslangValidator HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/Bin32/ $ENV{VULKAN_SDK}/bin/)
 
 file(GLOB_RECURSE GLSL_SOURCE_FILES
-    "${PROJECT_SOURCE_DIR}/shaders/*.frag"
-    "${PROJECT_SOURCE_DIR}/shaders/*.vert"
-    "${PROJECT_SOURCE_DIR}/shaders/*.comp"    
+    "${PROJECT_SOURCE_DIR}/assets/shaders/*.frag"
+    "${PROJECT_SOURCE_DIR}/assets/shaders/*.vert"
+    "${PROJECT_SOURCE_DIR}/assets/shaders/*.comp"    
 )
 
 file(GLOB_RECURSE GLSL_HEADER_FILES
-    "${PROJECT_SOURCE_DIR}/shaders/*.glsl"
+    "${PROJECT_SOURCE_DIR}/assets/shaders/*.glsl"
 )
 
 set(SPIRV_BINARY_FILES "")
 foreach(GLSL ${GLSL_SOURCE_FILES})
     get_filename_component(FILE_NAME ${GLSL} NAME)
-    set(SPIRV "${PROJECT_SOURCE_DIR}/shaders/${FILE_NAME}.spv")
+    set(SPIRV "${PROJECT_SOURCE_DIR}/assets/shaders/${FILE_NAME}.spv")
     add_custom_command(
         OUTPUT ${SPIRV}
         COMMAND ${GLSL_VALIDATOR} -V ${GLSL} -o ${SPIRV}

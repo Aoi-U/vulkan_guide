@@ -4,19 +4,22 @@
 #include <fstream>
 #include <fmt/core.h>
 
-Shader::Shader(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath)
-	: Resource(id, core, resourceManager), _stage(stage), _entryPoint(entryPoint), _filePath(customPath)
+Shader::Shader(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& filePath)
+	: Resource(id, core, resourceManager), _stage(stage), _entryPoint(entryPoint)
 {
 	// resolve fallback spirv file path
-	if (_filePath.empty()) {
-		std::string extension;
-		switch (_stage) {
-		case VK_SHADER_STAGE_VERTEX_BIT: extension = ".vert"; break;
-		case VK_SHADER_STAGE_FRAGMENT_BIT: extension = ".frag"; break;
-		case VK_SHADER_STAGE_COMPUTE_BIT: extension = ".comp"; break;
-		default: return; // unsupported fallback path
+	if (_filePath.empty() && !id.empty()) {
+		const std::filesystem::path baseDir = "../../assets/shaders";
+		std::filesystem::path p(id);
+
+		// If the ID already has an extension like .spv, use it directly
+		if (p.extension() == ".spv") {
+			_filePath = baseDir / p;
 		}
-		_filePath = std::filesystem::path("../../shaders") / (id + extension + ".spv");
+		else {
+			// Append .spv (e.g., "gbuffer.vert" -> "gbuffer.vert.spv")
+			_filePath = baseDir / (id + ".spv");
+		}
 	}
 }
 

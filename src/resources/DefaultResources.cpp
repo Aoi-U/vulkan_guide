@@ -10,7 +10,7 @@ void DefaultResources::init(ResourceManager* manager)
 	// default textures
 	uint32_t white = glm::packUnorm4x8(glm::vec4(1, 1, 1, 1));
 	uint32_t grey = glm::packUnorm4x8(glm::vec4(0.66f, 0.66f, 0.66f, 1.f));
-	uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 0));
+	uint32_t black = glm::packUnorm4x8(glm::vec4(0, 0, 0, 1));
 	uint32_t normal = glm::packUnorm4x8(glm::vec4(0.5f, 0.5f, 1.0f, 1.0f));
 
 	TextureDescription desc1{
@@ -33,8 +33,11 @@ void DefaultResources::init(ResourceManager* manager)
   }
 
   TextureDescription desc2{
-      .extent = {16, 16, 1}, .format = VK_FORMAT_R8G8B8A8_UNORM,
-      .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+      .extent = {16, 16, 1}, 
+      .format = VK_FORMAT_R8G8B8A8_UNORM,
+      .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+      .magFilter = VK_FILTER_NEAREST,
+      .minFilter = VK_FILTER_NEAREST
   };
   errorCheckerboardImage = _manager->preload<Texture>("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
 

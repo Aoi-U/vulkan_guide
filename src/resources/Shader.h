@@ -10,7 +10,7 @@
 class Shader : public Resource
 {
 public:
-	Shader(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& customPath);
+	Shader(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, VkShaderStageFlagBits stage, std::string_view entryPoint, const std::filesystem::path& filePath  = "");
 	~Shader() override { Resource::unload(); }
 
 	// getters
@@ -23,7 +23,7 @@ protected:
 	bool doUnload() override;
 
 private:
-	std::filesystem::path _filePath{};
+	std::filesystem::path _filePath{""};
 	VkShaderModule _module{ VK_NULL_HANDLE };
 	VkShaderStageFlagBits _stage{};
 	std::string _entryPoint{ "main" };

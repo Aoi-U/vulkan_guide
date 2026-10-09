@@ -13,8 +13,8 @@ void SkyboxPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, 
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	// load shaders
-	auto vert = resourceManager->load<Shader>("skybox_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/skybox.vert.spv");
-	auto frag = resourceManager->load<Shader>("skybox_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/skybox.frag.spv");
+	auto vert = resourceManager->load<Shader>("skybox.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
+	auto frag = resourceManager->load<Shader>("skybox.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
 	// create pipeline
 	GraphicsPipelineDesc pipelineDesc{

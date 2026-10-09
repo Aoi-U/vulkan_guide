@@ -29,9 +29,10 @@ void AssetRegistry::scan_directory(const std::filesystem::path& rootPath)
 			else if (ext == ".hdr") // environment map
 				record.type = AssetType::EnvironmentHDR;
 			
-			else if (ext == ".vert" || ext == ".frag" || ext == ".comp") // shader
+			else if (ext == ".vert" || ext == ".frag" || ext == ".comp") { // shader 
 				record.type = AssetType::Shader;
-			
+				record.id = entry.path().filename().string();
+			}
 			else // unsupported
 				record.type = AssetType::Unknown;
 			
@@ -59,7 +60,7 @@ const AssetRecord* AssetRegistry::find_asset_by_path(const std::filesystem::path
 			return &asset;
 	}
 
-	fmt::println("AssetRegistry: No asset found at path: {}", path.string());
+	//fmt::println("AssetRegistry: No asset found at path: {}", path.string());
 	return nullptr;
 }
 

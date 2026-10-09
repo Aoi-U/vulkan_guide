@@ -11,7 +11,7 @@ void ShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, 
 	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
 
-	auto vertShader = resourceManager->load<Shader>("shadow_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/shadow.vert.spv");
+	auto vertShader = resourceManager->load<Shader>("shadow.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
 
 	GraphicsPipelineDesc pipeDesc{
 		.shaders = { vertShader },

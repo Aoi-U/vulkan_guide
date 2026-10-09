@@ -14,8 +14,8 @@ void PointShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceMana
 	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
 	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
 
-	auto vert = resourceManager->load<Shader>("point_shadow_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/point_shadow.vert.spv");
-	auto frag = resourceManager->load<Shader>("point_shadow_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/point_shadow.frag.spv");
+	auto vert = resourceManager->load<Shader>("point_shadow.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
+	auto frag = resourceManager->load<Shader>("point_shadow.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
 	GraphicsPipelineDesc pipeDesc{
 		.shaders = {vert, frag},

@@ -15,8 +15,8 @@ void GBufferPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager,
 	builder.add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 3: material constants
 	_sceneDataDescriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
-	auto vert = resourceManager->load<Shader>("gbuffer_vert", VK_SHADER_STAGE_VERTEX_BIT, "main", "../../shaders/gbuffer.vert.spv");
-	auto frag = resourceManager->load<Shader>("gbuffer_frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main", "../../shaders/gbuffer.frag.spv");
+	auto vert = resourceManager->load<Shader>("gbuffer.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
+	auto frag = resourceManager->load<Shader>("gbuffer.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
 	GraphicsPipelineDesc desc{
 		.shaders = {vert, frag},
