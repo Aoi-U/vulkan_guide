@@ -78,9 +78,9 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_ssaoBlurPass->cleanup();
 	_iblSystem.cleanup();
 
-	//for (auto& [name, tex] : _renderTargets) {
-	//	tex->unload();
-	//}
+	for (auto& [name, tex] : _renderTargets) {
+		tex->unload();
+	}
 	_renderTargets.clear();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
@@ -93,7 +93,6 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 		_frames[i]._materialDataBuffer->unload();
 
 
-		_frames[i]._deletionQueue.flush(_vulkanCore->get_device(), _vulkanCore->get_allocator());
 		_frames[i]._frameDescriptors.destroy_pools(_vulkanCore->get_device());
 
 		vkDestroyCommandPool(_vulkanCore->get_device(), _frames[i]._commandPool, nullptr);
@@ -102,6 +101,8 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	}
 
 	_swapchain.cleanup(_vulkanCore->get_device());
+
+	_vulkanCore->get_deletion_queue().flush_all();
 }
 
 void Renderer::on_window_resize(const Events::WindowResizeEvent& event)
@@ -362,7 +363,11 @@ VkCommandBuffer Renderer::begin_frame()
 	// timeout of 1 second
 	FrameData& currentFrame = get_current_frame();
 	VK_CHECK(vkWaitForFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence, true, 1000000000));
-	currentFrame._deletionQueue.flush(_vulkanCore->get_device(), _vulkanCore->get_allocator());
+
+	if (_frameNumber >= FRAME_OVERLAP) { // flush safe to delete resources
+		_vulkanCore->get_deletion_queue().flush_retired(_frameNumber - FRAME_OVERLAP);
+	}
+
 	currentFrame._frameDescriptors.clear_pools(_vulkanCore->get_device());
 
 	// request image from swapchain
@@ -448,6 +453,8 @@ void Renderer::end_frame()
 		.pImageIndices = &_swapchainImageIndex
 	};
 
+	_vulkanCore->get_deletion_queue().next_frame(_frameNumber);
+
 	_isFrameStarted = false;
 	_frameNumber++;
 
@@ -459,31 +466,7 @@ void Renderer::end_frame()
 	else {
 		VK_CHECK(presentResult);
 	}
-
 }
-
-/*
-void Renderer::blit_to_swapchain(VkCommandBuffer cmd)
-{
-	VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	ResourceHandle<Texture> sceneColor = _renderTargets.find("SceneColor")->second;
-
-	// transition the draw image and the swapchain image into their correct transfer layouts
-	// so we can blit from the draw image to the swapchain image
-	//_renderGraph.transition_texture(cmd, "SceneColor", ResourceState::TransferSrc);
-	_renderGraph.transition_texture(cmd, "SceneColor", VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
-
-	// transition swapchain image to transferdst to copy into it
-	vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-
-	// copy SceneColor into the swapchain
-	vkutil::copy_image_to_image(cmd, sceneColor->get_image(), swapchainImage, _drawExtent, _swapchain.get_extent());
-
-	// set swapchain image layout to color attachment optimal for imgui
-	vkutil::image_mem_barrier2(cmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-}
-*/
 
 void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
 {
@@ -753,6 +736,8 @@ void Renderer::create_render_targets()
 		_resourceManager->force_unload<Texture>(name);
 	}
 	_renderTargets.clear();
+
+	_vulkanCore->get_deletion_queue().flush_all();
 
 	float scale = std::clamp(static_cast<float>(cvRenderScale.Get()), 0.1f, 1.0f);
 	_currentRenderScale = scale;

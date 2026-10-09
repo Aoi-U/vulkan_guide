@@ -2,6 +2,7 @@
 #include <fstream>
 #include <utils/vk_initializers.h>
 #include <utils/vk_utils.h>
+#include <fmt/core.h>
 
 void PipelineBuilder::clear()
 {

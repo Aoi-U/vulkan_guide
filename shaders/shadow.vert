@@ -28,6 +28,7 @@ struct GPUObjectData
 	VertexBuffer vertexBuffer;
 	uint batchIndex;
 	uint batchOffset;
+	uint materialIndex;
 };
 
 layout (std430, set = 0, binding = 0) readonly buffer ObjectBuffer

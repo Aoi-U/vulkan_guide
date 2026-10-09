@@ -21,7 +21,7 @@ Texture::Texture(const std::string& id, VulkanCore* core, ResourceManager* resou
 Texture::Texture(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, const TextureDescription& desc, std::span<const uint8_t> data)
 	: Resource(id, core, resourceManager), _sourceType(SourceType::Description), _bufferData(data.begin(), data.end()), _desc(desc), _format(desc.format), _usage(desc.usage), _mipmapped(desc.mipLevels > 1), _extent(desc.extent), _mipLevels(desc.mipLevels) {}
 
-void Texture::destroy_immediate() 
+void Texture::destroy_immediate()
 {
 	if (_image != VK_NULL_HANDLE) {
 		vmaDestroyImage(_core->get_allocator(), _image, _allocation);
@@ -171,7 +171,7 @@ bool Texture::doLoad()
 	else if (_sourceType == SourceType::Description && (_usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT || _usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
 		// leave undefined; RenderGraph manages runtime transitions
 	}
-	else if (_sourceType == SourceType::Description) { 
+	else if (_sourceType == SourceType::Description) {
 		_core->immediate_submit([&](VkCommandBuffer cmd) {
 			vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 			});
@@ -226,30 +226,36 @@ bool Texture::doLoad()
 bool Texture::doUnload()
 {
 	if (_bindlessIndex != 0) {
-		_resourceManager->free_bindless_slot(_bindlessIndex);
+		_core->get_deletion_queue().push_function([rm = _resourceManager, index = _bindlessIndex]() {
+			if (rm) {
+				rm->free_bindless_slot(index);
+			}
+			});
 		_bindlessIndex = 0;
 	}
 
-	if (_sampler != VK_NULL_HANDLE) { 
-		_core->globalDeletionQueue.push(_sampler);
-		_sampler = VK_NULL_HANDLE; 
-	}
-	if (_imageView != VK_NULL_HANDLE) { 
-		_core->globalDeletionQueue.push(_imageView);
-		_imageView = VK_NULL_HANDLE;
-	}
-	if (_image != VK_NULL_HANDLE) { 
-		_core->globalDeletionQueue.push(_image, _allocation);
-		_image = VK_NULL_HANDLE;
-		_allocation = VK_NULL_HANDLE; 
+	if (_sampler != VK_NULL_HANDLE) {
+		_core->get_deletion_queue().push(_sampler);
+		_sampler = VK_NULL_HANDLE;
 	}
 
 	for (VkImageView view : _faceViews) {
 		if (view != VK_NULL_HANDLE) {
-			_core->globalDeletionQueue.push(view);
+			_core->get_deletion_queue().push(view);
 		}
 	}
 	_faceViews.clear();
+
+	if (_imageView != VK_NULL_HANDLE) {
+		_core->get_deletion_queue().push(_imageView);
+		_imageView = VK_NULL_HANDLE;
+	}
+
+	if (_image != VK_NULL_HANDLE) {
+		_core->get_deletion_queue().push(_image, _allocation);
+		_image = VK_NULL_HANDLE;
+		_allocation = VK_NULL_HANDLE;
+	}
 
 	return true;
 }

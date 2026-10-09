@@ -13,79 +13,9 @@
 
 #include <vulkan/vulkan.h>
 #include <vulkan/vk_enum_string_helper.h>
-#include <vk_mem_alloc.h>
-
-#include <fmt/core.h>
-
 #include <glm/mat4x4.hpp>
 #include <glm/vec4.hpp>
-
-struct DeletionQueue
-{
-public:
-	void push(VkBuffer buffer, VmaAllocation allocation) { buffers.emplace_back(buffer, allocation); }
-	void push(VkImage image, VmaAllocation allocation) { images.emplace_back(image, allocation); }
-	void push(VkImageView imageView) { imageViews.push_back(imageView); }
-	void push(VkSampler sampler) { samplers.push_back(sampler); }
-	void push(VkShaderModule shaderModule) { shaderModules.push_back(shaderModule); }
-	void push(VkPipeline pipeline) { pipelines.push_back(pipeline); }
-	void push(VkPipelineLayout layout) { pipelineLayouts.push_back(layout); }
-	void push(VkDescriptorSetLayout layout) { descriptorSetLayouts.push_back(layout); }
-
-	void flush(VkDevice device, VmaAllocator allocator)
-	{
-		// Destroy handles in reverse dependency order
-		for (auto it = imageViews.rbegin(); it != imageViews.rend(); ++it) {
-			vkDestroyImageView(device, *it, nullptr);
-		}
-		imageViews.clear();
-
-		for (auto it = samplers.rbegin(); it != samplers.rend(); ++it) {
-			vkDestroySampler(device, *it, nullptr);
-		}
-		samplers.clear();
-
-		for (auto it = images.rbegin(); it != images.rend(); ++it) {
-			vmaDestroyImage(allocator, it->first, it->second);
-		}
-		images.clear();
-
-		for (auto it = buffers.rbegin(); it != buffers.rend(); ++it) {
-			vmaDestroyBuffer(allocator, it->first, it->second);
-		}
-		buffers.clear();
-
-		for (auto it = shaderModules.rbegin(); it != shaderModules.rend(); ++it) {
-			vkDestroyShaderModule(device, *it, nullptr);
-		}
-		shaderModules.clear();
-
-		for (auto it = pipelines.rbegin(); it != pipelines.rend(); ++it) {
-			vkDestroyPipeline(device, *it, nullptr);
-		}
-		pipelines.clear();
-
-		for (auto it = pipelineLayouts.rbegin(); it != pipelineLayouts.rend(); ++it) {
-			vkDestroyPipelineLayout(device, *it, nullptr);
-		}
-		pipelineLayouts.clear();
-
-		for (auto it = descriptorSetLayouts.rbegin(); it != descriptorSetLayouts.rend(); ++it) {
-			vkDestroyDescriptorSetLayout(device, *it, nullptr);
-		}
-		descriptorSetLayouts.clear();
-	}
-
-private:
-	std::vector<std::pair<VkBuffer, VmaAllocation>> buffers;
-	std::vector<std::pair<VkImage, VmaAllocation>> images;
-	std::vector<VkImageView> imageViews;
-	std::vector<VkSampler> samplers;
-	std::vector<VkShaderModule> shaderModules;
-	std::vector<VkPipeline> pipelines;
-	std::vector<VkPipelineLayout> pipelineLayouts;
-	std::vector<VkDescriptorSetLayout> descriptorSetLayouts;
-};
+#include <core/DeletionQueue.h>
 
 struct EnvironmentResources
 {
@@ -124,6 +54,8 @@ struct GPUObjectData
 	uint32_t batchIndex;
 	uint32_t batchOffset;
 	uint32_t materialIndex;
+
+	uint32_t padding[3]; 
 };
 
 constexpr uint32_t MAX_POINT_LIGHTS = 256;

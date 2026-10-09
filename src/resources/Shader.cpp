@@ -78,7 +78,7 @@ bool Shader::doLoad()
 bool Shader::doUnload()
 {
 	if (_module != VK_NULL_HANDLE) {
-		_core->globalDeletionQueue.push(_module);
+		_core->get_deletion_queue().push(_module);
 		_module = VK_NULL_HANDLE;
 	}
 	return true;

@@ -1,5 +1,6 @@
 ﻿#include <utils/vk_descriptors.h>
 #include <cassert>
+#include <fmt/core.h>
 
 void DescriptorLayoutBuilder::add_binding(uint32_t binding, VkDescriptorType type)
 {

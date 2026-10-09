@@ -80,6 +80,8 @@ void VulkanCore::init(Window& window)
 	allocatorInfo.flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
 	vmaCreateAllocator(&allocatorInfo, &_allocator);
 
+	_deletionQueue.init(_device, _allocator);
+
 	init_immediate_submit();
 
 }
@@ -90,7 +92,7 @@ void VulkanCore::cleanup()
 	vkDestroyFence(_device, _immFence, nullptr);
 	vkDestroyCommandPool(_device, _immCommandPool, nullptr);
 
-	globalDeletionQueue.flush(_device, _allocator);
+	_deletionQueue.flush_all(); // flush all remaining deletions
 
 	// destroy memory allocator
 	vmaDestroyAllocator(_allocator);

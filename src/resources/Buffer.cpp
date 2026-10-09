@@ -64,8 +64,6 @@ bool Buffer::resize(size_t newSize, bool preserveData)
 		vmaAllocInfo.flags |= VMA_ALLOCATION_CREATE_MAPPED_BIT;
 	}
 
-	//ResourceHandle<Buffer> newBufferHandle = _resourceManager->load<Buffer>(get_id() + "_resized", _core, _resourceManager, targetSize, _usage, _memoryUsage, _allocFlags);
-
 	// create new buffer
 	if (vmaCreateBuffer(_core->get_allocator(), &bufferInfo, &vmaAllocInfo, &newBuffer, &newAllocation, &newAllocInfo) != VK_SUCCESS) {
 		fmt::println("Buffer: failed to create buffer for resize: {}", get_id());
@@ -88,8 +86,9 @@ bool Buffer::resize(size_t newSize, bool preserveData)
 		}
 	}
 
-	//destroy_immediate();
-	unload();
+	if (_buffer != VK_NULL_HANDLE) { // queue old buffer for deletion
+		_core->get_deletion_queue().push(_buffer, _allocation);
+	}
 	
 	_size = targetSize;
 	_buffer = newBuffer;
@@ -164,7 +163,7 @@ bool Buffer::doLoad()
 bool Buffer::doUnload()
 {
 	if (_buffer != VK_NULL_HANDLE) {
-		_core->globalDeletionQueue.push(_buffer, _allocation);
+		_core->get_deletion_queue().push(_buffer, _allocation);
 		_buffer = VK_NULL_HANDLE;
 		_allocation = VK_NULL_HANDLE;
 		_mappedData = nullptr;

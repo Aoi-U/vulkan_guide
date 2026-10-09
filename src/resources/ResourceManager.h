@@ -85,7 +85,7 @@ protected:
 
 	Resource() = default;
 	Resource(Resource&& other) noexcept
-		: resourceId(std::move(other.resourceId)), loaded(other.loaded), _core(other._core)
+		: resourceId(std::move(other.resourceId)), loaded(other.loaded), _core(other._core), _resourceManager(other._resourceManager)
 	{
 		other.loaded = false;
 		other._core = nullptr;
@@ -320,7 +320,6 @@ public:
 		_refCounts.clear(); // reset all reference counts
 		_resources.clear(); // clear resource map
 	}
-
 
 private:
 	static constexpr uint32_t MAX_BINDLESS_TEXTURES = 10000;

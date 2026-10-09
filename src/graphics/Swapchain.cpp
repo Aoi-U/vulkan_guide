@@ -1,6 +1,7 @@
 #include "Swapchain.h"
 
 #include <utils/vk_initializers.h>
+#include  <fmt/core.h>
 
 // bootstrap library
 #include "VkBootstrap.h"

@@ -15,7 +15,7 @@ bool Sampler::doLoad()
 bool Sampler::doUnload()
 {
 	if (_sampler != VK_NULL_HANDLE) {
-		vkDestroySampler(_core->get_device(), _sampler, nullptr);
+		_core->get_deletion_queue().push(_sampler);
 		_sampler = VK_NULL_HANDLE;
 	}
 

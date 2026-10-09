@@ -467,8 +467,11 @@ void RenderGraph::dispatch_barriers(RenderContext& ctx, IRGPass* pass)
 			continue; // no barrier needed, already in correct stage and access
 		}
 
-		if (access.usage != RGResourceUsage::StorageWrite) {
-			continue; // no barrier needed, only read access
+		bool wasWritten = (buf.currentAccess & (VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT)) != 0;
+		bool isWriting = (access.usage == RGResourceUsage::StorageWrite);
+
+		if (!wasWritten && !isWriting) {
+			continue;
 		}
 
 		VkBufferMemoryBarrier2 barrier{

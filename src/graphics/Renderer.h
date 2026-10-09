@@ -74,9 +74,7 @@ struct FrameData
 	VkSemaphore _swapchainSemaphore;
 	VkFence _renderFence;
 
-	DeletionQueue _deletionQueue;
 	DescriptorAllocatorGrowable _frameDescriptors;
-
 
 	ResourceHandle<Buffer> sceneDataBuffer; // uniform buffer for scene data
 

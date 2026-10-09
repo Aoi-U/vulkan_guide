@@ -12,6 +12,9 @@ void ResourceManager::init(VulkanCore* core)
 void ResourceManager::cleanup()
 {
 	unload_all();
+	if (_vulkanCore) {
+		_vulkanCore->get_deletion_queue().flush_all();
+	}
 	clean_bindless();
 }
 

@@ -23,7 +23,7 @@ public:
 
 	VmaAllocator& get_allocator() { return _allocator; }
 
-	DeletionQueue globalDeletionQueue;
+	DeletionQueue& get_deletion_queue() { return _deletionQueue; }
 
 private:
 	void init_immediate_submit();
@@ -44,4 +44,5 @@ private:
 	VkCommandBuffer _immCommandBuffer;
 	VkCommandPool _immCommandPool;
 
+	DeletionQueue _deletionQueue;
 };

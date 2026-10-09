@@ -29,8 +29,8 @@ private:
 	void update_scene(float deltaTime);
 
 	std::unique_ptr<Window> _window;
-	std::unique_ptr<VulkanCore> _vulkanCore;
 	std::unique_ptr<ResourceManager> _resourceManager;
+	std::unique_ptr<VulkanCore> _vulkanCore;
 	std::unique_ptr<Renderer> _renderer;
 	std::unique_ptr<Editor> _editor;
 	std::unique_ptr<GuiRenderer> _guiRenderer;
