@@ -108,14 +108,11 @@ void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const Dra
 			};
 			ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, push);
 
-			VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
-			for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
-				// bind index buffer if needed
-				if (batch.indexBuffer != lastIndexBuffer) {
-					lastIndexBuffer = batch.indexBuffer;
-					ctx.bind_index_buffer(batch.indexBuffer);
-				}
+			if (!drawCtx.opaqueBatches.empty()) {
+				ctx.bind_index_buffer(drawCtx.opaqueBatches[0].indexBuffer, 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
+			}
 
+			for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
 				// draw batch
 				VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 				VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);

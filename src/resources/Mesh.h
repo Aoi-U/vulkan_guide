@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <resources/ResourceManager.h>
+#include <resources/GlobalGeometryPool.h>
 #include <resources/Buffer.h>
 #include <string>
 #include <vector>
@@ -14,11 +15,12 @@ public:
 	explicit Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, std::vector<uint32_t> indices, std::vector<Vertex> vertices, bool keepCpuGeometry = true);
 	~Mesh() override { Resource::unload(); }
 
-	VkBuffer get_vertex_buffer() const { return _vertexBuffer->get_buffer(); }
-	VkBuffer get_index_buffer() const { return _indexBuffer->get_buffer(); }
-	VkDeviceAddress get_vertex_buffer_address() const { return _vertexBufferAddress; }
-	uint32_t get_index_count() const { return _indexCount; }
-	uint32_t get_vertex_count() const { return _vertexCount; }
+	VkBuffer get_vertex_buffer() const { return _resourceManager->get_geometry_pool().get_vertex_buffer(); }
+	VkBuffer get_index_buffer() const { return _resourceManager->get_geometry_pool().get_index_buffer(); }
+	VkDeviceAddress get_vertex_buffer_address() const { return _allocation.vertexBufferAddress; }
+	uint32_t get_index_count() const { return _allocation.indexCount; }
+	uint32_t get_vertex_count() const { return _allocation.vertexCount; }
+	uint32_t get_first_index() const { return _allocation.firstIndex; }
 
 	std::span<const glm::vec3> get_picking_positions() const { return _pickingPositions; }
 	std::span<const uint32_t> get_picking_indices() const { return _pickingIndices; }
@@ -32,12 +34,7 @@ private:
 	std::vector<uint32_t> _cpuIndices;
 	std::vector<Vertex> _cpuVertices;
 
-	ResourceHandle<Buffer> _vertexBuffer;
-	ResourceHandle<Buffer> _indexBuffer;
-
-	VkDeviceAddress _vertexBufferAddress{ 0 };
-	uint32_t _indexCount{ 0 };
-	uint32_t _vertexCount{ 0 };
+	GeometryAllocation _allocation{};
 
 	std::vector<glm::vec3> _pickingPositions;
 	std::vector<uint32_t> _pickingIndices;

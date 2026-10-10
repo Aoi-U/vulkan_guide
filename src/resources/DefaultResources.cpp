@@ -54,6 +54,7 @@ void DefaultResources::init(ResourceManager* manager)
 
 void DefaultResources::cleanup()
 {
+  whiteImage = {};
   blackImage = {};
   greyImage = {};
   errorCheckerboardImage = {};

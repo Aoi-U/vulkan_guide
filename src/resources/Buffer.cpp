@@ -23,7 +23,7 @@ void* Buffer::map()
 
 void Buffer::unmap()
 {
-	if (_mappedData && _allocation) {
+	if (_mappedData && _allocation && _allocInfo.pMappedData == nullptr) {
 		vmaUnmapMemory(_core->get_allocator(), _allocation);
 		_mappedData = nullptr;
 	}

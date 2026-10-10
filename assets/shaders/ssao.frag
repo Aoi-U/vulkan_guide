@@ -71,7 +71,8 @@ void main()
 		float sampleDepth = (sceneData.view * vec4(samplePosData.xyz, 1.0)).z; // get depth value of kernel space
 
 		// range check & accumulate
-		float rangeCheck = smoothstep(0.0, 1.0, push.radius / abs(fragPos.z - sampleDepth));
+		float depthDiff = abs(fragPos.z - sampleDepth);
+		float rangeCheck = depthDiff < push.radius ? smoothstep(1.0, 0.0, depthDiff / push.radius) : 0.0;
 		occlusion += (sampleDepth >= samplePos.z + push.bias ? 1.0 : 0.0) * rangeCheck;
 	}
 

@@ -399,7 +399,7 @@ void RenderGraph::cull_passes()
 		}
 		else { // none of its write outputs ar read by subsequent nodes
 			// does nothing as no support for backward reference counting yet
-			// pass->culled = pass->refCount == 0; 
+			//pass->culled = pass->refCount == 0; 
 		}
 	}
 }

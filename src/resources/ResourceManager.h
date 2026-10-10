@@ -19,6 +19,7 @@
 
 class VulkanCore;
 class ResourceManager;
+class GlobalGeometryPool;
 
 // handle to a resource, managed by resource manager
 template<typename T>
@@ -27,11 +28,12 @@ class ResourceHandle
 public:
 	ResourceHandle();
 	ResourceHandle(const std::string& id, ResourceManager* manager);
-	//ResourceHandle(const ResourceHandle& other);
-	//ResourceHandle& operator=(const ResourceHandle& other);
-	//ResourceHandle(ResourceHandle&& other) noexcept;
-	//ResourceHandle& operator=(ResourceHandle&& other) noexcept;
-	//~ResourceHandle();
+
+	ResourceHandle(const ResourceHandle& other); 
+	ResourceHandle& operator=(const ResourceHandle& other);
+	ResourceHandle(ResourceHandle&& other) noexcept; 
+	ResourceHandle& operator=(ResourceHandle&& other) noexcept; 
+	~ResourceHandle(); 
 
 	T* get() const;
 	bool is_valid() const;
@@ -135,11 +137,11 @@ public:
 	void cleanup();
 
 	uint32_t allocate_bindless_texture(VkImageView view, VkSampler sampler);
-
 	void free_bindless_slot(uint32_t slot);
 
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
+	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> preload(const std::string& resourceId, Args&&... args) {
@@ -160,7 +162,7 @@ public:
 
 		if (it != typeResources.end()) {
 			// resource exists in cache, increment reference count and return handle
-			_refCounts[typeKey][resourceId].refCount++;
+			//_refCounts[typeKey][resourceId].refCount++;
 			return ResourceHandle<T>(resourceId, this);
 		}
 
@@ -172,7 +174,7 @@ public:
 
 		// cache successful resource and initialize reference tracking
 		typeResources[resourceId] = resource;
-		_refCounts[typeKey][resourceId] = ResourceData{ resource, 1 };
+		_refCounts[typeKey][resourceId] = ResourceData{ resource, 0 };
 
 		return ResourceHandle<T>(resourceId, this);
 	}
@@ -264,24 +266,6 @@ public:
 			return;
 
 		it->second.refCount--;
-
-		// check if resource has no remaining references
-		if (it->second.refCount <= 0 && !it->second.isPersistent) {
-			auto resTypeIt = _resources.find(typeKey);
-
-			if (resTypeIt == _resources.end())
-				return;
-
-			auto& typeResources = resTypeIt->second;
-			auto resourceIt = typeResources.find(resourceId);
-
-			if (resourceIt == typeResources.end())
-				return;
-
-			resourceIt->second->unload();
-			typeResources.erase(resourceIt);
-			typeIt->second.erase(it);
-		}
 	}
 
 	template<typename T>
@@ -294,32 +278,9 @@ public:
 		}
 	}
 
-	void unload_unused() {
-		for (auto& [type, typeCounts] : _refCounts) {
-			for (auto it = typeCounts.begin(); it != typeCounts.end(); ) {
-				if (it->second.refCount <= 0 && !it->second.isPersistent) {
-					_resources[type][it->first]->unload();
-					_resources[type].erase(it->first);
-					it = typeCounts.erase(it);
-				}
-				else {
-					++it;
-				}
-			}
-		}
-	}
+	void unload_unused();
 
-	void unload_all()
-	{
-		for (auto& [type, typeResources] : _resources) {
-			for (auto& [id, resource] : typeResources) {
-				resource->unload(); // ensure all resources clean up properly
-			}
-			typeResources.clear(); // clear type specific container
-		}
-		_refCounts.clear(); // reset all reference counts
-		_resources.clear(); // clear resource map
-	}
+	void unload_all();
 
 private:
 	static constexpr uint32_t MAX_BINDLESS_TEXTURES = 10000;
@@ -329,9 +290,12 @@ private:
 	VkDescriptorSetLayout _bindlessLayout{ VK_NULL_HANDLE };
 	VkDescriptorPool _bindlessPool{ VK_NULL_HANDLE };
 	VkDescriptorSet _bindlessSet{ VK_NULL_HANDLE };
+
 	std::vector<uint32_t> _freeBindlessSlots;
 	uint32_t _nextBindlessSlot{ 0 }; // 0 for invalid
 	std::mutex _bindlessMutex;
+
+	std::unique_ptr<GlobalGeometryPool> _geometryPool;
 
 	// two level storage system
 	// organize by type first, then by unique id
@@ -349,7 +313,66 @@ inline ResourceHandle<T>::ResourceHandle()
 
 template<typename T>
 inline ResourceHandle<T>::ResourceHandle(const std::string& id, ResourceManager* manager)
-	: resourceId(id), resourceManager(manager) {}
+	: resourceId(id), resourceManager(manager) 
+{
+	if (resourceManager && !resourceId.empty()) {
+		resourceManager->add_ref<T>(resourceId);
+	}
+}
+
+template<typename T> // copy constructor
+inline ResourceHandle<T>::ResourceHandle(const ResourceHandle& other)
+	:resourceId(other.resourceId), resourceManager(other.resourceManager)
+{
+	if (resourceManager && !resourceId.empty()) {
+		resourceManager->add_ref<T>(resourceId);
+	}
+}
+
+template<typename T> // copy assignment operator
+inline ResourceHandle<T>& ResourceHandle<T>::operator=(const ResourceHandle& other)
+{
+	if (this != &other) {
+		if (resourceManager && !resourceId.empty()) {
+			resourceManager->release<T>(resourceId);
+		}
+		resourceId = other.resourceId;
+		resourceManager = other.resourceManager;
+		if (resourceManager && !resourceId.empty()) {
+			resourceManager->add_ref<T>(resourceId);
+		}
+	}
+	return *this;
+}
+
+template<typename T> // move constructor
+inline ResourceHandle<T>::ResourceHandle(ResourceHandle&& other) noexcept
+	: resourceId(std::move(other.resourceId)), resourceManager(other.resourceManager)
+{
+	other.resourceManager = nullptr;
+}
+
+template<typename T> // move assignment
+inline ResourceHandle<T>& ResourceHandle<T>::operator=(ResourceHandle&& other) noexcept
+{
+	if (this != &other) {
+		if (resourceManager && !resourceId.empty()) {
+			resourceManager->release<T>(resourceId);
+		}
+		resourceId = std::move(other.resourceId);
+		resourceManager = other.resourceManager;
+		other.resourceManager = nullptr;
+	}
+	return *this;
+}
+
+template<typename T> // destructor
+inline ResourceHandle<T>::~ResourceHandle()
+{
+	if (resourceManager && !resourceId.empty()) {
+		resourceManager->release<T>(resourceId);
+	}
+}
 
 template<typename T>
 inline T* ResourceHandle<T>::get() const

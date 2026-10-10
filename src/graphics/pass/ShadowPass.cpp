@@ -55,14 +55,13 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& d
 	writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
 
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
+	if (!drawCtx.opaqueBatches.empty()) {
+		ctx.bind_index_buffer(drawCtx.opaqueBatches[0].indexBuffer, 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
+	}
 
 	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
-		// rebind index buffer if needed
-		if (batch.indexBuffer != lastIndexBuffer) {
-			lastIndexBuffer = batch.indexBuffer;
-			ctx.bind_index_buffer(batch.indexBuffer);
-		}
+
 
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);

@@ -1,5 +1,5 @@
 #include "ResourceManager.h"
-
+#include "GlobalGeometryPool.h"
 #include <graphics/VulkanCore.h>
 
 void ResourceManager::init(VulkanCore* core)
@@ -7,10 +7,18 @@ void ResourceManager::init(VulkanCore* core)
 	_vulkanCore = core;
 
 	init_bindless(); // create bindless descriptor resources
+
+	_geometryPool = std::make_unique<GlobalGeometryPool>();
+	_geometryPool->init(_vulkanCore, this);
 }
 
 void ResourceManager::cleanup()
 {
+	if (_geometryPool) {
+		_geometryPool->cleanup();
+		_geometryPool.reset();
+	}
+
 	unload_all();
 	if (_vulkanCore) {
 		_vulkanCore->get_deletion_queue().flush_all();
@@ -61,6 +69,44 @@ void ResourceManager::free_bindless_slot(uint32_t slot)
 
 	std::lock_guard<std::mutex> lock(_bindlessMutex); // ensure thread safety to free slot
 	_freeBindlessSlots.push_back(slot); // mark slot as free for reuse
+}
+
+void ResourceManager::unload_unused()
+{
+	for (auto& [type, typeCounts] : _refCounts) {
+		for (auto it = typeCounts.begin(); it != typeCounts.end(); ) {
+			if (it->second.refCount <= 0 && !it->second.isPersistent) {
+				auto resource = _resources[type][it->first];
+				if (_vulkanCore) {
+					// add unused resources to deletion queue
+					_vulkanCore->get_deletion_queue().push_function([res = resource](){
+						res->unload();
+						});
+				}
+				else { 
+					resource->unload(); 
+				}
+
+				_resources[type].erase(it->first);
+				it = typeCounts.erase(it);
+			}
+			else {
+				it++;
+			}
+		}
+	}
+}
+
+void ResourceManager::unload_all()
+{
+	// unload all resources
+	for (auto& [type, typeResources] : _resources) {
+		for (auto& [id, resource] : typeResources) {
+			resource->unload();
+		}
+	}
+	_refCounts.clear();
+	_resources.clear();
 }
 
 void ResourceManager::init_bindless()

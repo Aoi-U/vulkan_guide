@@ -68,16 +68,12 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, globalDescriptor);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 1,  drawCtx.bindlessMaterialSet);
 
-	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
+	if (!drawCtx.opaqueBatches.empty()) {  
+		ctx.bind_index_buffer(drawCtx.opaqueBatches[0].indexBuffer, 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
+	}
 
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
 		ctx.set_cull_mode(batch.isDoubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT);
-
-		// bind index buffer if needed
-		if (batch.indexBuffer != lastIndexBuffer) {
-			lastIndexBuffer = batch.indexBuffer;
-			ctx.bind_index_buffer(batch.indexBuffer);
-		}
 
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand); 

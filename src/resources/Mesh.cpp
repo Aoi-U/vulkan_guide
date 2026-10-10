@@ -18,25 +18,41 @@ Mesh::Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceMan
 bool Mesh::doLoad() {
   if (_cpuVertices.empty() || _cpuIndices.empty()) return false;
 
-  _vertexCount = static_cast<uint32_t>(_cpuVertices.size());
-  _indexCount = static_cast<uint32_t>(_cpuIndices.size());
+  // allocate space in the global geometry pool for this meshs vertices and indices
+	_allocation = _resourceManager->get_geometry_pool().allocate(
+    static_cast<uint32_t>(_cpuVertices.size()), 
+    static_cast<uint32_t>(_cpuIndices.size())
+  );
 
   const size_t vertexBufferSize = _cpuVertices.size() * sizeof(Vertex);
   const size_t indexBufferSize = _cpuIndices.size() * sizeof(uint32_t);
 
-	VkBufferUsageFlags vertexUsage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT;
-  //_vertexBuffer = Buffer(get_id() + "_VB", _core, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(_cpuVertices.data()), vertexBufferSize), vertexUsage, VMA_MEMORY_USAGE_GPU_ONLY);
-  //_vertexBuffer.load();
-	_vertexBuffer = _resourceManager->load<Buffer>(get_id() + "_VB", std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(_cpuVertices.data()), vertexBufferSize), vertexUsage, VMA_MEMORY_USAGE_GPU_ONLY);
+	// create staging buffer to transfer vertex and index data to gpu
+  size_t stagingSize = vertexBufferSize + indexBufferSize;
+  ResourceHandle<Buffer> staging = _resourceManager->load<Buffer>(get_id() + "_stagin", stagingSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
 
-	VkBufferUsageFlags indexUsage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-  //_indexBuffer = Buffer(get_id() + "_IB", _core, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(_cpuIndices.data()), indexBufferSize), indexUsage, VMA_MEMORY_USAGE_GPU_ONLY);
-  //_indexBuffer.load();
-	_indexBuffer = _resourceManager->load<Buffer>(get_id() + "_IB", std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(_cpuIndices.data()), indexBufferSize), indexUsage, VMA_MEMORY_USAGE_GPU_ONLY);
+  // copy vertex and index data into staging 
+  uint8_t* mapped = static_cast<uint8_t*>(staging->get_mapped_data());
+  memcpy(mapped, _cpuVertices.data(), vertexBufferSize);
+  memcpy(mapped + vertexBufferSize, _cpuIndices.data(), indexBufferSize);
 
-  _vertexBufferAddress = _vertexBuffer->get_device_address();
+  // submit command buffer to copy from staging to global buffers
+  _core->immediate_submit([&](VkCommandBuffer cmd) {
+    VkBufferCopy vertCopy{};
+    vertCopy.srcOffset = 0;
+    vertCopy.dstOffset = _allocation.vertexOffset * sizeof(Vertex);
+    vertCopy.size = vertexBufferSize;
+		vkCmdCopyBuffer(cmd, staging->get_buffer(), get_vertex_buffer(), 1, &vertCopy);
 
-  // free CPU memory as it's now on the GPU
+    VkBufferCopy idxCopy{};
+    idxCopy.srcOffset = vertexBufferSize;
+		idxCopy.dstOffset = _allocation.firstIndex * sizeof(uint32_t);
+    idxCopy.size = indexBufferSize;
+    vkCmdCopyBuffer(cmd, staging->get_buffer(), get_index_buffer(), 1, &idxCopy);
+    });
+  // unload staging
+  staging->unload();
+
   _cpuVertices.clear();
   _cpuIndices.clear();
 
@@ -44,9 +60,8 @@ bool Mesh::doLoad() {
 }
 
 bool Mesh::doUnload() {
-  //_vertexBuffer.unload();
-  //_indexBuffer.unload();
-  _vertexBufferAddress = 0;
+	// free mesh data from global geometry pool
+  _resourceManager->get_geometry_pool().free(_allocation);
 
   return true;
 }

@@ -559,22 +559,22 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			matDataMap[materialCount] = constants;
 		}
 
-		RenderObject def;
-		def.indexCount = meshComp.count;
-		def.firstIndex = meshComp.startIndex;
-		def.indexBuffer = meshComp.mesh->get_index_buffer();
-		def.vertexBufferAddress = meshComp.mesh->get_vertex_buffer_address();
-		def.bounds = meshComp.bounds;
-		def.transform = worldMatrix;
-		def.materialIndex = materialCount;
-		def.passType = passType;
-		def.isDoubleSided = isDoubleSided;
+		RenderObject obj;
+		obj.indexCount = meshComp.count;
+		obj.firstIndex = meshComp.startIndex + meshComp.mesh->get_first_index();
+		obj.indexBuffer = meshComp.mesh->get_index_buffer();
+		obj.vertexBufferAddress = meshComp.mesh->get_vertex_buffer_address();
+		obj.bounds = meshComp.bounds;
+		obj.transform = worldMatrix;
+		obj.materialIndex = materialCount;
+		obj.passType = passType;
+		obj.isDoubleSided = isDoubleSided;
 
-		if (def.passType == MaterialPassType::Transparent) {
-			ctx.transparentObjects.push_back(def);
+		if (obj.passType == MaterialPassType::Transparent) {
+			ctx.transparentObjects.push_back(obj);
 		}
 		else {
-			ctx.opaqueObjects.push_back(def);
+			ctx.opaqueObjects.push_back(obj);
 		}
 		materialCount++;
 	}
