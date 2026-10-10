@@ -171,7 +171,7 @@ bool Texture::doLoad()
 	else if (_sourceType == SourceType::Description && (_usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT || _usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
 		// leave undefined; RenderGraph manages runtime transitions
 	}
-	else if (_sourceType == SourceType::Description) {
+	else if (_sourceType == SourceType::Description && !_desc.deferBindlessRegistration) {
 		_core->immediate_submit([&](VkCommandBuffer cmd) {
 			vkutil::transition_image(cmd, _image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
 			});
@@ -216,7 +216,7 @@ bool Texture::doLoad()
 	}
 
 	// register texture in bindless descriptor set
-	if (_sourceType != SourceType::Description || (_usage & VK_IMAGE_USAGE_SAMPLED_BIT)) { // only register if it's a sampled texture
+	if ((_sourceType != SourceType::Description || (_usage & VK_IMAGE_USAGE_SAMPLED_BIT)) && _desc.deferBindlessRegistration) { // only register if it's a sampled texture
 		_bindlessIndex = _resourceManager->allocate_bindless_texture(_imageView, _sampler);
 	}
 

@@ -43,6 +43,8 @@ struct TextureDescription {
 	VkSamplerAddressMode addressModeU{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
 	VkSamplerAddressMode addressModeV{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
 	VkSamplerAddressMode addressModeW{ VK_SAMPLER_ADDRESS_MODE_REPEAT };
+
+	bool deferBindlessRegistration{ false }; 
 };
 
 // buffer data for a single renderable object

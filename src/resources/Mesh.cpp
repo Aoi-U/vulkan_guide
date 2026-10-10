@@ -15,7 +15,17 @@ Mesh::Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceMan
   }
 }
 
+Mesh::Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, GeometryAllocation alloc, std::vector<glm::vec3> pickingPositions, std::vector<uint32_t> pickingIndices)
+  : Resource(id, core, resourceManager), _pickingPositions(std::move(pickingPositions)), _pickingIndices(std::move(pickingIndices))
+{
+  _allocation = alloc;
+  load(); // mark as loaded so it skips doLoad() 
+}
+
 bool Mesh::doLoad() {
+  if (_allocation.vertexBufferAddress != 0)
+    return true;
+
   if (_cpuVertices.empty() || _cpuIndices.empty()) return false;
 
   // allocate space in the global geometry pool for this meshs vertices and indices

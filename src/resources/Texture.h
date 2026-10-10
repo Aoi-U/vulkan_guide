@@ -26,6 +26,8 @@ public:
 
 	void destroy_immediate();
 
+	void set_bindless_index(uint32_t index) { _bindlessIndex = index; }
+
 	VkImage get_image() const { return _image; }
 	VkImageView get_image_view() const { return _imageView; }
 	VkImageView get_face_view(uint32_t faceIndex) const { return (faceIndex < _faceViews.size()) ? _faceViews[faceIndex] : _imageView; }
@@ -33,6 +35,7 @@ public:
 	VkSampler get_sampler() const { return _sampler; }
 	VkExtent3D get_extent() const { return _extent; }
 	VkExtent2D get_extent_2d() const { return { _extent.width, _extent.height }; }
+	uint32_t get_mip_levels() const { return _mipLevels; }
 	VkFormat get_format() const { return _format; }
 	uint32_t get_bindless_index() const { return _bindlessIndex; }
 

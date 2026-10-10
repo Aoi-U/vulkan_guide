@@ -13,6 +13,10 @@ class Mesh : public Resource
 {
 public:
 	explicit Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, std::vector<uint32_t> indices, std::vector<Vertex> vertices, bool keepCpuGeometry = true);
+
+	// construct mesh from pre-allocated geometry in the global geometry pool
+	explicit Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, GeometryAllocation alloc, std::vector<glm::vec3> pickingPositions, std::vector<uint32_t> pickingIndices);
+
 	~Mesh() override { Resource::unload(); }
 
 	VkBuffer get_vertex_buffer() const { return _resourceManager->get_geometry_pool().get_vertex_buffer(); }

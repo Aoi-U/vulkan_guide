@@ -139,6 +139,10 @@ public:
 	uint32_t allocate_bindless_texture(VkImageView view, VkSampler sampler);
 	void free_bindless_slot(uint32_t slot);
 
+	// register multiple textures in a single batch to reduce mutex and descriptor set update overhead
+	// outSlots: vector to store the allocated bindless slots for each texture
+	void register_bindless_texture_batched(const std::vector<std::pair<VkImageView, VkSampler>>& textures, std::vector<uint32_t>& outSlots); 
+
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
 	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }

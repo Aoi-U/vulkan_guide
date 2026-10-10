@@ -48,8 +48,9 @@ GeometryAllocation GlobalGeometryPool::allocate(uint32_t vertexCount, uint32_t i
 	return alloc;
 }
 
+// TODO: implement free() to allow reusing freed space in the global geometry pool
 void GlobalGeometryPool::free(const GeometryAllocation& alloc)
-{}
+{} 
 
 VkBuffer GlobalGeometryPool::get_vertex_buffer() const
 {

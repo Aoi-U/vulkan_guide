@@ -71,6 +71,54 @@ void ResourceManager::free_bindless_slot(uint32_t slot)
 	_freeBindlessSlots.push_back(slot); // mark slot as free for reuse
 }
 
+void ResourceManager::register_bindless_texture_batched(const std::vector<std::pair<VkImageView, VkSampler>>& textures, std::vector<uint32_t>& outSlots)
+{
+	if (textures.empty())
+		return;
+
+	std::lock_guard<std::mutex> lock(_bindlessMutex);
+	outSlots.resize(textures.size());
+
+	std::vector<VkDescriptorImageInfo> imageInfos(textures.size());
+	std::vector<VkWriteDescriptorSet> writes(textures.size());
+
+	for (size_t i = 0; i < textures.size(); i++) {
+		uint32_t slot = 0;
+		if (!_freeBindlessSlots.empty()) { // get a free slot if available
+			slot = _freeBindlessSlots.back();
+			_freeBindlessSlots.pop_back();
+		}
+		else { // create new slot
+			if (_nextBindlessSlot >= MAX_BINDLESS_TEXTURES) {
+				throw std::runtime_error("Exceeded maximum bindless texture slots");
+			}
+			slot = _nextBindlessSlot++;
+		}
+		outSlots[i] = slot;
+
+		imageInfos[i] = VkDescriptorImageInfo{
+			.sampler = textures[i].second,
+			.imageView = textures[i].first,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		};
+
+		writes[i] = VkWriteDescriptorSet{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = _bindlessSet,
+			.dstBinding = 0,
+			.dstArrayElement = slot,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &imageInfos[i]
+		};
+	}
+
+	// batch update descriptor set with new textures
+	if (!writes.empty()) {
+		vkUpdateDescriptorSets(_vulkanCore->get_device(), static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
+	}
+}
+
 void ResourceManager::unload_unused()
 {
 	for (auto& [type, typeCounts] : _refCounts) {
