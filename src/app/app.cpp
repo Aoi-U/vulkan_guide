@@ -45,7 +45,7 @@ void App::init()
 	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
 	AssetRegistry::get().scan_directory("../../assets");
-	auto helmet = _resourceManager->preload<Model>("DamagedHelmet", "../../assets/DamagedHelmet.glb");
+	auto helmet = _resourceManager->preload<Model>("DamagedHelmet", "../../assets/models/DamagedHelmet.glb");
 	
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);

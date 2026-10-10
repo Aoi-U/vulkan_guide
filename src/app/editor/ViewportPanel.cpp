@@ -45,19 +45,23 @@ void ViewportPanel::on_draw(EditorContext& ctx)
   VkDescriptorSet textureID = ctx.renderer.get_scene_color_descriptor();
   if (textureID != VK_NULL_HANDLE && avail.x > 0.0f && avail.y > 0.0f) {
     ImGui::Image(reinterpret_cast<ImTextureID>(textureID), avail, ImVec2(0, 0), ImVec2(1, 1));
-
-    if (ImGui::BeginDragDropTarget()) {
-      if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_ID")) {
-        std::string draggedId = (const char*)payload->Data;
-        auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
-        if (assetRec) {
-          // spawn model at local origin when dropped into viewport
-          ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, draggedId, assetRec->path, glm::vec3(0.0f));
-        }
-      }
-      ImGui::EndDragDropTarget();
-    }
   }
+  else {
+    ImGui::Dummy(avail);
+  }
+
+  if (ImGui::BeginDragDropTarget()) {
+    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_ID")) {
+      std::string draggedId = (const char*)payload->Data;
+      auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
+      if (assetRec) {
+        // spawn model at local origin when dropped into viewport
+        ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, draggedId, assetRec->path, glm::vec3(0.0f));
+      }
+    }
+    ImGui::EndDragDropTarget();
+  }
+  
   ImGui::End();
   ImGui::PopStyleVar();
 }

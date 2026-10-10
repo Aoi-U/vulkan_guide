@@ -11,9 +11,9 @@
 #include <graphics/pass/DeferredLightingPass.h>
 #include <graphics/pass/SSAOPass.h>
 #include <graphics/pass/SSAOBlurPass.h>
-
 #include <graphics/RenderGraph.h>
 #include <graphics/utils/RGParameters.h>
+#include <graphics/utils/RenderTargetPool.h>
 #include <resources/Buffer.h>
 #include <graphics/IBLSystem.h>
 #include <window/window.h>
@@ -88,6 +88,15 @@ struct FrameData
 	ResourceHandle<Buffer> _materialDataBuffer; // buffer for material data for each entity in the scene
 };
 
+struct TargetInfo
+{
+	VkFormat format;
+	VkExtent2D extent;
+	VkImageView view;
+	std::vector<VkImageView> faceViews;
+	bool isCube;
+};
+
 class Renderer
 {
 public:
@@ -112,13 +121,13 @@ public:
 	VkImageView get_current_swapchain_image_view() const { return _swapchain.get_image_views()[_swapchainImageIndex]; }
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-	const std::unordered_map<std::string, ResourceHandle<Texture>>& get_render_targets() const { return _renderTargets; }
+
 	IBLSystem& get_ibl() { return _iblSystem; }
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
-
 	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
-	VkDescriptorSet get_scene_color_descriptor();
-	VkDescriptorSet get_target_descriptor(const std::string& name, uint32_t faceIndex = 0);
+	
+	VkDescriptorSet get_scene_color_descriptor() const { return _sceneColorDescriptor; };
+	const std::unordered_map<std::string, TargetInfo>& get_debug_targets() const { return _debugTargets; }
 	const std::vector<PassStats> get_stats() const;
 
 private:
@@ -147,8 +156,10 @@ private:
 	std::unique_ptr<SSAOPass> _ssaoPass;
 	std::unique_ptr<SSAOBlurPass> _ssaoBlurPass;
 
-	std::unordered_map<std::string, ResourceHandle<Texture>> _renderTargets;	
+	std::unordered_map<std::string, TargetInfo> _debugTargets;	
 	RenderGraph _renderGraph{};
+	RenderTargetPool _renderTargetPool;
+	VkDescriptorSet _sceneColorDescriptor{ VK_NULL_HANDLE };
 
 	IBLSystem _iblSystem;
 
@@ -159,12 +170,7 @@ private:
 	// renderer initialization functions
 	void create_command_buffers();
 	void create_sync_structures();
-	void create_render_targets();
-
 	void update_render_extent();
 	
-	//void blit_to_swapchain(VkCommandBuffer cmd);
-
 	void extract_scene_data(const entt::registry& registry, DrawContext& ctx);
-
 };

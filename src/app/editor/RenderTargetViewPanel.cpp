@@ -4,6 +4,8 @@
 #include <imgui.h>
 #include <vulkan/vk_enum_string_helper.h>
 #include <algorithm>
+#include <resources/DefaultResources.h>
+#include <graphics/GuiRenderer.h>
 
 void RenderTargetViewPanel::on_draw(EditorContext& ctx)
 {
@@ -11,7 +13,7 @@ void RenderTargetViewPanel::on_draw(EditorContext& ctx)
 
   ImGui::Begin(get_name(), &is_open);
 
-  const auto& renderTargets = ctx.renderer.get_render_targets();
+  const auto& renderTargets = ctx.renderer.get_debug_targets();
   std::vector<std::string> targetNames;
   for (const auto& [name, texture] : renderTargets) {
     targetNames.push_back(name);
@@ -43,10 +45,10 @@ void RenderTargetViewPanel::on_draw(EditorContext& ctx)
   }
 
   //const Texture& selectedTex = renderTargets.at(_selectedTarget);
-	const ResourceHandle<Texture> selectedTexHandle = renderTargets.at(_selectedTarget);
-  VkFormat format = selectedTexHandle->get_format();
-  VkExtent2D currentExtent = selectedTexHandle->get_extent_2d();
-  bool isCube = selectedTexHandle->get_face_views().size() > 1;
+	const TargetInfo& selectedTargetInfo = renderTargets.at(_selectedTarget);
+  VkFormat format = selectedTargetInfo.format;
+  VkExtent2D currentExtent = selectedTargetInfo.extent;
+  bool isCube = selectedTargetInfo.isCube;
 
   // metadata Bar
   ImGui::Text("Size: %u x %u | Format: %s", currentExtent.width, currentExtent.height, string_VkFormat(format));
@@ -109,14 +111,18 @@ void RenderTargetViewPanel::on_draw(EditorContext& ctx)
   }
 
   // retrieve descriptor and render
-  VkDescriptorSet descriptor = ctx.renderer.get_target_descriptor(_selectedTarget, isCube ? _selectedCubeFace : 0);
+  VkImageView targetView = isCube ? selectedTargetInfo.faceViews[_selectedCubeFace] : selectedTargetInfo.view;
+  if (targetView == VK_NULL_HANDLE) {
+    ImGui::TextDisabled("Render target view not ready");
+    ImGui::End();
+    return;
+  }
+
+  VkDescriptorSet descriptor = ctx.renderer.get_gui_renderer()->get_image_descriptor(targetView, DefaultResources::get().defaultSamplerLinear->get_sampler());
   if (descriptor != VK_NULL_HANDLE && displaySize.x > 0.0f && displaySize.y > 0.0f) {
     ImGui::BeginChild("##ImageScrollRegion", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_HorizontalScrollbar);
     ImGui::Image(reinterpret_cast<ImTextureID>(descriptor), displaySize, ImVec2(0, 0), ImVec2(1, 1));
     ImGui::EndChild();
-  }
-  else {
-    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Unable to display target descriptor.");
   }
 
   ImGui::End();

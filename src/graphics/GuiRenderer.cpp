@@ -115,7 +115,7 @@ VkDescriptorSet GuiRenderer::get_image_descriptor(VkImageView imageView, VkSampl
 	}
 
 	// cache a new descriptor set for this image view
-	VkDescriptorSet newSet = ImGui_ImplVulkan_AddTexture(imageView, layout);
+	VkDescriptorSet newSet = ImGui_ImplVulkan_AddTexture(sampler, imageView, layout);
 	_imageDescriptorCache[imageView] = newSet;
 	return newSet;
 }

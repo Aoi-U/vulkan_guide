@@ -44,10 +44,12 @@ void PointShadowPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const std::unordered_map<std::string, ResourceHandle<Texture>>& renderTargets, const DrawContext& drawCtx, const GPUSceneData& sceneData, const PointShadowPassParameters& params, const RenderGraph& graph)
+void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const DrawContext& drawCtx, const GPUSceneData& sceneData, const PointShadowPassParameters& params, const RenderGraph& graph)
 {
 	int shadowLightCount = static_cast<int>(sceneData.lightCount.y);
-	VkExtent2D extent = renderTargets.at("PointShadowMap")->get_extent_2d();
+	//VkExtent2D extent = renderTargets.at("PointShadowMap")->get_extent_2d();
+	VkExtent3D extent3d = graph.get_extent(params.pointShadowMap);
+	VkExtent2D extent = { extent3d.width, extent3d.height };
 
 	// begin clock
 	auto start = std::chrono::system_clock::now();
@@ -86,7 +88,8 @@ void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const std
 			RenderDesc desc{};
 			desc.renderExtent = extent;
 			desc.depthAttachment = DepthAttachmentDesc{
-				.view = renderTargets.at("PointShadowMap")->get_face_view(face),
+				//.view = renderTargets.at("PointShadowMap")->get_face_view(face),
+				.view = graph.get_image_view(params.pointShadowMap, face),
 				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 				.clearDepth = 1.0f,

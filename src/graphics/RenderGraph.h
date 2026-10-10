@@ -3,6 +3,7 @@
 #include <graphics/utils/vk_types.h>
 #include <graphics/RenderContext.h>
 #include <graphics/utils/RGParameters.h>
+#include <graphics/utils/RenderTargetPool.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -18,6 +19,8 @@ struct RGTextureDesc
 	VkImageUsageFlags usage{ 0 };
 	uint32_t mipLevels{ 1 };
 	uint32_t arrayLayers{ 1 };
+	VkImageCreateFlags flags{ 0 };
+	VkImageViewType viewType{ VK_IMAGE_VIEW_TYPE_2D };
 	VkSampleCountFlagBits samples{ VK_SAMPLE_COUNT_1_BIT };
 };
 
@@ -33,6 +36,7 @@ struct RGTextureNode
 	RGTextureDesc desc;
 	VkImage image{ VK_NULL_HANDLE };
 	VkImageView imageView{ VK_NULL_HANDLE };
+	std::vector<VkImageView> faceViews;
 	VmaAllocation allocation{ VK_NULL_HANDLE };
 	VkImageLayout initialLayout{ VK_IMAGE_LAYOUT_UNDEFINED };
 	VkImageLayout currentLayout{ VK_IMAGE_LAYOUT_UNDEFINED };
@@ -131,6 +135,7 @@ public:
 	RenderGraph() = default;
 	~RenderGraph() { reset(); }
 
+	void init(RenderTargetPool* pool);
 	void reset();
 
 	RGTextureHandle create_texture(std::string_view name, const RGTextureDesc& desc);
@@ -159,13 +164,15 @@ public:
 		return static_cast<RGPass<T>*>(_passes.back().get())->data;
 	}
 
-	void compile();
+	void compile(uint32_t currentFrame);
 	void execute(RenderContext& ctx);
 	
 	// getters
 	VkImage get_image(RGTextureHandle handle) const;
-	VkImageView get_image_view(RGTextureHandle handle) const;
+	VkImageView get_image_view(RGTextureHandle handle, uint32_t faceIndex = UINT32_MAX) const;
 	VkFormat get_format(RGTextureHandle handle) const;
+	VkExtent3D get_extent(RGTextureHandle handle) const;
+	bool is_cube(RGTextureHandle handle) const;
 	VkBuffer get_buffer(RGBufferHandle handle) const;
 
 	// for side effect passes
@@ -174,8 +181,11 @@ public:
 private:
 	friend class RGPassBuilder;
 
+	RenderTargetPool* _renderTargetPool{ nullptr };
+
 	void cull_passes();
 	void calculate_lifetimes();
+	void allocate_target_resources(uint32_t currentFrame);
 	void dispatch_barriers(RenderContext& ctx, IRGPass* pass);
 
 	std::vector<std::unique_ptr<IRGPass>> _passes;
