@@ -36,19 +36,29 @@ class ResourceManager;
 
 struct IndirectBatch
 {
-	VkBuffer indexBuffer;
 	uint32_t first; // first index in the indirect buffer
 	uint32_t count; // number of indirect commands in this batch
 	uint32_t batchIndex; // index of this batch in the batch array
 	bool isDoubleSided{ false };
 };
 
-struct DrawContext
+struct DrawCommandCache
 {
 	std::vector<RenderObject> opaqueObjects;
 	std::vector<RenderObject> transparentObjects;
+	std::vector<MaterialConstants> materials;
 
+	// indirect draw
 	std::vector<IndirectBatch> opaqueBatches;
+	bool isDirty{ true };
+};
+
+struct DrawContext
+{
+	std::span<const RenderObject> opaqueObjects;
+	std::span<const RenderObject> transparentObjects;
+			 
+	std::span<const IndirectBatch> opaqueBatches;
 
 	// indirect draw 
 	uint32_t indirectDrawCount{ 0 };
@@ -58,9 +68,9 @@ struct DrawContext
 	VkDescriptorSet bindlessMaterialSet{ VK_NULL_HANDLE };
 
 	void clear() {
-		opaqueObjects.clear();
-		transparentObjects.clear();
-		opaqueBatches.clear();
+		opaqueObjects = {};
+		transparentObjects = {};
+		opaqueBatches = {};
 		indirectDrawCount = 0;
 		bindlessMaterialSet = VK_NULL_HANDLE;
 	}
@@ -113,6 +123,7 @@ public:
 	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
 	void recreate_swapchain();
 
+	void mark_scene_dirty() { _drawCache.isDirty = true; }
 	bool load_environment(const std::filesystem::path& path) { return _iblSystem.load_hdr(path); }
 	void remove_environment() { _iblSystem.load_procedural_default(); }
 
@@ -162,6 +173,7 @@ private:
 	VkDescriptorSet _sceneColorDescriptor{ VK_NULL_HANDLE };
 
 	IBLSystem _iblSystem;
+	DrawCommandCache _drawCache;
 
 	// frame rendering functions
 	VkCommandBuffer begin_frame();

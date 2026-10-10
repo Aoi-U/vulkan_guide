@@ -6,6 +6,7 @@
 #include <ImGuizmo.h>
 #include <resources/AssetRegistry.h>
 #include <resources/ModelSpawner.h>
+#include <graphics/Renderer.h>
 
 #include <glm/gtx/matrix_decompose.hpp> 
 #include <glm/gtc/quaternion.hpp>
@@ -48,7 +49,7 @@ static void reparent_entity(entt::registry& registry, entt::entity child, entt::
   if (oldParent == newParent) return;
 
   if (auto* childTc = registry.try_get<TransformComponent>(child)) {
-    glm::mat4 childWorld = compute_world_transform(registry, child);
+    glm::mat4 childWorld = childTc->worldTransform;
     glm::mat4 newParentWorld(1.0f);
     if (newParent != entt::null) {
       newParentWorld = compute_world_transform(registry, newParent);
@@ -156,6 +157,7 @@ void HierarchyPanel::on_draw(EditorContext & ctx)
     entt::entity entity = ctx.registry.create();
     ctx.registry.emplace<TagComponent>(entity, "Entity " + std::to_string(static_cast<uint32_t>(entity)));
     ctx.selectedEntity = entity;
+    ctx.renderer.mark_scene_dirty();
   }
   ImGui::Separator();
 
@@ -200,7 +202,9 @@ void HierarchyPanel::on_draw(EditorContext & ctx)
       }
     }
     destroy_entity_recursive(ctx.registry, entityToDestroy);
-    if (ctx.selectedEntity == entityToDestroy) ctx.selectedEntity = entt::null;
+    if (ctx.selectedEntity == entityToDestroy) 
+      ctx.selectedEntity = entt::null;
+		ctx.renderer.mark_scene_dirty();
   }
 
   if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered() && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {

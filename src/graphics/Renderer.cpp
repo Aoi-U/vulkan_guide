@@ -327,7 +327,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
 				_renderGraph.transition_texture(graphCmd, params.sceneColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				
+
 				RGTextureHandle debugHandles[] = {
 					sceneDepth,
 					shadowMap,
@@ -482,150 +482,150 @@ void Renderer::end_frame()
 
 void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& ctx)
 {
-	auto compute_world_transform = [&](entt::entity entity) -> glm::mat4 {
-		glm::mat4 world(1.0f);
-		entt::entity current = entity;
-		while (current != entt::null) {
-			if (const auto* tc = registry.try_get<TransformComponent>(current)) {
-				world = tc->get_transform() * world;
+	FrameData& currentFrame = get_current_frame();
+
+	if (_drawCache.isDirty) { // update draw cache if something changed
+		_drawCache.opaqueObjects.clear();
+		_drawCache.transparentObjects.clear();
+		_drawCache.opaqueBatches.clear();
+		_drawCache.materials.clear();
+
+		uint32_t materialCount = 0;
+
+		auto view = registry.view<const MeshComponent>();
+		for (auto [entity, meshComp] : view.each()) {
+			if (!meshComp.visible || !meshComp.mesh.is_valid()) {
+				continue;
 			}
-			if (const auto* hc = registry.try_get<HierarchyComponent>(current)) {
-				current = hc->parent;
+
+			const auto& tc = registry.get<TransformComponent>(entity);
+			glm::mat4 worldMatrix = tc.worldTransform;
+
+			auto* matComp = registry.try_get<MaterialComponent>(entity);
+			MaterialPassType passType = MaterialPassType::Opaque;
+			bool isDoubleSided = false;
+
+			MaterialConstants constants{};
+			if (matComp) { // set materials for this entity
+				passType = (matComp->alphaMode == AlphaMode::Blend) ? MaterialPassType::Transparent : MaterialPassType::Opaque;
+				isDoubleSided = matComp->doubleSided;
+				constants.colorFactors = glm::vec4(matComp->albedoColor.r, matComp->albedoColor.g, matComp->albedoColor.b, matComp->albedoColor.a);
+				constants.metalRoughFactors = glm::vec4(matComp->metallic, matComp->roughness, 0.0f, 0.0f);
+				constants.extraFactors = glm::vec4(matComp->occlusionStrength, matComp->normalStrength, matComp->doubleSided ? 1.0f : 0.0f, 0.0f);
+				constants.emissiveFactor = glm::vec4(matComp->emissiveColor.r, matComp->emissiveColor.g, matComp->emissiveColor.b, matComp->emissiveIntensity);
+
+				constants.albedoIndex = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
+				constants.metalRoughIndex = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
+				constants.occlusionIndex = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
+				constants.normalIndex = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_bindless_index() : DefaultResources::get().defaultNormalImage->get_bindless_index();
+				constants.emissiveIndex = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_bindless_index() : DefaultResources::get().blackImage->get_bindless_index();
+
+				matComp->isDirty = false;
+			}
+			else { // no material component for this entity
+				constants.colorFactors = glm::vec4(1.0f);
+				constants.albedoIndex = DefaultResources::get().whiteImage->get_bindless_index();
+				constants.metalRoughIndex = DefaultResources::get().whiteImage->get_bindless_index();
+				constants.normalIndex = DefaultResources::get().defaultNormalImage->get_bindless_index();
+				constants.occlusionIndex = DefaultResources::get().whiteImage->get_bindless_index();
+				constants.emissiveIndex = DefaultResources::get().blackImage->get_bindless_index();
+			}
+			_drawCache.materials.push_back(constants);
+
+			RenderObject obj;
+			obj.entityId = static_cast<uint32_t>(entity);
+			obj.indexCount = meshComp.count;
+			obj.firstIndex = meshComp.startIndex + meshComp.mesh->get_first_index();
+			obj.vertexBufferAddress = meshComp.mesh->get_vertex_buffer_address(); // address into global vertex buffer + offset for this mesh
+			obj.bounds = meshComp.bounds;
+			obj.transform = worldMatrix;
+			obj.materialIndex = materialCount++;
+			obj.passType = passType;
+			obj.isDoubleSided = isDoubleSided;
+
+			if (obj.passType == MaterialPassType::Transparent) {
+				_drawCache.transparentObjects.push_back(obj);
 			}
 			else {
-				current = entt::null;
+				_drawCache.opaqueObjects.push_back(obj);
 			}
 		}
-		return world;
-		};
 
-	FrameData& currentFrame = get_current_frame();
-	size_t capacity = currentFrame._materialDataBuffer->get_size() / sizeof(MaterialConstants); // material data buffer capacity
-	uint32_t materialCount = 0;
-	MaterialConstants* matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer->get_mapped_data()); // pointer to the buffers mapped data
+		if (!_drawCache.opaqueObjects.empty()) {
+			std::sort(_drawCache.opaqueObjects.begin(), _drawCache.opaqueObjects.end(), [](const RenderObject& a, const RenderObject b) {
+				if (a.isDoubleSided != b.isDoubleSided)
+					return a.isDoubleSided < b.isDoubleSided;
 
-	auto view = registry.view<const MeshComponent>();
-	for (auto [entity, meshComp] : view.each()) {
-		if (!meshComp.visible || !meshComp.mesh.is_valid()) {
-			continue;
-		}
-		glm::mat4 worldMatrix = compute_world_transform(entity);
-		auto* matComp = registry.try_get<MaterialComponent>(entity);
+				if (a.firstIndex != b.firstIndex)
+					return a.firstIndex < b.firstIndex;
 
-		MaterialPassType passType = MaterialPassType::Opaque;
-		bool isDoubleSided = false;
+				return a.indexCount < b.indexCount;
+				});
 
-		if (matComp) {
-			passType = (matComp->alphaMode == AlphaMode::Blend) ? MaterialPassType::Transparent : MaterialPassType::Opaque;
-			isDoubleSided = matComp->doubleSided;
-		}
-
-		// expand buffer capacity if needed
-		if (materialCount >= capacity) {
-			currentFrame._materialDataBuffer->resize((capacity + 1000) * sizeof(MaterialConstants), true);
-			capacity = currentFrame._materialDataBuffer->get_size() / sizeof(MaterialConstants);
-			matDataMap = static_cast<MaterialConstants*>(currentFrame._materialDataBuffer->get_mapped_data()); // update the pointer to the buffers mapped data
-		}
-
-		if (matComp) {
-			passType = (matComp->alphaMode == AlphaMode::Blend) ? MaterialPassType::Transparent : MaterialPassType::Opaque;
-			isDoubleSided = matComp->doubleSided;
-
-			MaterialConstants constants{};
-			constants.colorFactors = glm::vec4(matComp->albedoColor.r, matComp->albedoColor.g, matComp->albedoColor.b, matComp->albedoColor.a);
-			constants.metalRoughFactors = glm::vec4(matComp->metallic, matComp->roughness, 0.0f, 0.0f);
-			constants.extraFactors = glm::vec4(matComp->occlusionStrength, matComp->normalStrength, matComp->doubleSided ? 1.0f : 0.0f, 0.0f);
-			constants.emissiveFactor = glm::vec4(matComp->emissiveColor.r, matComp->emissiveColor.g, matComp->emissiveColor.b, matComp->emissiveIntensity);
-
-			constants.albedoIndex = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
-			constants.metalRoughIndex = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
-			constants.occlusionIndex = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
-			constants.normalIndex = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_bindless_index() : DefaultResources::get().defaultNormalImage->get_bindless_index();
-			constants.emissiveIndex = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_bindless_index() : DefaultResources::get().blackImage->get_bindless_index();
-
-			matDataMap[materialCount] = constants;
-			matComp->isDirty = false;
-		}
-		else { // no material component for this entity
-			// write default material constants into the mapped data
-			MaterialConstants constants{};
-			constants.colorFactors = glm::vec4(1.0f);
-			constants.albedoIndex = DefaultResources::get().whiteImage->get_bindless_index();
-			constants.metalRoughIndex = DefaultResources::get().whiteImage->get_bindless_index();
-			constants.normalIndex = DefaultResources::get().defaultNormalImage->get_bindless_index();
-			constants.occlusionIndex = DefaultResources::get().whiteImage->get_bindless_index();
-			constants.emissiveIndex = DefaultResources::get().blackImage->get_bindless_index();
-
-			matDataMap[materialCount] = constants;
-		}
-
-		RenderObject obj;
-		obj.indexCount = meshComp.count;
-		obj.firstIndex = meshComp.startIndex + meshComp.mesh->get_first_index();
-		obj.indexBuffer = meshComp.mesh->get_index_buffer();
-		obj.vertexBufferAddress = meshComp.mesh->get_vertex_buffer_address();
-		obj.bounds = meshComp.bounds;
-		obj.transform = worldMatrix;
-		obj.materialIndex = materialCount;
-		obj.passType = passType;
-		obj.isDoubleSided = isDoubleSided;
-
-		if (obj.passType == MaterialPassType::Transparent) {
-			ctx.transparentObjects.push_back(obj);
-		}
-		else {
-			ctx.opaqueObjects.push_back(obj);
-		}
-		materialCount++;
-	}
-
-	if (ctx.opaqueObjects.empty()) {
-		return;
-	}
-
-	// sort opaque objects 
-	std::sort(ctx.opaqueObjects.begin(), ctx.opaqueObjects.end(), [](const RenderObject& a, const RenderObject& b) {
-		if (a.isDoubleSided != b.isDoubleSided)
-			return a.isDoubleSided < b.isDoubleSided;
-
-		if (a.indexBuffer != b.indexBuffer)
-			return a.indexBuffer < b.indexBuffer;
-
-		if (a.firstIndex != b.firstIndex)
-			return a.firstIndex < b.firstIndex;
-
-		return a.indexCount < b.indexCount;;
-		});
-
-	IndirectBatch currentBatch;
-	currentBatch.first = 0;
-	currentBatch.count = 0;
-	currentBatch.batchIndex = 0;
-	currentBatch.indexBuffer = ctx.opaqueObjects[0].indexBuffer;
-	currentBatch.isDoubleSided = ctx.opaqueObjects[0].isDoubleSided;
-
-	// compact same objects into multidraw batches
-	for (uint32_t i = 0; i < static_cast<uint32_t>(ctx.opaqueObjects.size()); i++) {
-		const RenderObject& obj = ctx.opaqueObjects[i];
-
-		const RenderObject& firstObj = ctx.opaqueObjects[currentBatch.first];
-
-		bool isSameBatch = (obj.indexBuffer == firstObj.indexBuffer) &&
-			(obj.firstIndex == firstObj.firstIndex) &&
-			(obj.indexCount == firstObj.indexCount) &&
-			(obj.isDoubleSided == firstObj.isDoubleSided);
-
-		if (!isSameBatch) {
-			ctx.opaqueBatches.push_back(currentBatch);
-			currentBatch.first = i;
+			IndirectBatch currentBatch;
+			currentBatch.first = 0;
 			currentBatch.count = 0;
-			currentBatch.batchIndex = static_cast<uint32_t>(ctx.opaqueBatches.size());
-			currentBatch.indexBuffer = obj.indexBuffer;
-			currentBatch.isDoubleSided = obj.isDoubleSided;
+			currentBatch.batchIndex = 0;
+			currentBatch.isDoubleSided = _drawCache.opaqueObjects[0].isDoubleSided;
+
+			for (uint32_t i = 0; i < static_cast<uint32_t>(_drawCache.opaqueObjects.size()); i++) {
+				const RenderObject& obj = _drawCache.opaqueObjects[i];
+				const RenderObject& firstObj = _drawCache.opaqueObjects[currentBatch.first];
+
+				bool isSameBatch = (obj.firstIndex == firstObj.firstIndex) &&
+													 (obj.indexCount == firstObj.indexCount) &&
+													 (obj.isDoubleSided == firstObj.isDoubleSided);
+
+				if (!isSameBatch) {
+					_drawCache.opaqueBatches.push_back(currentBatch);
+					currentBatch.first = i;
+					currentBatch.count = 0;
+					currentBatch.batchIndex = static_cast<uint32_t>(_drawCache.opaqueBatches.size());
+					currentBatch.isDoubleSided = obj.isDoubleSided;
+				}
+				currentBatch.count++;
+			}
+			_drawCache.opaqueBatches.push_back(currentBatch);
 		}
-		currentBatch.count++;
+		_drawCache.isDirty = false;
 	}
-	ctx.opaqueBatches.push_back(currentBatch);
+	else 
+	{
+		for (auto& obj : _drawCache.opaqueObjects) {
+			entt::entity e = static_cast<entt::entity>(obj.entityId);
+			if (!registry.valid(e)) 
+				continue;
+
+			const auto& tc = registry.get<TransformComponent>(e);
+			obj.transform = tc.worldTransform;
+
+			auto* matComp = registry.try_get<MaterialComponent>(e);
+			if (matComp && matComp->isDirty) {
+				MaterialConstants& constants = _drawCache.materials[obj.materialIndex];
+				constants.colorFactors = matComp->albedoColor;
+				constants.metalRoughFactors = glm::vec4(matComp->metallic, matComp->roughness, 0.0f, 0.0f);
+				constants.extraFactors = glm::vec4(matComp->occlusionStrength, matComp->normalStrength, matComp->doubleSided ? 1.0f : 0.0f, 0.0f);
+				constants.emissiveFactor = glm::vec4(matComp->emissiveColor, matComp->emissiveIntensity);
+				constants.albedoIndex = matComp->albedoTexture.is_valid() ? matComp->albedoTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
+				constants.normalIndex = matComp->normalTexture.is_valid() ? matComp->normalTexture->get_bindless_index() : DefaultResources::get().defaultNormalImage->get_bindless_index();
+				constants.metalRoughIndex = matComp->metallicRoughnessTexture.is_valid() ? matComp->metallicRoughnessTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
+				constants.occlusionIndex = matComp->occlusionTexture.is_valid() ? matComp->occlusionTexture->get_bindless_index() : DefaultResources::get().whiteImage->get_bindless_index();
+				constants.emissiveIndex = matComp->emissiveTexture.is_valid() ? matComp->emissiveTexture->get_bindless_index() : DefaultResources::get().blackImage->get_bindless_index();
+				matComp->isDirty = false;
+			}
+		}
+	}
+
+	if (!_drawCache.materials.empty()) {
+		size_t matBytes = _drawCache.materials.size() * sizeof(MaterialConstants);
+		currentFrame._materialDataBuffer->resize(matBytes, true);
+		memcpy(currentFrame._materialDataBuffer->get_mapped_data(), _drawCache.materials.data(), matBytes);
+	}
+
+	ctx.opaqueObjects = _drawCache.opaqueObjects;
+	ctx.transparentObjects = _drawCache.transparentObjects; 
+	ctx.opaqueBatches = _drawCache.opaqueBatches;
+	ctx.indirectDrawCount = static_cast<uint32_t>(_drawCache.opaqueObjects.size());
 }
 
 

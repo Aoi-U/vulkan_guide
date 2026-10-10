@@ -12,6 +12,23 @@
 #include <resources/AssetRegistry.h>
 #include <resources/DefaultResources.h>
 
+static void update_transform_hierarchy(entt::registry& registry, entt::entity entity, const glm::mat4& parentMatrix, bool parentDirty) {
+	auto& tc = registry.get<TransformComponent>(entity);
+
+	bool nodeDirty = tc.isDirty || parentDirty;
+	// recalculate world transform  if dirty
+	if (nodeDirty) {
+		tc.worldTransform = parentMatrix * tc.get_transform();
+		tc.isDirty = false;
+	}
+
+	if (auto* hc = registry.try_get<HierarchyComponent>(entity)) {
+		for (auto child : hc->children) {
+			update_transform_hierarchy(registry, child, tc.worldTransform, nodeDirty);
+		}
+	}
+}
+
 App::App()
 {
 	_window = std::make_unique<Window>();
@@ -120,6 +137,14 @@ void App::on_reset_environment(const Events::ResetEnvironmentEvent & event)
 
 void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);
+
+	auto view = _registry.view<TransformComponent>();
+	for (auto entity : view) {
+		auto* hc = _registry.try_get<HierarchyComponent>(entity);
+		if (!hc || hc->parent == entt::null) { 
+			update_transform_hierarchy(_registry, entity, glm::mat4(1.0f), false);
+		}
+	}
 
 	VkExtent2D extent = _renderer->get_viewport_extent();
 	if (extent.width == 0 || extent.height == 0) {

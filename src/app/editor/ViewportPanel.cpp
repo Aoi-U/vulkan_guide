@@ -56,7 +56,8 @@ void ViewportPanel::on_draw(EditorContext& ctx)
       auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
       if (assetRec) {
         // spawn model at local origin when dropped into viewport
-        ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, draggedId, assetRec->path, glm::vec3(0.0f));
+        ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, draggedId, assetRec->path, glm::vec3(0.0f)); 
+        ctx.renderer.mark_scene_dirty();
       }
     }
     ImGui::EndDragDropTarget();

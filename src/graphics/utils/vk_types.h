@@ -129,9 +129,9 @@ struct Bounds
 // a single renderable object in the scene
 struct RenderObject
 {
+	uint32_t entityId;
 	uint32_t indexCount;
 	uint32_t firstIndex;
-	VkBuffer indexBuffer;
 	uint32_t materialIndex; // index into the bindless material buffer for this object
 	MaterialPassType passType;
 	Bounds bounds;

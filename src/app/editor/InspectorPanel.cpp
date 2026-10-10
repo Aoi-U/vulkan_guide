@@ -5,6 +5,7 @@
 #include <core/Components.h>
 #include <resources/Model.h>
 #include <graphics/utils/UIWidgets.h>
+#include <graphics/Renderer.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <array>
 
@@ -89,9 +90,14 @@ void InspectorPanel::register_engine_components()
 
 	// transform component
 	reg.register_component<TransformComponent>("Transform", [this](TransformComponent& tc, EditorContext&) {
-		UIWidgets::DrawVec3Control("Position", tc.position, glm::vec3(0.0f), 0.1f);
-		UIWidgets::DrawVec3Control("Rotation", tc.rotation, glm::vec3(0.0f), 0.5f);
-		UIWidgets::DrawVec3Control("Scale", tc.scale, glm::vec3(1.0f), 0.05f, &_lockScale);
+    bool changed = false; 
+		changed |=UIWidgets::DrawVec3Control("Position", tc.position, glm::vec3(0.0f), 0.1f);
+		changed |=UIWidgets::DrawVec3Control("Rotation", tc.rotation, glm::vec3(0.0f), 0.5f);
+		changed |=UIWidgets::DrawVec3Control("Scale", tc.scale, glm::vec3(1.0f), 0.05f, &_lockScale);
+
+    if (changed) {
+      tc.isDirty = true;
+    }
 		});
 
 	// mesh component
@@ -115,6 +121,7 @@ void InspectorPanel::register_engine_components()
             mc.startIndex = 0;
             mc.count = mc.mesh->get_index_count();
           }
+          ctx.renderer.mark_scene_dirty();
         }
         if (isSelected) ImGui::SetItemDefaultFocus();
       }
@@ -129,6 +136,7 @@ void InspectorPanel::register_engine_components()
           mc.startIndex = 0;
           mc.count = mc.mesh->get_index_count();
         }
+        ctx.renderer.mark_scene_dirty();
       }
       ImGui::EndDragDropTarget();
     }
@@ -143,14 +151,17 @@ void InspectorPanel::register_engine_components()
 
       if (ImGui::DragInt("Start Index", &startIdx, 1, 0, mc.mesh->get_index_count())) {
         mc.startIndex = static_cast<uint32_t>(std::max(0, startIdx));
+        ctx.renderer.mark_scene_dirty();
       }
       if (ImGui::DragInt("Count", &count, 1, 0, mc.mesh->get_index_count() - mc.startIndex)) {
         mc.count = static_cast<uint32_t>(std::max(0, count));
+        ctx.renderer.mark_scene_dirty();
       }
 
       if (ImGui::Button("Reset to Full Mesh")) {
         mc.startIndex = 0;
         mc.count = mc.mesh->get_index_count();
+        ctx.renderer.mark_scene_dirty();
       }
 
       ImGui::Spacing();

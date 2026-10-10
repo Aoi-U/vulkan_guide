@@ -2,11 +2,13 @@
 
 #include <utils/vk_descriptors.h>
 #include <graphics/Renderer.h>
+#include <resources/GlobalGeometryPool.h>
 #include <chrono>
 
 void GBufferPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
+	_resourceManager = resourceManager;
 
 	DescriptorLayoutBuilder builder;
 	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: scene data
@@ -69,7 +71,7 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 1,  drawCtx.bindlessMaterialSet);
 
 	if (!drawCtx.opaqueBatches.empty()) {  
-		ctx.bind_index_buffer(drawCtx.opaqueBatches[0].indexBuffer, 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
+		ctx.bind_index_buffer(_resourceManager->get_geometry_pool().get_index_buffer(), 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
 	}
 
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {

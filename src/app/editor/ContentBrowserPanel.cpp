@@ -3,6 +3,7 @@
 #include <resources/AssetRegistry.h>
 #include <resources/ModelSpawner.h>
 #include <resources/Model.h>
+#include <graphics/Renderer.h>
 #include <core/Components.h>
 #include <imgui.h>
 
@@ -82,6 +83,7 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
             }
             if (ImGui::MenuItem("Spawn Entity")) {
               ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, assetRec->id, assetRec->path);
+              ctx.renderer.mark_scene_dirty();
             }
           }
           ImGui::EndPopup();

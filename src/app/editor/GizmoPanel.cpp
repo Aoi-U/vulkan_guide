@@ -112,7 +112,7 @@ void GizmoPanel::on_draw(EditorContext& ctx)
 				glm::mat4 parentWorld(1.0f);
 				if (auto* hc = ctx.registry.try_get<HierarchyComponent>(ctx.selectedEntity)) {
 					if (hc->parent != entt::null) {
-						parentWorld = compute_world_transform(ctx.registry, hc->parent);
+						parentWorld = ctx.registry.get<TransformComponent>(hc->parent).worldTransform;
 					}
 				}
 				glm::mat4 transformMatrix = parentWorld * tc->get_transform();
@@ -144,6 +144,8 @@ void GizmoPanel::on_draw(EditorContext& ctx)
 						&tc->rotation.x,
 						&tc->scale.x
 					);
+
+					tc->isDirty = true;
 				}
 			}
 		}

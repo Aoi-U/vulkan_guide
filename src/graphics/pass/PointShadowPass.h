@@ -20,7 +20,8 @@ public:
 	void render(RenderContext& ctx, FrameData& frameData, const DrawContext& drawCtx, const GPUSceneData& sceneData, const PointShadowPassParameters& params, const RenderGraph& graph);
 
 private:
-	VulkanCore* _vulkanCore;
+	VulkanCore* _vulkanCore{ nullptr };
+	ResourceManager* _resourceManager{ nullptr };
 	VkDescriptorSetLayout _descriptorLayout;
 	GraphicsPipeline _pipeline;
 };
