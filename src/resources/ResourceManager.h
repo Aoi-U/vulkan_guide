@@ -275,6 +275,13 @@ public:
 			return;
 
 		it->second.refCount--;
+
+		if (it->second.refCount <= 0 && !it->second.isPersistent) {
+			queue_unload(_resources[typeKey][resourceId]);
+
+			_resources[typeKey].erase(resourceId);
+			typeIt->second.erase(it);
+		}
 	}
 
 	template<typename T>
@@ -286,8 +293,6 @@ public:
 			_refCounts[typeKey].erase(resourceId);
 		}
 	}
-
-	void unload_unused();
 
 	void unload_all();
 
@@ -317,6 +322,7 @@ private:
 
 	void init_bindless();
 	void clean_bindless();
+	void queue_unload(std::shared_ptr<Resource> resource);
 };
 
 template<typename T>

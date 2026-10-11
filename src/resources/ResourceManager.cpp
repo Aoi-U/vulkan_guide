@@ -142,32 +142,6 @@ void ResourceManager::process_main_thread_tasks()
 	}
 }
 
-void ResourceManager::unload_unused()
-{
-	for (auto& [type, typeCounts] : _refCounts) {
-		for (auto it = typeCounts.begin(); it != typeCounts.end(); ) {
-			if (it->second.refCount <= 0 && !it->second.isPersistent) {
-				auto resource = _resources[type][it->first];
-				if (_vulkanCore) {
-					// add unused resources to deletion queue
-					_vulkanCore->get_deletion_queue().push_function([res = resource](){
-						res->unload();
-						});
-				}
-				else { 
-					resource->unload(); 
-				}
-
-				_resources[type].erase(it->first);
-				it = typeCounts.erase(it);
-			}
-			else {
-				it++;
-			}
-		}
-	}
-}
-
 void ResourceManager::unload_all()
 {
 	// unload all resources
@@ -249,5 +223,17 @@ void ResourceManager::clean_bindless()
 	if (_bindlessLayout != VK_NULL_HANDLE) {
 		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _bindlessLayout, nullptr);
 		_bindlessLayout = VK_NULL_HANDLE;
+	}
+}
+
+void ResourceManager::queue_unload(std::shared_ptr<Resource> resource)
+{
+	if (_vulkanCore) {
+		_vulkanCore->get_deletion_queue().push_function([res = std::move(resource)]() {
+			res->unload();
+			});
+	}
+	else {
+		resource->unload();
 	}
 }

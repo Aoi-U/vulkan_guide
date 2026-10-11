@@ -138,8 +138,6 @@ void App::update_scene(float deltaTime) {
 
 	_resourceManager->process_main_thread_tasks(); // process any resource loading tasks that need to be done on the main thread
 
-	_resourceManager->unload_unused();
-
 	auto view = _registry.view<TransformComponent>();
 	for (auto entity : view) {
 		auto* hc = _registry.try_get<HierarchyComponent>(entity);
