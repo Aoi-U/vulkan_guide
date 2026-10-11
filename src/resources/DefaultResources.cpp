@@ -18,10 +18,10 @@ void DefaultResources::init(ResourceManager* manager)
 		.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
 	};
 
-  whiteImage = _manager->preload<Texture>("default_white", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&white), sizeof(uint32_t)));
-  greyImage = _manager->preload<Texture>("default_grey", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&grey), sizeof(uint32_t)));
-  blackImage = _manager->preload<Texture>("default_black", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&black), sizeof(uint32_t)));
-  defaultNormalImage = _manager->preload<Texture>("default_normal", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&normal), sizeof(uint32_t)));
+  whiteImage = _manager->load<Texture>("default_white", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&white), sizeof(uint32_t)));
+  greyImage = _manager->load<Texture>("default_grey", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&grey), sizeof(uint32_t)));
+  blackImage = _manager->load<Texture>("default_black", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&black), sizeof(uint32_t)));
+  defaultNormalImage = _manager->load<Texture>("default_normal", desc1, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(&normal), sizeof(uint32_t)));
 
   // checkerboard
   uint32_t magenta = glm::packUnorm4x8(glm::vec4(1, 0, 1, 1));
@@ -39,17 +39,17 @@ void DefaultResources::init(ResourceManager* manager)
       .magFilter = VK_FILTER_NEAREST,
       .minFilter = VK_FILTER_NEAREST
   };
-  errorCheckerboardImage = _manager->preload<Texture>("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
+  errorCheckerboardImage = _manager->load<Texture>("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
 
   // samplers
   VkSamplerCreateInfo nearestInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_NEAREST, .minFilter = VK_FILTER_NEAREST };
-  defaultSamplerNearest = _manager->preload<Sampler>("sampler_nearest", nearestInfo);
+  defaultSamplerNearest = _manager->load<Sampler>("sampler_nearest", nearestInfo);
 
   VkSamplerCreateInfo linearInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR };
-  defaultSamplerLinear = _manager->preload<Sampler>("sampler_linear", linearInfo);
+  defaultSamplerLinear = _manager->load<Sampler>("sampler_linear", linearInfo);
 
   VkSamplerCreateInfo shadowInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR, .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE };
-  shadowSampler = _manager->preload<Sampler>("sampler_shadow", shadowInfo);
+  shadowSampler = _manager->load<Sampler>("sampler_shadow", shadowInfo);
 }
 
 void DefaultResources::cleanup()

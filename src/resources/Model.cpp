@@ -61,7 +61,7 @@ bool Model::doLoad()
 {
 	_aborted.store(false, std::memory_order_release);
 	_isReady.store(false, std::memory_order_release);
-		
+
 	// start worker thread to load model data asynchronously
 	_workerFuture = std::async(std::launch::async, [this]() {
 		auto token = std::make_shared<ModelStagingToken>(); // holds intermediate data during loading
@@ -75,16 +75,16 @@ bool Model::doLoad()
 					if (!this->_aborted.load(std::memory_order_acquire)) {
 						this->finalize_upload(std::move(t));
 					}
-				});
-				return; 
+					});
+				return;
 			}
 			fmt::println("Model: failed to extract textures from model '{}'", _filePath.string());
 		}
 		fmt::println("Model: failed to parse glTF file '{}'", _filePath.string());
 		this->_aborted.store(true, std::memory_order_release); // mark as aborted if any step fails
-		this->_isReady.store(true, std::memory_order_release); 
-	});
-		
+		this->_isReady.store(true, std::memory_order_release);
+		});
+
 	return true;
 }
 
@@ -258,7 +258,7 @@ void Model::extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadCont
 					uploadContext.meshPickingIndices[i].push_back(static_cast<uint32_t>(initialVertex) + v); // keep local index for picking
 				}
 			}
-			
+
 			// load vertices
 			auto posIt = prim.findAttribute("POSITION");
 			if (posIt != prim.attributes.end()) {
@@ -386,33 +386,68 @@ void Model::upload_gpu_resources(const fastgltf::Asset& gltf, std::vector<RawIma
 	if (uploadContext.vertices.empty() || uploadContext.indices.empty()) // nothing to upload
 		return;
 
-	uploadContext.geomAlloc = _resourceManager->get_geometry_pool().allocate(
-		static_cast<uint32_t>(uploadContext.vertices.size()),
-		static_cast<uint32_t>(uploadContext.indices.size())
-	);
-
-	size_t vertSize = uploadContext.vertices.size() * sizeof(Vertex);
-	size_t indSize = uploadContext.indices.size() * sizeof(uint32_t);
-	size_t totalStagingSize = vertSize + indSize; // total size required for vertices + indices
-
-	for (const auto& rawImage : rawImages) { // add size of all textures to staging size
-		if (rawImage.pixels)
-			totalStagingSize += rawImage.width * rawImage.height * 4;
+	bool meshesAlreadyLoaded = !uploadContext.meshSubmeshes.empty();
+	for (size_t i = 0; i < uploadContext.meshSubmeshes.size(); ++i) {
+		std::string meshName = get_id() + "_mesh_" + std::to_string(i);
+		if (!_resourceManager->has_resource<Mesh>(meshName)) {
+			meshesAlreadyLoaded = false;
+			break;
+		}
 	}
+
+	// identify which textures need uploading
+	_textures.resize(gltf.images.size());
+	std::vector<bool> textureNeedsUpload(rawImages.size(), false);
+	size_t totalTextureStagingSize = 0;
+
+	for (size_t i = 0; i < rawImages.size(); ++i) {
+		if (!rawImages[i].pixels) continue;
+
+		std::string texName = get_id() + "_tex_" + std::to_string(i);
+		if (_resourceManager->has_resource<Texture>(texName)) { // texture exists, reuse handle and release raw CPU memory 
+			_textures[i] = _resourceManager->get_handle<Texture>(texName);
+			stbi_image_free(rawImages[i].pixels);
+			rawImages[i].pixels = nullptr;
+		}
+		else {
+			textureNeedsUpload[i] = true;
+			totalTextureStagingSize += rawImages[i].width * rawImages[i].height * 4;
+		}
+	}
+
+	// if both geometry and textures already exist, skip all GPU allocations
+	if (meshesAlreadyLoaded && totalTextureStagingSize == 0) {
+		return;
+	}
+
+	size_t vertSize = meshesAlreadyLoaded ? 0 : uploadContext.vertices.size() * sizeof(Vertex);
+	size_t indSize = meshesAlreadyLoaded ? 0 : uploadContext.indices.size() * sizeof(uint32_t);
+
+	if (!meshesAlreadyLoaded) {
+		uploadContext.geomAlloc = _resourceManager->get_geometry_pool().allocate(
+			static_cast<uint32_t>(uploadContext.vertices.size()),
+			static_cast<uint32_t>(uploadContext.indices.size())
+		);
+	}
+
+	size_t totalStagingSize = vertSize + indSize + totalTextureStagingSize;
+	if (totalStagingSize == 0)
+		return;
 
 	ResourceHandle<Buffer> staging = _resourceManager->load<Buffer>(get_id() + "_batch_staging", totalStagingSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
 	uint8_t* mapped = static_cast<uint8_t*>(staging->get_mapped_data());
+	size_t offset = 0;
 
-	memcpy(mapped, uploadContext.vertices.data(), vertSize); // copy all vertex data to staging
-	size_t offset = vertSize;
-	memcpy(mapped + offset, uploadContext.indices.data(), indSize); // copy all index data to staging
-	offset += indSize;
+	if (!meshesAlreadyLoaded) {
+		memcpy(mapped, uploadContext.vertices.data(), vertSize); // copy all vertex data to staging
+		offset += vertSize;
+		memcpy(mapped + offset, uploadContext.indices.data(), indSize); // copy all index data to staging
+		offset += indSize;
+	}
 
-	_textures.resize(gltf.images.size());
 	std::vector<size_t> imgOffsets(rawImages.size());
-
 	for (size_t i = 0; i < rawImages.size(); i++) {
-		if (!rawImages[i].pixels)
+		if (!textureNeedsUpload[i] || !rawImages[i].pixels)
 			continue;
 
 		size_t imgSize = rawImages[i].width * rawImages[i].height * 4;
@@ -482,25 +517,35 @@ void Model::upload_gpu_resources(const fastgltf::Asset& gltf, std::vector<RawIma
 	std::vector<std::pair<VkImageView, VkSampler>> batchTexData;
 	std::vector<size_t> validIndices;
 	for (size_t i = 0; i < _textures.size(); i++) {
-		if (_textures[i].is_valid()) {
+		if (textureNeedsUpload[i] && _textures[i].is_valid()) {
 			batchTexData.push_back({ _textures[i]->get_image_view(), _textures[i]->get_sampler() });
 			validIndices.push_back(i);
 		}
 	}
 
-	std::vector<uint32_t> outSlots;
-	_resourceManager->register_bindless_texture_batched(batchTexData, outSlots);
-	for (size_t i = 0; i < validIndices.size(); i++) {
-		_textures[validIndices[i]]->set_bindless_index(outSlots[i]);
+	if (!batchTexData.empty()) {
+		std::vector<uint32_t> outSlots;
+		_resourceManager->register_bindless_texture_batched(batchTexData, outSlots);
+		for (size_t i = 0; i < validIndices.size(); ++i) {
+			_textures[validIndices[i]]->set_bindless_index(outSlots[i]);
+		}
 	}
+
+	staging->unload();
 }
 
 void Model::create_materials(const fastgltf::Asset& gltf, const ModelStagingUploadContext& uploadContext)
 {
 	_materials.resize(gltf.materials.size());
 	for (size_t i = 0; i < gltf.materials.size(); i++) {
-		const fastgltf::Material& mat = gltf.materials[i];
 		std::string matName = get_id() + "_mat_" + std::to_string(i);
+
+		if (_resourceManager->has_resource<Material>(matName)) { // material already exists, reuse handle
+			_materials[i] = _resourceManager->get_handle<Material>(matName);
+			continue;
+		}
+
+		const fastgltf::Material& mat = gltf.materials[i];
 		MaterialPassType passType = mat.alphaMode == fastgltf::AlphaMode::Blend ? MaterialPassType::Transparent : MaterialPassType::Opaque;
 		_materials[i] = _resourceManager->load<Material>(matName, passType);
 
@@ -523,7 +568,7 @@ void Model::create_materials(const fastgltf::Asset& gltf, const ModelStagingUplo
 			size_t imgIdx = gltf.textures[mat.pbrData.baseColorTexture->textureIndex].imageIndex.value();
 			_materials[i]->set_texture(Material::TextureSlot::BaseColor, _textures[imgIdx]);
 		}
-		
+
 		// metallic roughness texture
 		if (mat.pbrData.metallicRoughnessTexture.has_value()) {
 			size_t imgIdx = gltf.textures[mat.pbrData.metallicRoughnessTexture->textureIndex].imageIndex.value();
@@ -552,14 +597,30 @@ void Model::create_materials(const fastgltf::Asset& gltf, const ModelStagingUplo
 
 void Model::create_meshes(const fastgltf::Asset& gltf, const ModelStagingUploadContext& uploadContext)
 {
-	auto defaultMat = _resourceManager->load<Material>(get_id() + "_defaultMat", MaterialPassType::Opaque);
+	ResourceHandle<Material> defaultMat;
+	std::string defaultMatName = get_id() + "_defaultMat";
+	if (_resourceManager->has_resource<Material>(defaultMatName)) {
+		defaultMat = _resourceManager->get_handle<Material>(defaultMatName);
+	}
+	else {
+		defaultMat = _resourceManager->load<Material>(defaultMatName, MaterialPassType::Opaque);
+	}
 
 	// create logical Handles mapping the suballocations
 	for (size_t i = 0; i < uploadContext.meshSubmeshes.size(); i++) {
 		std::string meshName = get_id() + "_mesh_" + std::to_string(i);
+		ResourceHandle<Mesh> batchedMesh;
 
-		GeometryAllocation meshAlloc = uploadContext.geomAlloc;
-		auto batchedMesh = _resourceManager->load<Mesh>(meshName, uploadContext.geomAlloc, uploadContext.meshPickingPositions[i], uploadContext.meshPickingIndices[i]);
+		if (_resourceManager->has_resource<Mesh>(meshName)) {
+			batchedMesh = _resourceManager->get_handle<Mesh>(meshName);
+		}
+		else {
+			batchedMesh = _resourceManager->load<Mesh>(
+				meshName, uploadContext.geomAlloc,
+				uploadContext.meshPickingPositions[i],
+				uploadContext.meshPickingIndices[i]
+			);
+		}
 
 		// copy out and restore real values from the extract pass
 		auto& smList = const_cast<std::vector<ModelSubMesh>&>(uploadContext.meshSubmeshes[i]);
@@ -595,7 +656,7 @@ void Model::build_scene_hierarchy(const fastgltf::Asset& gltf, const ModelStagin
 				glm::vec3 sc(transform.scale[0], transform.scale[1], transform.scale[2]);
 				modelNode->localTransform = glm::translate(glm::mat4(1.0f), tl) * glm::toMat4(rot) * glm::scale(glm::mat4(1.0f), sc);
 			}
-		}, node.transform);
+			}, node.transform);
 
 		if (node.meshIndex.has_value()) {
 			modelNode->submeshes = uploadContext.meshSubmeshes[node.meshIndex.value()];

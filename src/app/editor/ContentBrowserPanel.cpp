@@ -57,10 +57,9 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
         bool isLoaded = false, isPersistent = false;
         if (assetRec->type == AssetType::Model) {
           isLoaded = ctx.resourceManager.has_resource<Model>(assetRec->id);
-          isPersistent = ctx.resourceManager.is_persistent<Model>(assetRec->id);
         }
 
-        ImVec4 btnColor = isPersistent ? ImVec4(0.2f, 0.6f, 0.2f, 1.0f) : (isLoaded ? ImVec4(0.2f, 0.4f, 0.8f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+        ImVec4 btnColor = isLoaded ? ImVec4(0.2f, 0.4f, 0.8f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f);
         ImGui::PushStyleColor(ImGuiCol_Button, btnColor);
         ImGui::Button(assetRec->id.c_str(), { thumbnailSize, thumbnailSize });
         ImGui::PopStyleColor();
@@ -71,16 +70,15 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
           ImGui::Text("Spawning %s", assetRec->id.c_str());
           ImGui::EndDragDropSource();
         }
+        else if (assetRec->type == AssetType::Texture && ImGui::BeginDragDropSource()) {
+          ImGui::SetDragDropPayload("ASSET_TEXTURE_ID", assetRec->id.c_str(), assetRec->id.size() + 1);
+          ImGui::Text("Texture: %s", assetRec->id.c_str());
+          ImGui::EndDragDropSource();
+        }
 
         // context menu
         if (ImGui::BeginPopupContextItem()) {
           if (assetRec->type == AssetType::Model) {
-            if (ImGui::MenuItem("Preload to Memory")) {
-              ctx.resourceManager.preload<Model>(assetRec->id, assetRec->path);
-            }
-            if (ImGui::MenuItem("Unload from Memory")) {
-              ctx.resourceManager.force_unload<Model>(assetRec->id);
-            }
             if (ImGui::MenuItem("Spawn Entity")) {
               ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, assetRec->id, assetRec->path);
               ctx.renderer.mark_scene_dirty();
@@ -90,9 +88,7 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
         }
 
         ImGui::TextWrapped("%s", filenameString.c_str());
-        if (isPersistent) 
-          ImGui::TextColored({ 0.4f, 1.0f, 0.4f, 1.0f }, "[Preloaded]");
-        else if (isLoaded) 
+        if (isLoaded) 
           ImGui::TextColored({ 0.4f, 0.8f, 1.0f, 1.0f }, "[Loaded]");
         else 
           ImGui::TextColored({ 0.6f, 0.6f, 0.6f, 1.0f }, "[On Disk]");

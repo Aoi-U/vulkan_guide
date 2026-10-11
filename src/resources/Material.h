@@ -28,8 +28,8 @@ public:
 	ResourceHandle<Texture> get_texture(TextureSlot slot) const;
 	
 protected:
-	bool doLoad() override { return true; } // nothing to load, just a container for textures and constats
-	bool doUnload() override { return true; } // textures unloaded automatically when their handles go out of scope
+	bool doLoad() override;
+	bool doUnload() override;
 
 private:
 	ResourceHandle<Texture> _baseColorTexture;

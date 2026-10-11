@@ -131,7 +131,6 @@ public:
 	{
 		std::shared_ptr<Resource> resource; // the actual resource
 		int refCount; // reference count for this resource
-		bool isPersistent{ false }; // marks asset for persistent preloading
 	};
 	
 	void init(VulkanCore* core);
@@ -151,13 +150,6 @@ public:
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
 	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }
-
-	template<typename T, typename... Args>
-	ResourceHandle<T> preload(const std::string& resourceId, Args&&... args) {
-		auto handle = load<T>(resourceId, std::forward<Args>(args)...);
-		set_persistent<T>(resourceId, true);
-		return handle;
-	}
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> load(const std::string& resourceId, Args&&... args)
@@ -189,23 +181,6 @@ public:
 	}
 
 	template<typename T>
-	void set_persistent(const std::string& resourceId, bool persistent) {
-		auto typeKey = std::type_index(typeid(T));
-		if (_refCounts.contains(typeKey) && _refCounts[typeKey].contains(resourceId)) {
-			_refCounts[typeKey][resourceId].isPersistent = persistent;
-		}
-	}
-
-	template<typename T>
-	bool is_persistent(const std::string& resourceId) const {
-		auto typeKey = std::type_index(typeid(T));
-		if (_refCounts.contains(typeKey) && _refCounts.at(typeKey).contains(resourceId)) {
-			return _refCounts.at(typeKey).at(resourceId).isPersistent;
-		}
-		return false;
-	}
-
-	template<typename T>
 	T* get_resource(const std::string& resourceId)
 	{
 		// access type specific resource container 
@@ -219,6 +194,17 @@ public:
 
 		// resource not found, return null
 		return nullptr;
+	}
+
+	template<typename T>
+	ResourceHandle<T> get_handle(const std::string& resourceId) 
+	{
+		static_assert(std::is_base_of<Resource, T>::value, "T must derive from resource");
+		if (has_resource<T>(resourceId)) {
+			return ResourceHandle<T>(resourceId, this);
+		}
+
+		return ResourceHandle<T>();
 	}
 
 	template<typename T>
@@ -276,7 +262,7 @@ public:
 
 		it->second.refCount--;
 
-		if (it->second.refCount <= 0 && !it->second.isPersistent) {
+		if (it->second.refCount <= 0) {
 			queue_unload(_resources[typeKey][resourceId]);
 
 			_resources[typeKey].erase(resourceId);

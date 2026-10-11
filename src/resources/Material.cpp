@@ -52,3 +52,18 @@ ResourceHandle<Texture> Material::get_texture(TextureSlot slot) const
 		return {};
 	}
 }
+
+bool Material::doLoad()
+{
+	return true;
+}
+
+bool Material::doUnload()
+{
+	_baseColorTexture = {};
+	_metalRoughTexture = {};
+	_occlusionTexture = {};
+	_normalTexture = {};
+	_emissiveTexture = {};
+	return true;
+}

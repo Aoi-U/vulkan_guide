@@ -96,8 +96,7 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 					mat.alphaCutoff = constants.extraFactors.w;
 					mat.emissiveColor = glm::vec3(constants.emissiveFactor);
 					mat.emissiveIntensity = constants.emissiveFactor.w;
-					mat.alphaMode = (sm.material->get_pass_type() == MaterialPassType::Transparent)
-						? AlphaMode::Blend : AlphaMode::Opaque;
+					mat.alphaMode = (sm.material->get_pass_type() == MaterialPassType::Transparent) ? AlphaMode::Blend : AlphaMode::Opaque;
 					mat.albedoTexture = sm.material->get_texture(Material::TextureSlot::BaseColor);
 					mat.metallicRoughnessTexture = sm.material->get_texture(Material::TextureSlot::MetallicRoughness);
 					mat.normalTexture = sm.material->get_texture(Material::TextureSlot::Normal);
@@ -142,7 +141,7 @@ entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceMana
 			if (auto* tag = registry.try_get<TagComponent>(rootNodeEntity)) {
 				tag->tag = modelId;
 			}
-
+			
 			if (firstRootEntity == entt::null) {
 				firstRootEntity = rootNodeEntity;
 			}

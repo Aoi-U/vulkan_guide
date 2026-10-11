@@ -49,6 +49,19 @@ struct MeshComponent
 	uint32_t startIndex{ 0 };
 	uint32_t count{ 0 };
 	bool visible{ true };
+
+	void set_mesh(ResourceHandle<Mesh> newMesh)
+	{
+		mesh = std::move(newMesh);
+		startIndex = 0;
+		if (mesh.is_valid()) {
+			count = mesh->get_index_count();
+		}
+		else {
+			count = 0;
+			bounds = {};
+		}
+	}
 };
 
 enum class AlphaMode : uint8_t
@@ -91,6 +104,29 @@ struct MaterialComponent {
 
 	// flag to mark GPU descriptor/uniform buffer as dirty when parameters change
 	mutable bool isDirty{ true };
+
+	void set_texture(Material::TextureSlot slot, ResourceHandle<Texture> newTexture) {
+		baseMaterial = {};
+
+		switch (slot) {
+		case Material::TextureSlot::BaseColor:
+			albedoTexture = std::move(newTexture);
+			break;
+		case Material::TextureSlot::MetallicRoughness:
+			metallicRoughnessTexture = std::move(newTexture);
+			break;
+		case Material::TextureSlot::Normal:
+			normalTexture = std::move(newTexture);
+			break;
+		case Material::TextureSlot::Emissive:
+			emissiveTexture = std::move(newTexture);
+			break;
+		case Material::TextureSlot::Occlusion:
+			occlusionTexture = std::move(newTexture);
+			break;
+		}
+		isDirty = true;
+	}
 };
 
 struct PointLightComponent
