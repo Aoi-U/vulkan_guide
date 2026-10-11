@@ -61,9 +61,7 @@ void App::init()
 	dispatcher.sink<Events::LoadEnvironmentEvent>().connect<&App::on_load_environment>(this);
 	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
-	AssetRegistry::get().scan_directory("../../assets");
-	auto helmet = _resourceManager->preload<Model>("DamagedHelmet", "../../assets/models/DamagedHelmet.glb");
-	
+	AssetRegistry::get().scan_directory("../../assets");	
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;
@@ -139,6 +137,8 @@ void App::update_scene(float deltaTime) {
 	_camera.update(deltaTime);
 
 	_resourceManager->process_main_thread_tasks(); // process any resource loading tasks that need to be done on the main thread
+
+	_resourceManager->unload_unused();
 
 	auto view = _registry.view<TransformComponent>();
 	for (auto entity : view) {

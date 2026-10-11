@@ -17,7 +17,9 @@ public:
 	// construct mesh from pre-allocated geometry in the global geometry pool
 	explicit Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, GeometryAllocation alloc, std::vector<glm::vec3> pickingPositions, std::vector<uint32_t> pickingIndices);
 
-	~Mesh() override { Resource::unload(); }
+	~Mesh() override { 
+		fmt::println("Mesh: unloading mesh {}", get_id());
+		Resource::unload(); }
 
 	VkBuffer get_vertex_buffer() const { return _resourceManager->get_geometry_pool().get_vertex_buffer(); }
 	VkBuffer get_index_buffer() const { return _resourceManager->get_geometry_pool().get_index_buffer(); }

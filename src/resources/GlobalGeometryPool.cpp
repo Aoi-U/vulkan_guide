@@ -23,34 +23,61 @@ void GlobalGeometryPool::init(VulkanCore* core, ResourceManager* rm)
 	);
 
 	_vertexBufferAddress = _globalVertexBuffer->get_device_address();
+
+	std::lock_guard<std::mutex> lock(_poolMutex);
+	_vertexAllocator.init(static_cast<uint32_t>(maxVertices)); // initialize vertex allocator with max vertices
+	_indexAllocator.init(static_cast<uint32_t>(maxIndices)); // initialize index allocator with max indices
 }
 
 void GlobalGeometryPool::cleanup()
 {
+	std::lock_guard<std::mutex> lock(_poolMutex);
+	_vertexAllocator.cleanup();
+	_indexAllocator.cleanup();
+
 	_globalVertexBuffer = {};
 	_globalIndexBuffer = {};
-	_nextVertexOffset = 0;
-	_nextIndexOffset = 0;
+	_vertexBufferAddress = 0;
 }
 
 GeometryAllocation GlobalGeometryPool::allocate(uint32_t vertexCount, uint32_t indexCount)
 {
+	std::lock_guard<std::mutex> lock(_poolMutex);
+
+	uint32_t vOffset = _vertexAllocator.allocate(vertexCount); // get a slot for the requested number of vertices
+	if (vOffset == UINT32_MAX) {
+		fmt::println("GlobalGeometryPool: out of vertex memory. requested {} vertices", vertexCount);
+		return GeometryAllocation{};
+	}
+
+	uint32_t iOffset = _indexAllocator.allocate(indexCount);
+	if (iOffset == UINT32_MAX) {
+		fmt::println("GlobalGeometryPool: out of index memory. requested {} indices", indexCount);
+		_vertexAllocator.free(vOffset, vertexCount); // free previously allocated vertex space
+		return GeometryAllocation{};
+	}
+
 	GeometryAllocation alloc{};
 	alloc.vertexCount = vertexCount;
 	alloc.indexCount = indexCount;
-	alloc.vertexOffset = _nextVertexOffset;
-	alloc.firstIndex = _nextIndexOffset;
-	alloc.vertexBufferAddress = _vertexBufferAddress + (_nextVertexOffset * sizeof(Vertex));
-
-	_nextVertexOffset += vertexCount;
-	_nextIndexOffset += indexCount;
+	alloc.vertexOffset = vOffset;
+	alloc.firstIndex = iOffset;
+	alloc.vertexBufferAddress = _vertexBufferAddress + (vOffset * sizeof(Vertex));
 
 	return alloc;
 }
 
-// TODO: implement free() to allow reusing freed space in the global geometry pool
 void GlobalGeometryPool::free(const GeometryAllocation& alloc)
-{} 
+{
+	if (alloc.vertexCount == 0 && alloc.indexCount == 0) 
+		return;// nothing to free
+
+	std::lock_guard<std::mutex> lock(_poolMutex);
+
+	// free allocated vertex and index ranges back to allocators
+	_vertexAllocator.free(alloc.vertexOffset, alloc.vertexCount);
+	_indexAllocator.free(alloc.firstIndex, alloc.indexCount);
+} 
 
 VkBuffer GlobalGeometryPool::get_vertex_buffer() const
 {

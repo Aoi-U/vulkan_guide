@@ -72,6 +72,7 @@ bool Mesh::doLoad() {
 bool Mesh::doUnload() {
 	// free mesh data from global geometry pool
   _resourceManager->get_geometry_pool().free(_allocation);
+  _allocation = {};
 
   return true;
 }
