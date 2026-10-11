@@ -119,6 +119,29 @@ void ResourceManager::register_bindless_texture_batched(const std::vector<std::p
 	}
 }
 
+void ResourceManager::queue_main_thread_task(std::function<void()> task)
+{
+	std::lock_guard<std::mutex> lock(_taskMutex);
+	_mainThreadTasks.push_back(std::move(task));
+}
+
+void ResourceManager::process_main_thread_tasks()
+{
+	std::deque<std::function<void()>> tasksToRun;
+	{
+		std::lock_guard<std::mutex> lock(_taskMutex);
+		tasksToRun.swap(_mainThreadTasks); // swap to avoid holding the lock while executing tasks
+	}
+
+	while (!tasksToRun.empty()) { // process all queued tasks
+		auto task = std::move(tasksToRun.front());
+		tasksToRun.pop_front();
+		if (task) {
+			task();
+		}
+	}
+}
+
 void ResourceManager::unload_unused()
 {
 	for (auto& [type, typeCounts] : _refCounts) {

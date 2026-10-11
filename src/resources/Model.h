@@ -4,15 +4,15 @@
 #include <resources/ResourceManager.h>
 #include <resources/Mesh.h>
 #include <resources/Material.h>
+#include <fastgltf/parser.hpp>
 #include <filesystem>
 #include <vector>
 #include <memory>
 #include <string>
+#include <atomic>
+#include <future>
+#include <thread>
 
-namespace fastgltf {
-	class Asset;
-	struct Sampler;
-}
 
 struct ModelSubMesh
 {
@@ -33,6 +33,9 @@ class Model : public Resource
 public:
 	Model(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, const std::filesystem::path& path);
 	~Model() override { Resource::unload(); }
+
+	void wait_until_ready() const;
+	bool is_ready() const { return _isReady.load(std::memory_order_acquire); }
 
 	std::vector<std::shared_ptr<ModelNode>> rootNodes;
 	std::vector<std::shared_ptr<Node>> allNodes;
@@ -65,9 +68,18 @@ private:
 		std::vector<std::vector<uint32_t>> meshPickingIndices;
 	};
 
+	struct ModelStagingToken // synchronization token for async model loading
+	{
+		fastgltf::Asset gltf;
+		std::vector<RawImageData> rawImages;
+		ModelStagingUploadContext uploadContext;
+	};
+
 	bool parse_gltf_file(fastgltf::Asset& gltf);
 	bool extract_textures(const fastgltf::Asset& gltf, std::vector<RawImageData>& rawImages);
 	void extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadContext& uploadContext);
+	void finalize_upload(std::shared_ptr<ModelStagingToken> token);
+
 	void upload_gpu_resources(const fastgltf::Asset& gltf, std::vector<RawImageData>& rawImages, ModelStagingUploadContext& uploadContext);
 	void create_materials(const fastgltf::Asset& gltf, const ModelStagingUploadContext& uploadContext);
 	void create_meshes(const fastgltf::Asset& gltf, const ModelStagingUploadContext& uploadContext);
@@ -78,4 +90,7 @@ private:
 	std::vector<ResourceHandle<Texture>> _textures;
 	std::vector<ResourceHandle<Material>> _materials;
 
+	std::atomic<bool> _isReady{ false }; // whether model loading is finished
+	std::atomic<bool> _aborted{ false }; // whether model loading was aborted due to an error
+	std::future<void> _workerFuture; // future for the worker thread that loads the model
 };

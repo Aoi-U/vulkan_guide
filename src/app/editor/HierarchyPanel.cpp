@@ -180,6 +180,7 @@ void HierarchyPanel::on_draw(EditorContext & ctx)
       auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
       if (assetRec) {
         ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, draggedId, assetRec->path);
+        ctx.renderer.mark_scene_dirty();
       }
     }
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("HIERARCHY_ENTITY")) {

@@ -20,6 +20,7 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 	tc.position = translation;
 	tc.rotation = glm::degrees(glm::eulerAngles(rotation));
 	tc.scale = scale;
+	tc.isDirty = true;
 
 	auto& hc = registry.emplace<HierarchyComponent>(nodeEntity, parentEntity);
 	if (parentEntity != entt::null) {
@@ -68,7 +69,9 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 				const auto& sm = node->submeshes[i];
 				entt::entity smEntity = registry.create();
 				registry.emplace<TagComponent>(smEntity, "Submesh " + std::to_string(i));
-				registry.emplace<TransformComponent>(smEntity);
+
+				auto& smTc = registry.emplace<TransformComponent>(smEntity);
+				smTc.isDirty = true;
 
 				auto& smHc = registry.emplace<HierarchyComponent>(smEntity, nodeEntity);
 				hc.children.push_back(smEntity);
@@ -118,10 +121,14 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 
 entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceManager, const std::string& modelId, const std::filesystem::path& path, const glm::vec3& position) {
 	auto modelHandle = resourceManager.load<Model>(modelId, path);
-	if (!modelHandle.is_valid()) return entt::null;
+	if (!modelHandle.is_valid())
+		return entt::null;
+	
+	// wait for the model to be fully loaded before spawning
+	modelHandle->wait_until_ready();
 
-	entt::entity firstRootEntity = registry.create();
-
+	//entt::entity firstRootEntity = registry.create();
+	entt::entity firstRootEntity = entt::null;
 	for (const auto& rootNode : modelHandle->rootNodes) {
 		if (auto childModelNode = std::dynamic_pointer_cast<ModelNode>(rootNode)) {
 			entt::entity rootNodeEntity = spawn_node(registry, childModelNode, entt::null);
@@ -129,6 +136,7 @@ entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceMana
 			// apply spawn position to the roots
 			if (auto* tc = registry.try_get<TransformComponent>(rootNodeEntity)) {
 				tc->position += position;
+				tc->isDirty = true;
 			}
 			// use the model name to identify the roots in hierarchy
 			if (auto* tag = registry.try_get<TagComponent>(rootNodeEntity)) {
@@ -140,5 +148,6 @@ entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceMana
 			}
 		}
 	}
+
 	return firstRootEntity;
 }

@@ -13,6 +13,8 @@
 #include <fmt/std.h>
 #include <assert.h>
 #include <mutex>
+#include <deque>
+#include <functional>
 
 // resource management classes heavily based off vulkan resource management tutorial: 
 // https://docs.vulkan.org/tutorial/latest/Building_a_Simple_Engine/Engine_Architecture/04_resource_management.html#_resource_management
@@ -142,6 +144,9 @@ public:
 	// register multiple textures in a single batch to reduce mutex and descriptor set update overhead
 	// outSlots: vector to store the allocated bindless slots for each texture
 	void register_bindless_texture_batched(const std::vector<std::pair<VkImageView, VkSampler>>& textures, std::vector<uint32_t>& outSlots); 
+
+	void queue_main_thread_task(std::function<void()> task);
+	void process_main_thread_tasks();
 
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
@@ -298,6 +303,9 @@ private:
 	std::vector<uint32_t> _freeBindlessSlots;
 	uint32_t _nextBindlessSlot{ 0 }; // 0 for invalid
 	std::mutex _bindlessMutex;
+
+	std::mutex _taskMutex;
+	std::deque<std::function<void()>> _mainThreadTasks;
 
 	std::unique_ptr<GlobalGeometryPool> _geometryPool;
 

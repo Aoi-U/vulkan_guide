@@ -48,37 +48,60 @@ Model::Model(const std::string& id, VulkanCore* core, ResourceManager* resourceM
 	: Resource(id, core, resourceManager), _filePath(path)
 {}
 
+void Model::wait_until_ready() const
+{
+	while (!_isReady.load(std::memory_order_acquire)) {
+		// prevent deadlocks if main thread gets blocked while waiting
+		_resourceManager->process_main_thread_tasks();
+		std::this_thread::yield();
+	}
+}
+
 bool Model::doLoad()
 {
-	fastgltf::Asset gltfAsset;
+	_aborted.store(false, std::memory_order_release);
+	_isReady.store(false, std::memory_order_release);
+		
+	// start worker thread to load model data asynchronously
+	_workerFuture = std::async(std::launch::async, [this]() {
+		auto token = std::make_shared<ModelStagingToken>(); // holds intermediate data during loading
 
-	if (!parse_gltf_file(gltfAsset)) {
-		fmt::println("Model: {} failed to load glTF file: {}", get_id(), _filePath.string());
-		return false;
-	}
+		if (parse_gltf_file(token->gltf)) {
+			if (extract_textures(token->gltf, token->rawImages)) {
+				extract_geometry(token->gltf, token->uploadContext);
 
-	std::vector<RawImageData> rawImages;
-	if (!extract_textures(gltfAsset, rawImages)) {
-		fmt::println("Model: {} failed to extract textures from glTF file: {}", get_id(), _filePath.string());
-		return false;
-	}
-
-	ModelStagingUploadContext uploadContext;
-	extract_geometry(gltfAsset, uploadContext);
-	upload_gpu_resources(gltfAsset, rawImages, uploadContext);
-	create_materials(gltfAsset, uploadContext);
-	create_meshes(gltfAsset, uploadContext);
-	build_scene_hierarchy(gltfAsset, uploadContext);
-
+				// pack loaded data into token and queue finalization on main thread
+				_resourceManager->queue_main_thread_task([this, t = token]() mutable {
+					if (!this->_aborted.load(std::memory_order_acquire)) {
+						this->finalize_upload(std::move(t));
+					}
+				});
+				return; 
+			}
+			fmt::println("Model: failed to extract textures from model '{}'", _filePath.string());
+		}
+		fmt::println("Model: failed to parse glTF file '{}'", _filePath.string());
+		this->_aborted.store(true, std::memory_order_release); // mark as aborted if any step fails
+		this->_isReady.store(true, std::memory_order_release); 
+	});
+		
 	return true;
 }
 
 bool Model::doUnload()
 {
+	// signal worker thread to abort if still running
+	_aborted.store(true, std::memory_order_release);
+	if (_workerFuture.valid()) { // wait for worker thread to finish if still running
+		_workerFuture.wait();
+	}
+
 	rootNodes.clear();
 	allNodes.clear();
 	_materials.clear();
 	_textures.clear();
+
+	_isReady.store(false, std::memory_order_release);
 
 	return true;
 }
@@ -137,7 +160,7 @@ bool Model::extract_textures(const fastgltf::Asset& gltf, std::vector<RawImageDa
 
 		for (size_t t = 0; t < gltf.textures.size(); t++) {
 			if (gltf.textures[t].imageIndex.value_or(-1) == i) {
-				if (isSRGB[i]) {
+				if (isSRGB[t]) {
 					rawImages[i].format = VK_FORMAT_R8G8B8A8_SRGB;
 				}
 				if (gltf.textures[t].samplerIndex.has_value()) {
@@ -151,31 +174,44 @@ bool Model::extract_textures(const fastgltf::Asset& gltf, std::vector<RawImageDa
 				break;
 			}
 		}
+	}
 
-		// load textures
-		std::visit(fastgltf::visitor{
-			[](auto& arg) {},
-			[&](const fastgltf::sources::URI& filePath) {
-				std::filesystem::path p = _filePath.parent_path() / std::string(filePath.uri.path().begin(), filePath.uri.path().end());
-				rawImages[i].pixels = stbi_load(p.string().c_str(), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
-			},
-			[&](const fastgltf::sources::Vector& vector) {
+	// load textures
+	std::vector<std::future<void>> futures;
+	for (size_t i = 0; i < gltf.images.size(); i++) {
+		// load each image in separate thread
+		futures.push_back(std::async(std::launch::async, [&gltf, this, &rawImages, i]() {
+			const fastgltf::Image& image = gltf.images[i];
+			std::visit(fastgltf::visitor{
+				[](auto& arg) {},
+				[&](const fastgltf::sources::URI& filePath) {
+					std::filesystem::path p = _filePath.parent_path() / std::string(filePath.uri.path().begin(), filePath.uri.path().end());
+					rawImages[i].pixels = stbi_load(p.string().c_str(), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
+				},
+				[&](const fastgltf::sources::Vector& vector) {
 					rawImages[i].pixels = stbi_load_from_memory(vector.bytes.data(), static_cast<int>(vector.bytes.size()), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
-			},
-			[&](const fastgltf::sources::BufferView& view) {
-				auto& bufferView = gltf.bufferViews[view.bufferViewIndex];
-				auto& buffer = gltf.buffers[bufferView.bufferIndex];
-				std::visit(fastgltf::visitor{
-					[](auto& arg) {},
-					[&](const fastgltf::sources::Vector& vector) {
-						rawImages[i].pixels = stbi_load_from_memory(vector.bytes.data() + bufferView.byteOffset, static_cast<int>(bufferView.byteLength), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
-					},
-					[&](const fastgltf::sources::ByteView& byteView) {
-						rawImages[i].pixels = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(byteView.bytes.data()) + bufferView.byteOffset, static_cast<int>(bufferView.byteLength), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
-					}
-				}, buffer.data);
-			}
-			}, image.data);
+				},
+				[&](const fastgltf::sources::BufferView& view) {
+					auto& bufferView = gltf.bufferViews[view.bufferViewIndex];
+					auto& buffer = gltf.buffers[bufferView.bufferIndex];
+					std::visit(fastgltf::visitor{
+						[](auto& arg) {},
+						[&](const fastgltf::sources::Vector& vector) {
+							rawImages[i].pixels = stbi_load_from_memory(vector.bytes.data() + bufferView.byteOffset, static_cast<int>(bufferView.byteLength), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
+						},
+						[&](const fastgltf::sources::ByteView& byteView) {
+							rawImages[i].pixels = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(byteView.bytes.data()) + bufferView.byteOffset, static_cast<int>(bufferView.byteLength), &rawImages[i].width, &rawImages[i].height, &rawImages[i].channels, STBI_rgb_alpha);
+						}
+					}, buffer.data);
+				}
+				}, image.data);
+			})
+		);
+	}
+
+	// wait for all threads to finish loading
+	for (auto& future : futures) {
+		future.get();
 	}
 
 	return true;
@@ -333,6 +369,16 @@ void Model::extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadCont
 			uploadContext.meshSubmeshes[i].push_back(sm);
 		}
 	}
+}
+
+void Model::finalize_upload(std::shared_ptr<ModelStagingToken> token)
+{
+	upload_gpu_resources(token->gltf, token->rawImages, token->uploadContext);
+	create_materials(token->gltf, token->uploadContext);
+	create_meshes(token->gltf, token->uploadContext);
+	build_scene_hierarchy(token->gltf, token->uploadContext);
+
+	_isReady.store(true, std::memory_order_release);
 }
 
 void Model::upload_gpu_resources(const fastgltf::Asset& gltf, std::vector<RawImageData>& rawImages, ModelStagingUploadContext& uploadContext)

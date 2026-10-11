@@ -90,14 +90,12 @@ void InspectorPanel::register_engine_components()
 
 	// transform component
 	reg.register_component<TransformComponent>("Transform", [this](TransformComponent& tc, EditorContext&) {
-    bool changed = false; 
-		changed |=UIWidgets::DrawVec3Control("Position", tc.position, glm::vec3(0.0f), 0.1f);
-		changed |=UIWidgets::DrawVec3Control("Rotation", tc.rotation, glm::vec3(0.0f), 0.5f);
-		changed |=UIWidgets::DrawVec3Control("Scale", tc.scale, glm::vec3(1.0f), 0.05f, &_lockScale);
-
-    if (changed) {
+    if (UIWidgets::DrawVec3Control("Position", tc.position, glm::vec3(0.0f), 0.1f)) 
       tc.isDirty = true;
-    }
+    if (UIWidgets::DrawVec3Control("Rotation", tc.rotation, glm::vec3(0.0f), 0.5f)) 
+      tc.isDirty = true;
+    if (UIWidgets::DrawVec3Control("Scale", tc.scale, glm::vec3(1.0f), 0.05f, &_lockScale)) 
+      tc.isDirty = true;
 		});
 
 	// mesh component

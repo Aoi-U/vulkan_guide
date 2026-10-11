@@ -216,7 +216,7 @@ bool Texture::doLoad()
 	}
 
 	// register texture in bindless descriptor set
-	if ((_sourceType != SourceType::Description || (_usage & VK_IMAGE_USAGE_SAMPLED_BIT)) && _desc.deferBindlessRegistration) { // only register if it's a sampled texture
+	if ((_sourceType != SourceType::Description || (_usage & VK_IMAGE_USAGE_SAMPLED_BIT)) && !_desc.deferBindlessRegistration) { // only register if it's a sampled texture
 		_bindlessIndex = _resourceManager->allocate_bindless_texture(_imageView, _sampler);
 	}
 
