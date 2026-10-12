@@ -84,7 +84,9 @@ bool MaterialTemplate::doLoad()
 	// compute material block size from largest member offset + size
 	_materialBlockSize = 0;
 	for (const auto& [name, var] : _reflection.materialVariablesByName) {
-		_materialBlockSize = std::max(_materialBlockSize, var.offset + var.size);
+		if (name.find("materials.") == 0) {
+			_materialBlockSize = std::max(_materialBlockSize, var.offset + var.size);
+		}
 	}
 	_materialBlockSize = (_materialBlockSize + 15) & ~15; // align to 16 bytes
 

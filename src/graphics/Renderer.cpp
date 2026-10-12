@@ -590,7 +590,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 			obj.transform = tc.worldTransform;
 
 			auto* matComp = registry.try_get<MaterialComponent>(e);
-			if (matComp && matComp->material && (matComp->material->is_dirty() || matComp->isDirty)) {
+			if (matComp && matComp->material) {
 				auto paramData = matComp->material->get_parameter_data();
 				size_t offset = obj.materialIndex * paramData.size();
 
@@ -601,8 +601,8 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 
 				std::memcpy(static_cast<uint8_t*>(currentFrame._materialDataBuffer->get_mapped_data()) + offset, paramData.data(), paramData.size());
 
-				matComp->material->clear_dirty();
-				matComp->isDirty = false;
+				//matComp->material->clear_dirty();
+				//matComp->isDirty = false;
 			}
 		}
 	}

@@ -47,7 +47,7 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 	
 	MaterialPipelineKey pipelineKey{
 		.cullMode = VK_CULL_MODE_BACK_BIT,
-		.frontFace = VK_FRONT_FACE_CLOCKWISE,
+		.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
 		.polygonMode = VK_POLYGON_MODE_FILL,
 		.blendMode = BlendMode::None,
 		.depthTest = true,
@@ -64,6 +64,7 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 		vkCmdBindPipeline(ctx.get_cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pbrTemplate->get_layout(), 0, globalSet);
 		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pbrTemplate->get_layout(), 1, drawCtx.bindlessMaterialSet);
+		ctx.set_cull_mode(pipelineKey.cullMode);
 
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand); 

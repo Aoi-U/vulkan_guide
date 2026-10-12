@@ -23,6 +23,13 @@ namespace
 			if (m.member_count > 0) {
 				reflect_block_variables(m, outVariables, path);
 			}
+			else {
+				outVariables[path] = ReflectedVariable{
+					.name = path,
+					.offset = m.offset,
+					.size = m.size
+				};
+			}
 		}
 	}
 }
