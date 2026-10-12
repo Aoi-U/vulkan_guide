@@ -34,9 +34,6 @@ void DeferredLightingPass::cleanup()
 
 void DeferredLightingPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, const DeferredPassParameters& params, const RenderGraph& graph)
 {
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
 	const auto& env = drawCtx.environment;
 
 	// update descriptor set
@@ -71,9 +68,4 @@ void DeferredLightingPass::render(RenderContext& ctx, FrameData& frameData, Draw
 
 	ctx.set_cull_mode(VK_CULL_MODE_NONE);
 	ctx.draw(3, 1, 0, 0); // draw fullscreen triangle
-
-	auto end = std::chrono::system_clock::now();
-	_stats.clear();
-	_stats.name = "Deferred Lighting Pass";
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

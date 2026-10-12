@@ -7,6 +7,7 @@
 #include <core/Components.h>
 #include <resources/DefaultResources.h>
 #include "graphics/GuiRenderer.h"
+#include <core/Profiler.h>
 
 AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0, 0.1, 1.0, CVarFlags::EditFloatSlider);
 
@@ -21,6 +22,7 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 	_vulkanCore = vulkanCore;
 	_resourceManager = resourceManager;
 	_viewportExtent = _window->get_extent();
+
 
 	_renderTargetPool.init(_vulkanCore->get_device(), _vulkanCore->get_allocator());
 	update_render_extent();
@@ -60,6 +62,8 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 
 	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
 	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8_UNORM, VK_FORMAT_UNDEFINED);
+
+	Profiler::get().init(_vulkanCore->get_device(), _vulkanCore->get_physical_device(), FRAME_OVERLAP);
 }
 
 void Renderer::cleanup(entt::dispatcher& dispatcher)
@@ -68,6 +72,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
+	Profiler::get().cleanup();
 	_renderTargetPool.cleanup();
 
 	_frustumCullPass->cleanup();
@@ -421,6 +426,8 @@ VkCommandBuffer Renderer::begin_frame()
 	VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);	// we will use this command buffer exactly once, so we want to let vulkan know that
 	VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));	// start the command buffer recording
 
+	Profiler::get().begin_frame(_frameNumber % FRAME_OVERLAP, cmd); // resolve previous frames gpu timestamp
+
 	return cmd;
 }
 
@@ -469,6 +476,8 @@ void Renderer::end_frame()
 
 	_isFrameStarted = false;
 	_frameNumber++;
+
+	Profiler::get().end_frame();
 
 	VkResult presentResult = vkQueuePresentKHR(_vulkanCore->get_graphics_queue(), &presentInfo);
 	if (presentResult == VK_ERROR_OUT_OF_DATE_KHR || presentResult == VK_SUBOPTIMAL_KHR || _resizeRequested) {
@@ -637,22 +646,6 @@ void Renderer::recreate_swapchain()
 	_debugTargets.clear();
 	update_render_extent();
 	_renderTargetPool.cleanup();
-}
-
-const std::vector<PassStats> Renderer::get_stats() const
-{
-	std::vector<PassStats> stats;
-	stats.push_back(_frustumCullPass->get_stats());
-	stats.push_back(_shadowPass->get_stats());
-	stats.push_back(_pointShadowPass->get_stats());
-	stats.push_back(_gbufferPass->get_stats());
-	stats.push_back(_ssaoPass->get_stats());
-	stats.push_back(_ssaoBlurPass->get_stats());
-	stats.push_back(_deferredLightingPass->get_stats());
-
-	stats.push_back(_skyboxPass->get_stats());
-
-	return stats;
 }
 
 void Renderer::create_command_buffers()

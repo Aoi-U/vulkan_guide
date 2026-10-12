@@ -1,6 +1,7 @@
 #include "RenderGraph.h"
 
 #include <graphics/utils/vk_utils.h>
+#include <core/Profiler.h>
 #include <fmt/core.h>
 #include <algorithm>
 
@@ -251,6 +252,8 @@ void RenderGraph::execute(RenderContext& ctx)
 	for (auto& pass : _passes) {
 		if (pass->culled)
 			continue;
+
+		PROFILE_SCOPE(pass->name, ctx.get_cmd());
 
 		dispatch_barriers(ctx, pass.get());
 

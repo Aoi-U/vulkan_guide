@@ -27,31 +27,6 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 {
 	if (drawCtx.opaqueObjects.empty()) return;
 
-	// statistics
-	{
-		// read cull stats from previous frame
-		auto* statsRead = static_cast<CullStatsData*>(frameData._cullStatsBuffer->get_mapped_data());
-		uint32_t visibleDraws = statsRead->visibleDraws;
-		uint32_t visibleTriangles = statsRead->visibleTriangles;
-
-		// reset stats buffer for next frame
-		statsRead->visibleDraws = 0;
-		statsRead->visibleTriangles = 0;
-
-		// calculate culled meshes
-		const uint32_t totalMeshes = static_cast<uint32_t>(drawCtx.opaqueObjects.size());
-		visibleDraws = std::min(visibleDraws, totalMeshes);
-		uint32_t culledMeshes = totalMeshes - visibleDraws;
-
-		_stats.clear();
-		_stats.name = "Compute Frustum Cull Pass";
-		_stats.add_metric("Total Meshes", totalMeshes);
-		_stats.add_metric("Visible Meshes", visibleDraws);
-		_stats.add_metric("Culled Meshes", culledMeshes);
-		_stats.add_metric("Visible Triangles", visibleTriangles);
-	}
-	auto start = std::chrono::system_clock::now();
-
 	// number of objects to draw
 	const uint32_t drawCount = static_cast<uint32_t>(drawCtx.opaqueObjects.size());
 	const uint32_t batchCount = static_cast<uint32_t>(drawCtx.opaqueBatches.size());
@@ -123,7 +98,4 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 	cullPush.cullMode = static_cast<uint32_t>(cvCullMode.Get());
 	ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_COMPUTE_BIT, cullPush);
 	ctx.dispatch((drawCount + 255) / 256);
-
-	auto end = std::chrono::system_clock::now();
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

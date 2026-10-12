@@ -91,13 +91,8 @@ void App::run()
 
 		update_scene(_deltaTime);
 
-		EngineStats stats;
-		stats.frameTimeMs = _frameTime;
-		stats.fps = 1.0f / _deltaTime;
-		stats.renderStats = _renderer->get_stats();
-
 		_guiRenderer->new_frame();
-		_editor->draw_gui(_registry, *_resourceManager, stats, _sceneData, *_renderer);
+		_editor->draw_gui(_registry, *_resourceManager, _sceneData, *_renderer);
 
 		_renderer->render_frame(_registry, _sceneData);
 	}

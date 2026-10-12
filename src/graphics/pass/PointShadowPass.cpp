@@ -36,9 +36,6 @@ void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const Dra
 	VkExtent3D extent3d = graph.get_extent(params.pointShadowMap);
 	VkExtent2D extent = { extent3d.width, extent3d.height };
 
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
 	// setup 6 face transforms if valid shadow casting light is present
 	std::array<glm::mat4, 6> shadowTransforms{};
 	glm::vec3 lightPos(0.0f);
@@ -105,9 +102,4 @@ void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const Dra
 			ctx.end_rendering();
 		}
 	}
-
-	auto end = std::chrono::system_clock::now();
-	_stats.clear();
-	_stats.name = "Point Shadow Pass";
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

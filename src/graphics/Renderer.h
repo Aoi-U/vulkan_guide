@@ -138,7 +138,6 @@ public:
 	
 	VkDescriptorSet get_scene_color_descriptor() const { return _sceneColorDescriptor; };
 	const std::unordered_map<std::string, TargetInfo>& get_debug_targets() const { return _debugTargets; }
-	const std::vector<PassStats> get_stats() const;
 
 private:
 	Window* _window;

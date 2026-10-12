@@ -32,7 +32,7 @@ Editor::Editor()
 	add_panel<RenderTargetViewPanel>();
 }
 
-void Editor::draw_gui(entt::registry& registry, ResourceManager& resourceManager, const EngineStats& stats, const GPUSceneData& sceneData, Renderer& renderer)
+void Editor::draw_gui(entt::registry& registry, ResourceManager& resourceManager, const GPUSceneData& sceneData, Renderer& renderer)
 {
 	draw_dockspace();
 	draw_main_menu_bar();
@@ -40,7 +40,6 @@ void Editor::draw_gui(entt::registry& registry, ResourceManager& resourceManager
 	EditorContext ctx{
 		.registry = registry,
 		.resourceManager = resourceManager,
-		.stats = stats,
 		.selectedEntity = _selectedEntity,
 		.sceneData = sceneData,
 		.renderer = renderer

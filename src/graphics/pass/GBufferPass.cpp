@@ -24,9 +24,6 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 		return;
 	}
 
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
 	ResourceHandle<MaterialTemplate>& pbrTemplate = DefaultResources::get().defaultPBRTemplate;
 	if (!pbrTemplate.is_valid()) 
 		return;
@@ -71,9 +68,4 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t); 
 		ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
-	
-	auto end = std::chrono::system_clock::now();
-	_stats.clear();
-	_stats.name = "Geometry Pass";
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

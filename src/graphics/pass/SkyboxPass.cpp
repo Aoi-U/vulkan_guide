@@ -33,9 +33,6 @@ void SkyboxPass::cleanup()
 
 void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, const SkyboxPassParameters& params, const RenderGraph& graph)
 {
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
 	const EnvironmentResources& env = drawCtx.environment;
 
 	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
@@ -55,9 +52,4 @@ void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& d
 	// draw full scren triangle
 	ctx.set_cull_mode(VK_CULL_MODE_NONE);
 	ctx.draw(3, 1, 0, 0);
-
-	auto end = std::chrono::system_clock::now();
-	_stats.clear();
-	_stats.name = "Skybox Pass";
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

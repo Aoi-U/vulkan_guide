@@ -30,9 +30,6 @@ void SSAOBlurPass::cleanup()
 
 void SSAOBlurPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& data, const SSAOBlurPassParameters& params, const RenderGraph& graph)
 {
-  // begin clock
-  auto start = std::chrono::system_clock::now();
-
 	VkDescriptorSet blurSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
 
   std::unordered_map<std::string, VkDescriptorImageInfo> images = {
@@ -48,9 +45,4 @@ void SSAOBlurPass::render(RenderContext& ctx, FrameData& frameData, DrawContext&
 
   // draw full screen triangle
   ctx.draw(3, 1, 0, 0);
-
-  auto end = std::chrono::system_clock::now();
-  _stats.clear();
-  _stats.name = "SSAO Blur Pass";
-  _stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }

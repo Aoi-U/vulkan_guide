@@ -8,18 +8,10 @@
 
 class Renderer; 
 
-struct EngineStats
-{
-	float frameTimeMs{ 0.0f };
-	float fps{ 0.0f };
-	std::vector<PassStats> renderStats;
-};
-
 struct EditorContext
 {
 	entt::registry& registry;
 	ResourceManager& resourceManager;
-	const EngineStats& stats;
 	entt::entity& selectedEntity;
 	const GPUSceneData& sceneData;
 	Renderer& renderer;

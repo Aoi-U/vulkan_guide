@@ -41,9 +41,6 @@ void SSAOPass::cleanup()
 
 void SSAOPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& data, const SSAOPassParameters& params, const RenderGraph& graph)
 {
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
 	VkDescriptorSet ssaoSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
 
 	std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
@@ -72,11 +69,6 @@ void SSAOPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& dra
 	//  draw full screen triangle
 	ctx.set_cull_mode(VK_CULL_MODE_NONE);
 	ctx.draw(3, 1, 0, 0);
-
-	auto end = std::chrono::system_clock::now();
-	_stats.clear();
-	_stats.name = "SSAO Generation pass";
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }
 
 namespace {

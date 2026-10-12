@@ -34,9 +34,6 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& d
 		return;
 	}
 
-	// begin clock
-	auto start = std::chrono::system_clock::now();
-
 	// bind pipeline and push constants
 	ctx.bind_pipeline(_pipeline);
 
@@ -61,9 +58,4 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& d
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
 		ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 	}
-
-	auto end = std::chrono::system_clock::now();
-	_stats.clear();
-	_stats.name = "Shadow Pass";
-	_stats.passTimeMs = std::chrono::duration<float, std::milli>(end - start).count();
 }
