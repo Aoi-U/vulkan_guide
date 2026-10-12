@@ -21,6 +21,7 @@ void Profiler::init(VkDevice device, VkPhysicalDevice physicalDevice, uint32_t f
 	uint32_t validBits = queueFamilies[0].timestampValidBits;
 	_validBitsMask = (validBits == 64) ? UINT64_MAX : ((1ull << validBits) - 1ull);
 
+	// create a query pool for each frame 
 	_gpuFrames.resize(frameOverlap);
 	for (uint32_t i = 0; i < frameOverlap; i++) {
 		VkQueryPoolCreateInfo poolInfo{
@@ -58,7 +59,7 @@ void Profiler::begin_frame(uint32_t frameIndex, VkCommandBuffer cmd)
 
 	std::unordered_map<std::string, float> currentFrameGpu;
 
-	if (current.hasSubmitted && current.queryCount > 0) {
+	if (current.hasSubmitted && current.queryCount > 0) { // get gpu results from previous frame
 		std::vector<uint64_t> results(current.queryCount);
 		VkResult res = vkGetQueryPoolResults(_device, current.queryPool, 0, current.queryCount, current.queryCount * sizeof(uint64_t), results.data(), sizeof(uint64_t), VK_QUERY_RESULT_64_BIT);
 
@@ -78,8 +79,9 @@ void Profiler::begin_frame(uint32_t frameIndex, VkCommandBuffer cmd)
 	_totalCpuTimeMs = 0.0f;
 	_totalGpuTimeMs = 0.0f;
 
+	// collect names from cpu and gpu results
 	std::vector<std::string> names;
-	for (const auto& [name, _] : _currentFrameCpu)
+	for (const auto& [name, _] : _currentFrameCpu) 
 		names.push_back(name);
 	for (const auto& [name, _] : currentFrameGpu) {
 		if (std::find(names.begin(), names.end(), name) == names.end()) {
@@ -87,7 +89,7 @@ void Profiler::begin_frame(uint32_t frameIndex, VkCommandBuffer cmd)
 		}
 	}
 
-	for (const auto& name : names) {
+	for (const auto& name : names) { // combine cpu and gpu results into metrics
 		float cpu = _currentFrameCpu.contains(name) ? _currentFrameCpu[name] : 0.0f;
 		float gpu = currentFrameGpu.contains(name) ? currentFrameGpu[name] : 0.0f;
 
@@ -97,7 +99,7 @@ void Profiler::begin_frame(uint32_t frameIndex, VkCommandBuffer cmd)
 		history.gpuTimeMs = gpu;
 
 		constexpr float alpha = 0.05f; // exponential moving average for smooth display
-		history.avgCpuTimeMs = (history.avgCpuTimeMs == 0.0f) ? cpu : (history.avgCpuTimeMs * (1.0f - alpha) + cpu * alpha);
+		history.avgCpuTimeMs = (history.avgCpuTimeMs == 0.0f) ? cpu : (history.avgCpuTimeMs * (1.0f - alpha) + cpu * alpha); 
 		history.avgGpuTimeMs = (history.avgGpuTimeMs == 0.0f) ? gpu : (history.avgGpuTimeMs * (1.0f - alpha) + gpu * alpha);
 
 		_metrics.push_back(history);

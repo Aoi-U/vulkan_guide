@@ -227,13 +227,18 @@ void Model::extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadCont
 	for (size_t i = 0; i < gltf.meshes.size(); i++) {
 		const fastgltf::Mesh& mesh = gltf.meshes[i];
 
+		size_t meshIndexStart = uploadContext.indices.size();
+		size_t meshVertexStart = uploadContext.vertices.size();
+
 		for (size_t p = 0; p < mesh.primitives.size(); p++) {
 			const fastgltf::Primitive& prim = mesh.primitives[p];
 			ModelSubMesh sm;
 
 			// record index relative to global index buffer
-			sm.startIndex = static_cast<uint32_t>(uploadContext.indices.size());
+			sm.startIndex = static_cast<uint32_t>(uploadContext.indices.size() - meshIndexStart);
 			size_t initialVertex = uploadContext.vertices.size();
+
+			size_t localVertexOffset = initialVertex - meshVertexStart;
 
 			std::vector<uint32_t> localIndices;
 
@@ -243,9 +248,12 @@ void Model::extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadCont
 
 				uploadContext.indices.reserve(uploadContext.indices.size() + accessor.count);
 				fastgltf::iterateAccessor<uint32_t>(gltf, accessor, [&](uint32_t idx) {
-					uploadContext.indices.push_back(idx + static_cast<uint32_t>(initialVertex));
-					localIndices.push_back(idx + static_cast<uint32_t>(initialVertex));
-					uploadContext.meshPickingIndices[i].push_back(idx + static_cast<uint32_t>(initialVertex)); // keep local index for picking
+					uint32_t localIdx = idx + static_cast<uint32_t>(localVertexOffset);
+					uint32_t globalIdx = idx + static_cast<uint32_t>(initialVertex);
+
+					uploadContext.indices.push_back(localIdx); // local index for GPU 
+					localIndices.push_back(globalIdx);         // global index for tangent calc
+					uploadContext.meshPickingIndices[i].push_back(localIdx);
 					});
 			}
 			else {
@@ -254,9 +262,12 @@ void Model::extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadCont
 				sm.count = static_cast<uint32_t>(posAccessor.count);
 				uploadContext.indices.reserve(uploadContext.indices.size() + sm.count);
 				for (uint32_t v = 0; v < sm.count; v++) {
-					uploadContext.indices.push_back(static_cast<uint32_t>(initialVertex) + v);
-					localIndices.push_back(static_cast<uint32_t>(initialVertex) + v);
-					uploadContext.meshPickingIndices[i].push_back(static_cast<uint32_t>(initialVertex) + v); // keep local index for picking
+					uint32_t localIdx = v + static_cast<uint32_t>(localVertexOffset);
+					uint32_t globalIdx = v + static_cast<uint32_t>(initialVertex);
+
+					uploadContext.indices.push_back(localIdx);
+					localIndices.push_back(globalIdx);
+					uploadContext.meshPickingIndices[i].push_back(localIdx);
 				}
 			}
 
@@ -615,21 +626,40 @@ void Model::create_meshes(const fastgltf::Asset& gltf, const ModelStagingUploadC
 {
 	auto defaultMat = std::make_shared<MaterialInstance>(DefaultResources::get().defaultPBRTemplate);
 
+	uint32_t currentFirstIndex = uploadContext.geomAlloc.firstIndex;
+	uint32_t currentVertexOffset = uploadContext.geomAlloc.vertexOffset;
+	VkDeviceAddress currentVertexAddress = uploadContext.geomAlloc.vertexBufferAddress;
+
 	// create logical Handles mapping the suballocations
 	for (size_t i = 0; i < uploadContext.meshSubmeshes.size(); i++) {
 		std::string meshName = get_id() + "_mesh_" + std::to_string(i);
 		ResourceHandle<Mesh> batchedMesh;
+
+		uint32_t indexCount = static_cast<uint32_t>(uploadContext.meshPickingIndices[i].size());
+		uint32_t vertexCount = static_cast<uint32_t>(uploadContext.meshPickingPositions[i].size());
+
+		GeometryAllocation meshAlloc;
+		meshAlloc.firstIndex = currentFirstIndex;
+		meshAlloc.indexCount = indexCount;
+		meshAlloc.vertexOffset = currentVertexOffset;
+		meshAlloc.vertexCount = vertexCount;
+		meshAlloc.vertexBufferAddress = currentVertexAddress;
 
 		if (_resourceManager->has_resource<Mesh>(meshName)) {
 			batchedMesh = _resourceManager->get_handle<Mesh>(meshName);
 		}
 		else {
 			batchedMesh = _resourceManager->load<Mesh>(
-				meshName, uploadContext.geomAlloc,
+				meshName,
+				meshAlloc,
 				uploadContext.meshPickingPositions[i],
 				uploadContext.meshPickingIndices[i]
 			);
 		}
+
+		currentFirstIndex += indexCount;
+		currentVertexOffset += vertexCount;
+		currentVertexAddress += vertexCount * sizeof(Vertex);
 
 		// copy out and restore real values from the extract pass
 		auto& smList = const_cast<std::vector<ModelSubMesh>&>(uploadContext.meshSubmeshes[i]);

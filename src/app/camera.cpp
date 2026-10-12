@@ -55,11 +55,13 @@ void Camera::on_input_event(const Events::SDLInputEvent& event)
     if (!ImGuizmo::IsUsing() && isViewportHovered) {
       isActive = true;
       setCursorLocked(true);
+			ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouse; // disable imgui while moving
     }
   }
 	else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) { // process release of right mouse button
     isActive = false;
     setCursorLocked(false);
+    ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse; // renable imgui 
     keyStates.clear(); // clear movement keys when unpressed
   }
   else if (e.type == SDL_WINDOWEVENT && (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_MINIMIZED)) { // reset camera when window loses focus or is minimized
