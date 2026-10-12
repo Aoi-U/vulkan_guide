@@ -50,17 +50,17 @@ void GBufferPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& 
 		.depthTest = true,
 		.depthWrite = true,
 		.depthComareOp = VK_COMPARE_OP_GREATER_OR_EQUAL,
-		.colorAttachmentFormats = { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT },
+		.colorAttachmentFormats = { VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_R8G8B8A8_SRGB, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_R16G16B16A16_SFLOAT },
 		.depthAttachmentFormat = _depthFormat
 	};
+	VkPipeline pipeline = pbrTemplate->get_pipeline(pipelineKey);
+	vkCmdBindPipeline(ctx.get_cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pbrTemplate->get_layout(), 0, globalSet);
+	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pbrTemplate->get_layout(), 1, drawCtx.bindlessMaterialSet);
 
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
 		pipelineKey.cullMode = batch.isDoubleSided ? VK_CULL_MODE_NONE : VK_CULL_MODE_BACK_BIT;
-		VkPipeline pipeline = pbrTemplate->get_pipeline(pipelineKey);
 		
-		vkCmdBindPipeline(ctx.get_cmd(), VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pbrTemplate->get_layout(), 0, globalSet);
-		ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, pbrTemplate->get_layout(), 1, drawCtx.bindlessMaterialSet);
 		ctx.set_cull_mode(pipelineKey.cullMode);
 
 		// draw batch

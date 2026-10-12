@@ -114,6 +114,15 @@ float calculate_point_shadow(vec3 fragPos, vec3 lightPos, vec3 normal, float far
     return shadow / float(samples);
 }
 
+vec3 ACESFilm(vec3 x) {
+    float a = 2.51f;
+    float b = 0.03f;
+    float c = 2.43f;
+    float d = 0.59f;
+    float e = 0.14f;
+    return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+
 void main() {
     vec4 posSample = texture(gPosition, inUV);
     // discard background pixels so the skybox can render over them
@@ -180,7 +189,9 @@ void main() {
 
         float distOverRadius = distance / radius;
         float window = clamp(1.0 - distOverRadius * distOverRadius * distOverRadius * distOverRadius, 0.0, 1.0);
-        float attenuation = (window * window) / (distance * distance + 1.0);
+        //float attenuation = (window * window) / (distance * distance + 1.0);
+        float distSqr = max(distance * distance, 0.0001);
+        float attenuation = (window * window) / distSqr;
 
         vec3 lightColor = sceneData.pointLights[i].color.xyz * sceneData.pointLights[i].color.w;
         vec3 radiance = lightColor * attenuation;
@@ -208,14 +219,9 @@ void main() {
     vec2 envBrdf = texture(brdfLUT, vec2(max(dot(N, V), 0.0), roughness)).rg;
     vec3 specularIBL = prefilteredColor * (F_ambient * envBrdf.x + envBrdf.y);
 
-    vec3 ambient = (kD_ambient * diffuseIBL + specularIBL) * totalAO + (sceneData.ambientColor.xyz * albedo * totalAO);
+    vec3 ambient = (kD_ambient * diffuseIBL + specularIBL) * totalAO;
     vec3 emissive = texture(gEmissive, inUV).rgb;
 
     vec3 color = ambient + Lo + emissive;
-
-    // tone mapping and gamma correction
-    color = color / (color + vec3(1.0));
-    color = pow(color, vec3(1.0 / 2.2));
-
     outFragColor = vec4(color, 1.0);
 }

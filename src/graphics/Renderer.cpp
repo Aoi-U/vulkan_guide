@@ -63,6 +63,9 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
 	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8_UNORM, VK_FORMAT_UNDEFINED);
 
+	_postProcessPass = std::make_unique<PostProcessPass>();
+	_postProcessPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_UNDEFINED);
+
 	Profiler::get().init(_vulkanCore->get_device(), _vulkanCore->get_physical_device(), FRAME_OVERLAP);
 }
 
@@ -84,6 +87,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_ssaoPass->cleanup();
 	_ssaoBlurPass->cleanup();
 	_iblSystem.cleanup();
+	_postProcessPass->cleanup();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		_frames[i]._cullStatsBuffer->unload();
@@ -183,9 +187,11 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		RGTextureHandle gEmissive = _renderGraph.create_texture("GBufferEmissive", colorDesc);
 
 		RGTextureDesc albedoDesc = colorDesc;
-		albedoDesc.format = VK_FORMAT_R8G8B8A8_UNORM;
+		albedoDesc.format = VK_FORMAT_R8G8B8A8_SRGB;
 		RGTextureHandle gAlbedo = _renderGraph.create_texture("GBufferAlbedo", albedoDesc);
-		RGTextureHandle gMetalRough = _renderGraph.create_texture("GBufferMetalRough", albedoDesc);
+		RGTextureDesc metalRoughDesc = albedoDesc;
+		metalRoughDesc.format = VK_FORMAT_R8G8B8A8_UNORM;
+		RGTextureHandle gMetalRough = _renderGraph.create_texture("GBufferMetalRough", metalRoughDesc);
 
 		RGTextureDesc ssaoDesc = colorDesc;
 		ssaoDesc.format = VK_FORMAT_R8_UNORM;
@@ -316,43 +322,47 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			}
 		);
 
-		// swapchain, set side effect to guaraantee execution
-		struct PresentPassParams { RGTextureHandle sceneColor; };
+		RGTextureDesc finalColorDesc{
+			.extent = {_drawExtent.width, _drawExtent.height, 1},
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+		};
+		RGTextureHandle finalColor = _renderGraph.create_texture("FinalColor", finalColorDesc);
+
+		// post process
+		_renderGraph.add_pass<PostProcessPassParameters>("PostProcessPass",
+			[&](RGPassBuilder& builder, PostProcessPassParameters& params) {
+				params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				params.finalColor = builder.set_color_attachment(finalColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
+				builder.set_extent(_drawExtent);
+			},
+			[=, this, &currentFrame](const PostProcessPassParameters& params, RenderContext& rc) {
+				_postProcessPass->render(rc, currentFrame, params, _renderGraph);
+			}
+		);
+
+		// present
+		struct PresentPassParams { RGTextureHandle finalColor; };
 		_renderGraph.add_pass<PresentPassParams>("PresentComposite",
 			[&](RGPassBuilder& builder, PresentPassParams& params) {
-				params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_2_TRANSFER_READ_BIT);
+				params.finalColor = builder.read_texture(finalColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 				builder.set_side_effect(true);
 			},
 			[=, this](const PresentPassParams& params, RenderContext& rc) {
 				VkCommandBuffer graphCmd = rc.get_cmd();
 				VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
+				VkImageView swapchainView = _swapchain.get_image_views()[_swapchainImageIndex];
 
-				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-				vkutil::copy_image_to_image(graphCmd, _renderGraph.get_image(params.sceneColor), swapchainImage, _drawExtent, _swapchain.get_extent());
-				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-
-				_renderGraph.transition_texture(graphCmd, params.sceneColor, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-				RGTextureHandle debugHandles[] = {
-					sceneDepth,
-					shadowMap,
-					pointShadowMap,
-					gPosition,
-					gNormal,
-					gAlbedo,
-					gMetalRough,
-					gEmissive,
-					ssaoColor,
-					ssaoBlur
-				};
 				// imgui requires shader read layout
+				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+
+				RGTextureHandle debugHandles[] = { finalColor, sceneDepth, shadowMap, pointShadowMap, gPosition, gNormal, gAlbedo, gMetalRough, gEmissive, ssaoColor, ssaoBlur };
 				for (RGTextureHandle handle : debugHandles) {
 					_renderGraph.transition_texture(graphCmd, handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 				}
-
 				if (_guiRenderer) {
-					_sceneColorDescriptor = _guiRenderer->get_image_descriptor(_renderGraph.get_image_view(params.sceneColor), DefaultResources::get().defaultSamplerLinear->get_sampler());
-					_guiRenderer->render(graphCmd, _swapchain.get_image_views()[_swapchainImageIndex], _swapchain.get_extent());
+					_sceneColorDescriptor = _guiRenderer->get_image_descriptor(_renderGraph.get_image_view(params.finalColor), DefaultResources::get().defaultSamplerLinear->get_sampler());
+					_guiRenderer->render(graphCmd, swapchainView, _swapchain.get_extent());
 				}
 			}
 		);
@@ -374,6 +384,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			_debugTargets[name] = info;
 			};
 
+		register_debug_target("FinalColor", finalColor);
 		register_debug_target("SceneColor", sceneColor);
 		register_debug_target("SceneDepth", sceneDepth);
 		register_debug_target("ShadowMap", shadowMap);
@@ -572,8 +583,8 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 				const RenderObject& firstObj = _drawCache.opaqueObjects[currentBatch.first];
 
 				bool isSameBatch = (obj.firstIndex == firstObj.firstIndex) &&
-													 (obj.indexCount == firstObj.indexCount) &&
-													 (obj.isDoubleSided == firstObj.isDoubleSided);
+					(obj.indexCount == firstObj.indexCount) &&
+					(obj.isDoubleSided == firstObj.isDoubleSided);
 
 				if (!isSameBatch) {
 					_drawCache.opaqueBatches.push_back(currentBatch);
@@ -588,11 +599,11 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 		}
 		_drawCache.isDirty = false;
 	}
-	else 
+	else
 	{
 		for (auto& obj : _drawCache.opaqueObjects) {
 			entt::entity e = static_cast<entt::entity>(obj.entityId);
-			if (!registry.valid(e)) 
+			if (!registry.valid(e))
 				continue;
 
 			const auto& tc = registry.get<TransformComponent>(e);
@@ -617,7 +628,7 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	}
 
 	ctx.opaqueObjects = _drawCache.opaqueObjects;
-	ctx.transparentObjects = _drawCache.transparentObjects; 
+	ctx.transparentObjects = _drawCache.transparentObjects;
 	ctx.opaqueBatches = _drawCache.opaqueBatches;
 	ctx.indirectDrawCount = static_cast<uint32_t>(_drawCache.opaqueObjects.size());
 }

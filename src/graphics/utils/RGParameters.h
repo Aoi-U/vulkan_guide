@@ -138,3 +138,12 @@ struct SkyboxPassParameters
 	RGTextureHandle sceneColor;
 	RGTextureHandle sceneDepth;
 };
+
+struct PostProcessPassParameters
+{
+	// input
+	RGTextureHandle sceneColor;
+
+	// output
+	RGTextureHandle finalColor;
+};

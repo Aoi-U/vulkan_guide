@@ -306,6 +306,8 @@ void IBLSystem::load_procedural_default()
 				glm::vec3 col = (dir.y > 0.0f) ? glm::mix(horizon, zenith, dir.y) : glm::mix(horizon, ground, -dir.y);
 				float sunDot = glm::max(glm::dot(dir, sunDir), 0.0f);
 				col += glm::vec3(1.0f, 0.95f, 0.8f) * std::pow(sunDot, 64.0f) * 1.5f;
+				float iblIntensity = 0.05f;
+				col *= iblIntensity;
 
 				size_t offset = (face * FACE_SIZE * FACE_SIZE + y * FACE_SIZE + x) * 4;
 				mappedData[offset + 0] = col.r;

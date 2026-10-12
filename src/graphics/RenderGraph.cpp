@@ -472,17 +472,6 @@ void RenderGraph::dispatch_barriers(RenderContext& ctx, IRGPass* pass)
 			continue;
 		}
 
-		// create barrier if layout changed or if access is write
-		//if (tex.currentLayout != access.layout || access.usage == RGResourceUsage::StorageWrite || access.usage == RGResourceUsage::ColorAttachment) {
-		//	VkImageAspectFlags aspectMask = (access.layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || access.layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-		//if (tex.currentLayout == access.layout) {
-		//	continue; // no barrier needed, already in correct layout
-		//}
-
-		//if (access.usage != RGResourceUsage::StorageWrite && access.usage != RGResourceUsage::ColorAttachment) {
-		//	continue; // no barrier needed, only read access
-		//}
 		if (tex.currentLayout != access.layout || access.usage == RGResourceUsage::StorageWrite || access.usage == RGResourceUsage::ColorAttachment) {
 			VkImageAspectFlags aspectMask = (access.layout == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL || access.layout == VK_IMAGE_LAYOUT_DEPTH_READ_ONLY_OPTIMAL) ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
 			if (tex.currentLayout == access.layout) { 
@@ -505,41 +494,6 @@ void RenderGraph::dispatch_barriers(RenderContext& ctx, IRGPass* pass)
 			imageBarriers.push_back(barrier);
 			tex.currentLayout = access.layout;
 		}
-
-		//bool isDepth = (tex.desc.usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT) != 0 ||
-		//	tex.desc.format == VK_FORMAT_D32_SFLOAT ||
-		//	tex.desc.format == VK_FORMAT_D32_SFLOAT_S8_UINT ||
-		//	tex.desc.format == VK_FORMAT_D24_UNORM_S8_UINT ||
-		//	tex.desc.format == VK_FORMAT_D16_UNORM;
-		//VkImageAspectFlags aspectMask = isDepth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
-
-		//if (vkutil::has_stencil_component(tex.desc.format)) {
-		//	aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT; 
-		//}
-
-		//VkImageMemoryBarrier2 barrier{
-		//	.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
-		//	.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-		//	.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
-		//	.dstStageMask = access.stage,
-		//	.dstAccessMask = access.access,
-		//	.oldLayout = tex.currentLayout,
-		//	.newLayout = access.layout,
-		//	.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		//	.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-		//	.image = tex.image,
-		//	.subresourceRange = {
-		//		.aspectMask = aspectMask,
-		//		.baseMipLevel = 0,
-		//		.levelCount = tex.desc.mipLevels,
-		//		.baseArrayLayer = 0,
-		//		.layerCount = tex.desc.arrayLayers
-		//	},
-		//};
-		//imageBarriers.push_back(barrier);
-
-		// update current layout
-		//tex.currentLayout = access.layout; 
 	}
 
 	// dispatch buffer barriers
@@ -589,19 +543,4 @@ void RenderGraph::dispatch_barriers(RenderContext& ctx, IRGPass* pass)
 			.pImageMemoryBarriers = imageBarriers.data() };
 		vkCmdPipelineBarrier2(ctx.get_cmd(), &depInfo);
 	}
-
-	//if (imageBarriers.empty() && bufferBarriers.empty()) {
-	//	return; // no barriers to dispatch
-	//}
-
-	//// dispatch all barriers 
-	//VkDependencyInfo depInfo{
-	//	.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
-	//	.bufferMemoryBarrierCount = static_cast<uint32_t>(bufferBarriers.size()),
-	//	.pBufferMemoryBarriers = bufferBarriers.data(),
-	//	.imageMemoryBarrierCount = static_cast<uint32_t>(imageBarriers.size()),
-	//	.pImageMemoryBarriers = imageBarriers.data(),
-	//};
-
-	//vkCmdPipelineBarrier2(ctx.get_cmd(), &depInfo);
 }
