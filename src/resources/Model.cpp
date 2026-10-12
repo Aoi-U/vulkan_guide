@@ -2,6 +2,7 @@
 
 #include <graphics/VulkanCore.h>
 #include <graphics/utils/vk_utils.h>
+#include <resources/DefaultResources.h>
 #include <fastgltf/glm_element_traits.hpp>
 #include <fastgltf/parser.hpp>
 #include <fastgltf/tools.hpp>
@@ -362,7 +363,7 @@ void Model::extract_geometry(const fastgltf::Asset& gltf, ModelStagingUploadCont
 			sm.bounds.sphereRadius = glm::length(sm.bounds.extents);
 
 			// temporarily store gltf material index in bounding struct to resolve later
-			sm.material = ResourceHandle<Material>();
+			sm.material = std::make_shared<MaterialInstance>(DefaultResources::get().defaultPBRTemplate);
 			if (prim.materialIndex.has_value()) {
 				sm.bounds.sphereRadius = prim.materialIndex.value() * -1.0f - 1000.0f; // store material index in sphere radius for later assignment
 			}
@@ -537,74 +538,82 @@ void Model::upload_gpu_resources(const fastgltf::Asset& gltf, std::vector<RawIma
 void Model::create_materials(const fastgltf::Asset& gltf, const ModelStagingUploadContext& uploadContext)
 {
 	_materials.resize(gltf.materials.size());
+	ResourceHandle<MaterialTemplate> pbrTemplate = DefaultResources::get().defaultPBRTemplate;
+
 	for (size_t i = 0; i < gltf.materials.size(); i++) {
-		std::string matName = get_id() + "_mat_" + std::to_string(i);
+		const fastgltf::Material& gltfMat = gltf.materials[i];
+		auto matInstance = std::make_shared<MaterialInstance>(pbrTemplate);
 
-		if (_resourceManager->has_resource<Material>(matName)) { // material already exists, reuse handle
-			_materials[i] = _resourceManager->get_handle<Material>(matName);
-			continue;
-		}
+		// base color factor
+		glm::vec4 baseColorFactor = glm::vec4(
+			gltfMat.pbrData.baseColorFactor[0],
+			gltfMat.pbrData.baseColorFactor[1],
+			gltfMat.pbrData.baseColorFactor[2],
+			gltfMat.pbrData.baseColorFactor[3]
+		);
+		matInstance->set_parameter("colorFactors", baseColorFactor);
 
-		const fastgltf::Material& mat = gltf.materials[i];
-		MaterialPassType passType = mat.alphaMode == fastgltf::AlphaMode::Blend ? MaterialPassType::Transparent : MaterialPassType::Opaque;
-		_materials[i] = _resourceManager->load<Material>(matName, passType);
-
-		MaterialConstants constants;
-		constants.colorFactors = glm::vec4(mat.pbrData.baseColorFactor[0], mat.pbrData.baseColorFactor[1], mat.pbrData.baseColorFactor[2], mat.pbrData.baseColorFactor[3]);
-		constants.metalRoughFactors = glm::vec4(mat.pbrData.metallicFactor, mat.pbrData.roughnessFactor, 0.0f, 0.0f);
-		constants.extraFactors = glm::vec4(
-			mat.occlusionTexture.has_value() ? mat.occlusionTexture->strength : 1.0f,
-			mat.normalTexture.has_value() ? mat.normalTexture->scale : 1.0f,
-			mat.doubleSided ? 1.0f : 0.0f,
+		// metallic roughness factor
+		glm::vec4 metalRoughFactor = glm::vec4(
+			gltfMat.pbrData.metallicFactor,
+			gltfMat.pbrData.roughnessFactor,
+			0.0f,
 			0.0f
 		);
+		matInstance->set_parameter("metalRoughFactors", metalRoughFactor);
 
-		// populate emissive factor
-		constants.emissiveFactor = glm::vec4(mat.emissiveFactor[0], mat.emissiveFactor[1], mat.emissiveFactor[2], 1.0f);
-		_materials[i]->set_constants(constants);
+		// extra factors
+		glm::vec4 extraFactors = glm::vec4(
+			gltfMat.occlusionTexture.has_value() ? gltfMat.occlusionTexture->strength : 1.0f,
+			gltfMat.normalTexture.has_value() ? gltfMat.normalTexture->scale : 1.0f,
+			gltfMat.doubleSided ? 1.0f : 0.0f,
+			0.0f
+		);
+		matInstance->set_parameter("extraFactors", extraFactors);
+
+		// emissive factor
+		glm::vec4 emissiveFactor = glm::vec4(
+			gltfMat.emissiveFactor[0], gltfMat.emissiveFactor[1], gltfMat.emissiveFactor[2], 1.0f
+		);
+		matInstance->set_parameter("emissiveFactor", emissiveFactor);
 
 		// base color texture
-		if (mat.pbrData.baseColorTexture.has_value()) {
-			size_t imgIdx = gltf.textures[mat.pbrData.baseColorTexture->textureIndex].imageIndex.value();
-			_materials[i]->set_texture(Material::TextureSlot::BaseColor, _textures[imgIdx]);
+		if (gltfMat.pbrData.baseColorTexture.has_value()) {
+			size_t imgIdx = gltf.textures[gltfMat.pbrData.baseColorTexture->textureIndex].imageIndex.value();
+			matInstance->set_texture("albedo", _textures[imgIdx]);
 		}
-
+		
 		// metallic roughness texture
-		if (mat.pbrData.metallicRoughnessTexture.has_value()) {
-			size_t imgIdx = gltf.textures[mat.pbrData.metallicRoughnessTexture->textureIndex].imageIndex.value();
-			_materials[i]->set_texture(Material::TextureSlot::MetallicRoughness, _textures[imgIdx]);
+		if (gltfMat.pbrData.metallicRoughnessTexture.has_value()) {
+			size_t imgIdx = gltf.textures[gltfMat.pbrData.metallicRoughnessTexture->textureIndex].imageIndex.value();
+			matInstance->set_texture("metalRough", _textures[imgIdx]);
 		}
 
 		// occlusion texture
-		if (mat.occlusionTexture.has_value()) {
-			size_t imgIdx = gltf.textures[mat.occlusionTexture->textureIndex].imageIndex.value();
-			_materials[i]->set_texture(Material::TextureSlot::Occlusion, _textures[imgIdx]);
+		if (gltfMat.occlusionTexture.has_value()) {
+			size_t imgIdx = gltf.textures[gltfMat.occlusionTexture->textureIndex].imageIndex.value();
+			matInstance->set_texture("occlusion", _textures[imgIdx]);
 		}
 
 		// normal texture
-		if (mat.normalTexture.has_value()) {
-			size_t imgIdx = gltf.textures[mat.normalTexture->textureIndex].imageIndex.value();
-			_materials[i]->set_texture(Material::TextureSlot::Normal, _textures[imgIdx]);
+		if (gltfMat.normalTexture.has_value()) {
+			size_t imgIdx = gltf.textures[gltfMat.normalTexture->textureIndex].imageIndex.value();
+			matInstance->set_texture("normal", _textures[imgIdx]);
 		}
 
 		// emissive texture
-		if (mat.emissiveTexture.has_value()) {
-			size_t imgIdx = gltf.textures[mat.emissiveTexture->textureIndex].imageIndex.value();
-			_materials[i]->set_texture(Material::TextureSlot::Emissive, _textures[imgIdx]);
+		if (gltfMat.emissiveTexture.has_value()) {
+			size_t imgIdx = gltf.textures[gltfMat.emissiveTexture->textureIndex].imageIndex.value();
+			matInstance->set_texture("emissive", _textures[imgIdx]);
 		}
+
+		_materials[i] = matInstance;
 	}
 }
 
 void Model::create_meshes(const fastgltf::Asset& gltf, const ModelStagingUploadContext& uploadContext)
 {
-	ResourceHandle<Material> defaultMat;
-	std::string defaultMatName = get_id() + "_defaultMat";
-	if (_resourceManager->has_resource<Material>(defaultMatName)) {
-		defaultMat = _resourceManager->get_handle<Material>(defaultMatName);
-	}
-	else {
-		defaultMat = _resourceManager->load<Material>(defaultMatName, MaterialPassType::Opaque);
-	}
+	auto defaultMat = std::make_shared<MaterialInstance>(DefaultResources::get().defaultPBRTemplate);
 
 	// create logical Handles mapping the suballocations
 	for (size_t i = 0; i < uploadContext.meshSubmeshes.size(); i++) {

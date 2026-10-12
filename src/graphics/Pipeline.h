@@ -2,9 +2,12 @@
 
 #include <graphics/utils/vk_types.h>
 #include <resources/Shader.h>
+#include <graphics/reflection/ShaderReflectionTypes.h>
 #include <vector>
 #include <memory>
 #include <span>
+
+class ResourceManager;
 
 enum class BlendMode
 {
@@ -30,22 +33,18 @@ struct RasterState
 struct GraphicsPipelineDesc
 {
 	std::vector<ResourceHandle<Shader>> shaders;
-	std::vector<VkDescriptorSetLayout> descriptorLayouts;
-	std::vector<VkPushConstantRange> pushConstants;
 	std::vector<VkFormat> colorAttachmentFormats;
 	VkFormat depthAttachmentFormat{ VK_FORMAT_UNDEFINED };
 	DepthState depthState;
 	RasterState rasterState;
 	BlendMode blendMode{ BlendMode::None };
 	VkPrimitiveTopology topology{ VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST };
-	std::vector<VkDynamicState> dynamicStates{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	std::vector<VkDynamicState> dynamicStates{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_CULL_MODE };
 };
 
 struct ComputePipelineDesc
 {
 	ResourceHandle<Shader> computeShader;
-	std::vector<VkDescriptorSetLayout> descriptorLayouts;
-	std::vector<VkPushConstantRange> pushConstants;
 };
 
 class Pipeline
@@ -76,9 +75,20 @@ class GraphicsPipeline : public Pipeline
 {
 public:
 	GraphicsPipeline() = default;
-	GraphicsPipeline(VkDevice device, const GraphicsPipelineDesc& desc);
+	GraphicsPipeline(VkDevice device, ResourceManager* resourceManager, const GraphicsPipelineDesc& desc);
 	GraphicsPipeline(GraphicsPipeline&&) noexcept = default;
 	GraphicsPipeline& operator=(GraphicsPipeline&&) noexcept = default;
+
+	const PipelineLayoutReflection& get_reflection() const { return _reflection; }
+	VkDescriptorSetLayout get_descriptor_set_layout(uint32_t set) const
+	{
+		auto it = _setLayouts.find(set);
+		return (it != _setLayouts.end()) ? it->second : VK_NULL_HANDLE;
+	}
+
+private:
+	PipelineLayoutReflection _reflection;
+	std::unordered_map<uint32_t, VkDescriptorSetLayout> _setLayouts;
 };
 
 
@@ -86,7 +96,18 @@ class ComputePipeline : public Pipeline
 {
 public:
 	ComputePipeline() = default;
-	ComputePipeline(VkDevice device, const ComputePipelineDesc& desc);
+	ComputePipeline(VkDevice device, ResourceManager* resourceManager, const ComputePipelineDesc& desc);
 	ComputePipeline(ComputePipeline&&) noexcept = default;
 	ComputePipeline& operator=(ComputePipeline&&) noexcept = default;
+
+	const PipelineLayoutReflection& get_reflection() const { return _reflection; }
+	VkDescriptorSetLayout get_descriptor_set_layout(uint32_t set) const
+	{
+		auto it = _setLayouts.find(set);
+		return (it != _setLayouts.end()) ? it->second : VK_NULL_HANDLE;
+	}
+
+private:
+	PipelineLayoutReflection _reflection;
+	std::unordered_map<uint32_t, VkDescriptorSetLayout> _setLayouts;
 };

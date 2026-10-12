@@ -3,7 +3,7 @@
 #include <graphics/utils/vk_types.h>
 #include <resources/ResourceManager.h>
 #include <resources/Mesh.h>
-#include <resources/Material.h>
+#include <resources/MaterialInstance.h>
 #include <fastgltf/parser.hpp>
 #include <filesystem>
 #include <vector>
@@ -20,7 +20,7 @@ struct ModelSubMesh
 	uint32_t count;
 	Bounds bounds;
 	ResourceHandle<Mesh> mesh;
-	ResourceHandle<Material> material;
+	std::shared_ptr<MaterialInstance> material;
 };
 
 struct ModelNode : public Node
@@ -88,7 +88,7 @@ private:
 	std::filesystem::path _filePath;
 
 	std::vector<ResourceHandle<Texture>> _textures;
-	std::vector<ResourceHandle<Material>> _materials;
+	std::vector<std::shared_ptr<MaterialInstance>> _materials;
 
 	std::atomic<bool> _isReady{ false }; // whether model loading is finished
 	std::atomic<bool> _aborted{ false }; // whether model loading was aborted due to an error

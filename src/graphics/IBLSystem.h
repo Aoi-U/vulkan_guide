@@ -59,9 +59,6 @@ private:
 	ComputePipeline _prefilterPipeline;
 	ComputePipeline _brdfLutPipeline;
 
-	VkDescriptorSetLayout _computeLayout;
-	VkDescriptorSetLayout _lutComputeLayout;
-
 	bool _isHdrLoaded{ false };
 	std::string _hdrPath{ "Procedural sky" };
 };

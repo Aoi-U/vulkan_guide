@@ -1,5 +1,6 @@
 #pragma once
 
+#include <graphics/reflection/PipelineLayoutCache.h>
 #include <vulkan/vulkan.h>
 #include <string>
 #include <optional>
@@ -150,6 +151,7 @@ public:
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
 	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }
+	PipelineLayoutCache& get_pipeline_layout_cache() { return _layoutCache; }
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> load(const std::string& resourceId, Args&&... args)
@@ -299,6 +301,7 @@ private:
 	std::deque<std::function<void()>> _mainThreadTasks;
 
 	std::unique_ptr<GlobalGeometryPool> _geometryPool;
+	PipelineLayoutCache _layoutCache;
 
 	// two level storage system
 	// organize by type first, then by unique id

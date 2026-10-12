@@ -50,6 +50,11 @@ void DefaultResources::init(ResourceManager* manager)
 
   VkSamplerCreateInfo shadowInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_LINEAR, .minFilter = VK_FILTER_LINEAR, .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST, .addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, .addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, .addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER, .borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_WHITE };
   shadowSampler = _manager->load<Sampler>("sampler_shadow", shadowInfo);
+
+  // default PBR material template
+  auto gbufferVert = _manager->load<Shader>("gbuffer.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
+  auto gbufferFrag = _manager->load<Shader>("gbuffer.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
+  defaultPBRTemplate = _manager->load<MaterialTemplate>("pbr_default_template", gbufferVert, gbufferFrag);
 }
 
 void DefaultResources::cleanup()
@@ -62,4 +67,5 @@ void DefaultResources::cleanup()
   defaultSamplerLinear = {};
   defaultSamplerNearest = {};
   shadowSampler = {};
+  defaultPBRTemplate = {};
 }

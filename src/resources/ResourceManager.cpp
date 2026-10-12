@@ -5,7 +5,7 @@
 void ResourceManager::init(VulkanCore* core)
 {
 	_vulkanCore = core;
-
+	_layoutCache.init(_vulkanCore->get_device());
 	init_bindless(); // create bindless descriptor resources
 
 	_geometryPool = std::make_unique<GlobalGeometryPool>();
@@ -24,6 +24,7 @@ void ResourceManager::cleanup()
 		_vulkanCore->get_deletion_queue().flush_all();
 	}
 	clean_bindless();
+	_layoutCache.cleanup();
 }
 
 uint32_t ResourceManager::allocate_bindless_texture(VkImageView view, VkSampler sampler)

@@ -4,7 +4,7 @@
 #include <glm/gtx/transform.hpp>
 #include <resources/Mesh.h>
 #include <resources/Texture.h>
-#include <resources/Material.h>
+#include <resources/MaterialInstance.h>
 #include <string>
 
 struct TagComponent
@@ -72,61 +72,13 @@ enum class AlphaMode : uint8_t
 };
 
 struct MaterialComponent {
-	// albedo / base Color
-	glm::vec4 albedoColor{ 1.0f, 1.0f, 1.0f, 1.0f };
-	ResourceHandle<Texture> albedoTexture;
-
-	// metallic roughness
-	float metallic{ 1.0f };
-	float roughness{ 1.0f };
-	ResourceHandle<Texture> metallicRoughnessTexture;
-
-	// normal map
-	ResourceHandle<Texture> normalTexture;
-	float normalStrength{ 1.0f };
-
-	// emissive
-	glm::vec3 emissiveColor{ 0.0f, 0.0f, 0.0f };
-	float emissiveIntensity{ 1.0f };
-	ResourceHandle<Texture> emissiveTexture;
-
-	// ambient occlusion
-	ResourceHandle<Texture> occlusionTexture;
-	float occlusionStrength{ 1.0f };
-
-	// surface and blending
-	AlphaMode alphaMode{ AlphaMode::Opaque };
-	float alphaCutoff{ 0.5f };
+	std::shared_ptr<MaterialInstance> material;
 	bool doubleSided{ false };
-
-	// optional handle to an underlying base Material asset
-	ResourceHandle<Material> baseMaterial;
+	AlphaMode alphaMode{ AlphaMode::Opaque };
 
 	// flag to mark GPU descriptor/uniform buffer as dirty when parameters change
 	mutable bool isDirty{ true };
 
-	void set_texture(Material::TextureSlot slot, ResourceHandle<Texture> newTexture) {
-		baseMaterial = {};
-
-		switch (slot) {
-		case Material::TextureSlot::BaseColor:
-			albedoTexture = std::move(newTexture);
-			break;
-		case Material::TextureSlot::MetallicRoughness:
-			metallicRoughnessTexture = std::move(newTexture);
-			break;
-		case Material::TextureSlot::Normal:
-			normalTexture = std::move(newTexture);
-			break;
-		case Material::TextureSlot::Emissive:
-			emissiveTexture = std::move(newTexture);
-			break;
-		case Material::TextureSlot::Occlusion:
-			occlusionTexture = std::move(newTexture);
-			break;
-		}
-		isDirty = true;
-	}
 };
 
 struct PointLightComponent

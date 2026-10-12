@@ -46,6 +46,5 @@ private:
   }
 
   VulkanCore* _vulkanCore{ nullptr };
-  VkDescriptorSetLayout _cullDescriptorLayout{ VK_NULL_HANDLE };
   ComputePipeline _pipeline;
 };

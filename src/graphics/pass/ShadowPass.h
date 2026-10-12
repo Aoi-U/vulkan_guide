@@ -15,6 +15,5 @@ public:
 private:
 	VulkanCore* _vulkanCore{ nullptr };
 	ResourceManager* _resourceManager{ nullptr };
-	VkDescriptorSetLayout _descriptorLayout;
 	GraphicsPipeline _pipeline;
 };

@@ -1,5 +1,6 @@
 #include "ShadowPass.h"
-#include <utils/vk_descriptors.h>
+#include <graphics/reflection/DescriptorBinder.h>
+#include <graphics/reflection/PushConstantDispatcher.h>
 #include <graphics/Renderer.h>
 #include <resources/GlobalGeometryPool.h>
 #include <chrono>
@@ -9,32 +10,21 @@ void ShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, 
 	_vulkanCore = vulkanCore;
 	_resourceManager = resourceManager;
 
-	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: storage buffer for object data
-	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
-	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
-
 	auto vertShader = resourceManager->load<Shader>("shadow.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
 
 	GraphicsPipelineDesc pipeDesc{
 		.shaders = { vertShader },
-		.descriptorLayouts = { _descriptorLayout },
-		.pushConstants = { {.stageFlags = VK_SHADER_STAGE_VERTEX_BIT, .offset = 0, .size = sizeof(glm::mat4) } },
 		.depthAttachmentFormat = depthFormat,
 		.depthState = {.depthTest = true, .depthWrite = true, .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL },
 		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE }
 	};
 
-	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), pipeDesc);
+	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), _resourceManager, pipeDesc);
 }
 
 void ShadowPass::cleanup()
 {
 	_pipeline.cleanup();
-	if (_descriptorLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _descriptorLayout, nullptr);
-		_descriptorLayout = VK_NULL_HANDLE;
-	}
 	_vulkanCore = nullptr;
 }
 
@@ -49,23 +39,23 @@ void ShadowPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& d
 
 	// bind pipeline and push constants
 	ctx.bind_pipeline(_pipeline);
-	ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT, sceneData.sunlightViewproj);
 
-	VkDescriptorSet shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
-	DescriptorWriter writer;
-	writer.write_buffer(0, graph.get_buffer(params.gpuObjectBuffer), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.write_buffer(1, graph.get_buffer(params.gpuInstanceBuffer), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-	writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
+	PushConstantDispatcher pc(_pipeline.get_reflection());
+	pc.set("sunlightViewproj", sceneData.sunlightViewproj);
+	pc.flush(ctx.get_cmd(), _pipeline.get_layout());
 
-	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
-	if (!drawCtx.opaqueBatches.empty()) {
-		ctx.bind_index_buffer(_resourceManager->get_geometry_pool().get_index_buffer(), 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
-	}
+	VkDescriptorSet shadowSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
+	std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
+		{"objectBuffer", { graph.get_buffer(params.gpuObjectBuffer), 0, sizeof(GPUObjectData) * drawCtx.indirectDrawCount }},
+		{"instanceBuffer", { graph.get_buffer(params.gpuInstanceBuffer), 0, sizeof(uint32_t) * drawCtx.indirectDrawCount }}
+	};
+	DescriptorBinder::update_set(_vulkanCore->get_device(), shadowSet, _pipeline.get_reflection().sets.at(0), buffers, {});
+	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowSet);
 
-	VkBuffer lastIndexBuffer = VK_NULL_HANDLE;
+	ctx.bind_index_buffer(_resourceManager->get_geometry_pool().get_index_buffer(), 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
+	ctx.set_cull_mode(VK_CULL_MODE_NONE);
+
 	for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
-
-
 		// draw batch
 		VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
 		VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);

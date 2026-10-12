@@ -1,6 +1,7 @@
 #include "SSAOPass.h"
 
-#include <utils/vk_descriptors.h>
+#include <graphics/reflection/DescriptorBinder.h>
+#include <graphics/reflection/PushConstantDispatcher.h>
 #include <graphics/Renderer.h>
 #include <graphics/utils/vk_utils.h>
 #include <resources/DefaultResources.h>
@@ -19,45 +20,22 @@ void SSAOPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, Vk
 
 	generate_kernal_and_noise();
 
-	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: uniform scene data
-	builder.add_binding(1, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 1: kernel samples[64]
-	builder.add_binding(2, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 2: gPosition
-	builder.add_binding(3, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 3: gNormal
-	builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // texNoise
-	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_FRAGMENT_BIT);
-
 	auto vert = resourceManager->load<Shader>("deferred_lighting.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
 	auto frag = resourceManager->load<Shader>("ssao.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
 	GraphicsPipelineDesc desc{
 		.shaders = { vert, frag },
-		.descriptorLayouts = { _descriptorLayout },
-		.pushConstants = {{.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT, .offset = 0, .size = sizeof(SSAOPushConstants) }},
 		.colorAttachmentFormats = { colorFormat },
 		.depthAttachmentFormat = VK_FORMAT_UNDEFINED,
 		.depthState = {.depthTest = false, .depthWrite = false },
 		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .polygonMode = VK_POLYGON_MODE_FILL }
 	};
-	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), desc);
+	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), resourceManager, desc);
 }
 
 void SSAOPass::cleanup()
 {
 	_pipeline.cleanup();
-
-	if (_descriptorLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _descriptorLayout, nullptr);
-		_descriptorLayout = VK_NULL_HANDLE;
-	}
-	//if (_noiseSampler != VK_NULL_HANDLE) {
-	//	vkDestroySampler(_vulkanCore->get_device(), _noiseSampler, nullptr);
-	//	_noiseSampler = VK_NULL_HANDLE;
-	//}
-	
-	//_noiseImage.unload();
-	//_kernelBuffer.unload();
-
 	_vulkanCore = nullptr;
 }
 
@@ -66,28 +44,33 @@ void SSAOPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& dra
 	// begin clock
 	auto start = std::chrono::system_clock::now();
 
-	VkDescriptorSet ssaoSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
-	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer->get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_buffer(1, _kernelBuffer->get_buffer(), sizeof(glm::vec4) * 64, 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_image(2, graph.get_image_view(params.gPosition), DefaultResources::get().defaultSamplerLinear->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(3, graph.get_image_view(params.gNormal), DefaultResources::get().defaultSamplerNearest->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.write_image(4, _noiseImage->get_image_view(), _noiseSampler->get_sampler(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.update_set(_vulkanCore->get_device(), ssaoSet);
+	VkDescriptorSet ssaoSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
+
+	std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
+			{"sceneData", { frameData.sceneDataBuffer->get_buffer(), 0, sizeof(GPUSceneData) }},
+			{"kernel", { _kernelBuffer->get_buffer(), 0, sizeof(glm::vec4) * 64 }}
+	};
+
+	std::unordered_map<std::string, VkDescriptorImageInfo> images = {
+			{"gPosition", { DefaultResources::get().defaultSamplerLinear->get_sampler(), graph.get_image_view(params.gPosition), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }},
+			{"gNormal", { DefaultResources::get().defaultSamplerNearest->get_sampler(), graph.get_image_view(params.gNormal), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }},
+			{"texNoise", { _noiseSampler->get_sampler(), _noiseImage->get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
+	};
+
+	DescriptorBinder::update_set(_vulkanCore->get_device(), ssaoSet, _pipeline.get_reflection().sets.at(0), buffers, images);
 
 	ctx.bind_pipeline(_pipeline);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, ssaoSet);
 
-	// set push constants
-	SSAOPushConstants push{
-		.radius = static_cast<float>(cvSSAORadius.Get()),
-		.bias = static_cast<float>(cvSSAOBias.Get()),
-		.power = static_cast<float>(cvSSAOPower.Get()),
-		.kernelSize = 64
-	};
-	ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_FRAGMENT_BIT, push);
+	PushConstantDispatcher pc(_pipeline.get_reflection());
+	pc.set("radius", static_cast<float>(cvSSAORadius.Get()));
+	pc.set("bias", static_cast<float>(cvSSAOBias.Get()));
+	pc.set("power", static_cast<float>(cvSSAOPower.Get()));
+	pc.set("kernelSize", 64);
+	pc.flush(ctx.get_cmd(), _pipeline.get_layout());
 
 	//  draw full screen triangle
+	ctx.set_cull_mode(VK_CULL_MODE_NONE);
 	ctx.draw(3, 1, 0, 0);
 
 	auto end = std::chrono::system_clock::now();

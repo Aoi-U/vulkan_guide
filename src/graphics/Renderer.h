@@ -46,7 +46,6 @@ struct DrawCommandCache
 {
 	std::vector<RenderObject> opaqueObjects;
 	std::vector<RenderObject> transparentObjects;
-	std::vector<MaterialConstants> materials;
 
 	// indirect draw
 	std::vector<IndirectBatch> opaqueBatches;

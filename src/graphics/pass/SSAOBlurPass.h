@@ -16,6 +16,5 @@ public:
 
 private:
 	VulkanCore* _vulkanCore;
-	VkDescriptorSetLayout _descriptorLayout;
 	GraphicsPipeline _pipeline;
 };

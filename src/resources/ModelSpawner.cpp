@@ -39,27 +39,9 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 					.count = sm.count,
 					.visible = true
 				});
-			if (sm.material.is_valid()) {
+			if (sm.material) {
 				MaterialComponent mat{};
-				mat.baseMaterial = sm.material;
-				const auto& constants = sm.material->get_constants();
-				mat.albedoColor = constants.colorFactors;
-				mat.metallic = constants.metalRoughFactors.x;
-				mat.roughness = constants.metalRoughFactors.y;
-				mat.occlusionStrength = constants.extraFactors.x;
-				mat.normalStrength = constants.extraFactors.y;
-				mat.doubleSided = constants.extraFactors.z > 0.5f;
-				mat.alphaCutoff = constants.extraFactors.w;
-				mat.emissiveColor = glm::vec3(constants.emissiveFactor);
-				mat.emissiveIntensity = constants.emissiveFactor.w;
-				mat.alphaMode = (sm.material->get_pass_type() == MaterialPassType::Transparent)
-					? AlphaMode::Blend : AlphaMode::Opaque;
-
-				mat.albedoTexture = sm.material->get_texture(Material::TextureSlot::BaseColor);
-				mat.metallicRoughnessTexture = sm.material->get_texture(Material::TextureSlot::MetallicRoughness);
-				mat.normalTexture = sm.material->get_texture(Material::TextureSlot::Normal);
-				mat.emissiveTexture = sm.material->get_texture(Material::TextureSlot::Emissive);
-				mat.occlusionTexture = sm.material->get_texture(Material::TextureSlot::Occlusion);
+				mat.material = sm.material;
 				mat.isDirty = true;
 				registry.emplace<MaterialComponent>(nodeEntity, mat);
 			}
@@ -77,31 +59,15 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 				hc.children.push_back(smEntity);
 
 				registry.emplace<MeshComponent>(smEntity, MeshComponent{
-						.mesh = sm.mesh,
-						.bounds = sm.bounds,
-						.startIndex = sm.startIndex,
-						.count = sm.count,
-						.visible = true
+					.mesh = sm.mesh,
+					.bounds = sm.bounds,
+					.startIndex = sm.startIndex,
+					.count = sm.count,
+					.visible = true
 					});
-				if (sm.material.is_valid()) {
+				if (sm.material) {
 					MaterialComponent mat{};
-					mat.baseMaterial = sm.material;
-					const auto& constants = sm.material->get_constants();
-					mat.albedoColor = constants.colorFactors;
-					mat.metallic = constants.metalRoughFactors.x;
-					mat.roughness = constants.metalRoughFactors.y;
-					mat.occlusionStrength = constants.extraFactors.x;
-					mat.normalStrength = constants.extraFactors.y;
-					mat.doubleSided = constants.extraFactors.z > 0.5f;
-					mat.alphaCutoff = constants.extraFactors.w;
-					mat.emissiveColor = glm::vec3(constants.emissiveFactor);
-					mat.emissiveIntensity = constants.emissiveFactor.w;
-					mat.alphaMode = (sm.material->get_pass_type() == MaterialPassType::Transparent) ? AlphaMode::Blend : AlphaMode::Opaque;
-					mat.albedoTexture = sm.material->get_texture(Material::TextureSlot::BaseColor);
-					mat.metallicRoughnessTexture = sm.material->get_texture(Material::TextureSlot::MetallicRoughness);
-					mat.normalTexture = sm.material->get_texture(Material::TextureSlot::Normal);
-					mat.emissiveTexture = sm.material->get_texture(Material::TextureSlot::Emissive);
-					mat.occlusionTexture = sm.material->get_texture(Material::TextureSlot::Occlusion);
+					mat.material = sm.material;
 					mat.isDirty = true;
 					registry.emplace<MaterialComponent>(smEntity, mat);
 				}

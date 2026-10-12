@@ -28,7 +28,6 @@ private:
 
 	VulkanCore* _vulkanCore;
 	ResourceManager* _resourceManager;
-	VkDescriptorSetLayout _descriptorLayout;
 	GraphicsPipeline _pipeline;
 
 	ResourceHandle<Buffer> _kernelBuffer;

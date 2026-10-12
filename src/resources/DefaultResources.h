@@ -3,6 +3,7 @@
 #include <resources/ResourceManager.h>
 #include <resources/Texture.h>
 #include <resources/Sampler.h>
+#include <resources/MaterialTemplate.h>
 
 class DefaultResources
 {
@@ -25,6 +26,8 @@ public:
 	ResourceHandle<Sampler> defaultSamplerLinear;
 	ResourceHandle<Sampler> defaultSamplerNearest;
 	ResourceHandle<Sampler> shadowSampler;
+
+	ResourceHandle<MaterialTemplate> defaultPBRTemplate;
 
 private:
 	ResourceManager* _manager{ nullptr };

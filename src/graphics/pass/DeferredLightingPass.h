@@ -13,6 +13,5 @@ public:
 
 private:
   VulkanCore* _vulkanCore{ nullptr };
-  VkDescriptorSetLayout _descriptorLayout{ VK_NULL_HANDLE };
   GraphicsPipeline _pipeline;
 };

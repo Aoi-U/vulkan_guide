@@ -1,16 +1,11 @@
 #include "SkyboxPass.h"
-#include <utils/vk_descriptors.h>
+#include <graphics/reflection/DescriptorBinder.h>
 #include <graphics/Renderer.h>
 #include <chrono>
 
 void SkyboxPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
-
-	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER); // binding 0: uniform buffer for scene data
-	builder.add_binding(4, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER); // binding 4: combined image sampler for environment cubemap
-	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT);
 
 	// load shaders
 	auto vert = resourceManager->load<Shader>("skybox.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
@@ -19,24 +14,20 @@ void SkyboxPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, 
 	// create pipeline
 	GraphicsPipelineDesc pipelineDesc{
 		.shaders = {vert, frag},
-		.descriptorLayouts = {_descriptorLayout},
+		
 		.colorAttachmentFormats = {colorFormat},
 		.depthAttachmentFormat = depthFormat,
 		.depthState = {.depthTest = true, .depthWrite = false, .compareOp = VK_COMPARE_OP_GREATER_OR_EQUAL}, // test GREATER_OR_EQUAL to draw only on empty pixels without writing depth
 		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE, .polygonMode = VK_POLYGON_MODE_FILL},
 		.blendMode = BlendMode::None
 	};
-	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), pipelineDesc);
+	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), resourceManager, pipelineDesc);
 }
 
 void SkyboxPass::cleanup()
 {
 	VkDevice dev = _vulkanCore->get_device();
 	_pipeline.cleanup();
-	if (_descriptorLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(dev, _descriptorLayout, nullptr);
-		_descriptorLayout = VK_NULL_HANDLE;
-	}
 	_vulkanCore = nullptr;
 }
 
@@ -47,16 +38,22 @@ void SkyboxPass::render(RenderContext& ctx, FrameData& frameData, DrawContext& d
 
 	const EnvironmentResources& env = drawCtx.environment;
 
-	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
-	DescriptorWriter writer;
-	writer.write_buffer(0, frameData.sceneDataBuffer->get_buffer(), sizeof(GPUSceneData), 0, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER);
-	writer.write_image(4, env.environmentView, env.cubemapSampler, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER);
-	writer.update_set(_vulkanCore->get_device(), skyboxSet);
+	VkDescriptorSet skyboxSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
+
+	std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
+			{"sceneData", { frameData.sceneDataBuffer->get_buffer(), 0, sizeof(GPUSceneData) }}
+	};
+	std::unordered_map<std::string, VkDescriptorImageInfo> images = {
+			{"skyMap", { env.cubemapSampler, env.environmentView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
+	};
+
+	DescriptorBinder::update_set(_vulkanCore->get_device(), skyboxSet, _pipeline.get_reflection().sets.at(0), buffers, images);
 
 	ctx.bind_pipeline(_pipeline);
 	ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, skyboxSet);
 
 	// draw full scren triangle
+	ctx.set_cull_mode(VK_CULL_MODE_NONE);
 	ctx.draw(3, 1, 0, 0);
 
 	auto end = std::chrono::system_clock::now();

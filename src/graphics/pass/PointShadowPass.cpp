@@ -1,6 +1,7 @@
 #include "PointShadowPass.h"
 
-#include <utils/vk_descriptors.h>
+#include <graphics/reflection/DescriptorBinder.h>
+#include <graphics/reflection/PushConstantDispatcher.h>
 #include <graphics/Renderer.h>
 #include <resources/GlobalGeometryPool.h>
 #include <chrono>
@@ -11,45 +12,27 @@ void PointShadowPass::init(VulkanCore* vulkanCore, ResourceManager* resourceMana
 	_vulkanCore = vulkanCore;
 	_resourceManager = resourceManager;
 
-	DescriptorLayoutBuilder builder;
-	builder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: storage buffer for object data
-	builder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: storage buffer for instance index
-	_descriptorLayout = builder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_VERTEX_BIT);
-
 	auto vert = resourceManager->load<Shader>("point_shadow.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
 	auto frag = resourceManager->load<Shader>("point_shadow.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
 	GraphicsPipelineDesc pipeDesc{
 		.shaders = {vert, frag},
-		.descriptorLayouts = {_descriptorLayout},
-		.pushConstants = {
-			{
-				.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-				.offset = 0,
-				.size = sizeof(PointShadowPushConstants)
-			}
-		},
 		.depthAttachmentFormat = depthFormat,
 		.depthState = {.depthTest = true, .depthWrite = true, .compareOp = VK_COMPARE_OP_LESS_OR_EQUAL},
 		.rasterState = {.cullMode = VK_CULL_MODE_NONE, .frontFace = VK_FRONT_FACE_CLOCKWISE, .polygonMode = VK_POLYGON_MODE_FILL }
 	};
-	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), pipeDesc);
+	_pipeline = GraphicsPipeline(_vulkanCore->get_device(), resourceManager, pipeDesc);
 }
 
 void PointShadowPass::cleanup()
 {
 	_pipeline.cleanup();
-	if (_descriptorLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _descriptorLayout, nullptr);
-		_descriptorLayout = VK_NULL_HANDLE;
-	}
 	_vulkanCore = nullptr;
 }
 
 void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const DrawContext& drawCtx, const GPUSceneData& sceneData, const PointShadowPassParameters& params, const RenderGraph& graph)
 {
 	int shadowLightCount = static_cast<int>(sceneData.lightCount.y);
-	//VkExtent2D extent = renderTargets.at("PointShadowMap")->get_extent_2d();
 	VkExtent3D extent3d = graph.get_extent(params.pointShadowMap);
 	VkExtent2D extent = { extent3d.width, extent3d.height };
 
@@ -77,20 +60,19 @@ void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const Dra
 	}
 
 	if (drawCtx.indirectDrawCount > 0 && shadowLightCount >= 0 && !drawCtx.opaqueBatches.empty()) {
-		VkDescriptorSet shadowDescriptor = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _descriptorLayout);
+		VkDescriptorSet shadowSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
 
-		// update the descriptor set 
-		DescriptorWriter writer;
-		writer.write_buffer(0, graph.get_buffer(params.gpuObjectBuffer), sizeof(GPUObjectData) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		writer.write_buffer(1, graph.get_buffer(params.gpuInstanceBuffer), sizeof(uint32_t) * drawCtx.indirectDrawCount, 0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER);
-		writer.update_set(_vulkanCore->get_device(), shadowDescriptor);
+		std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
+			{"objectBuffer", { graph.get_buffer(params.gpuObjectBuffer), 0, sizeof(GPUObjectData) * drawCtx.indirectDrawCount }},
+			{"instanceBuffer", { graph.get_buffer(params.gpuInstanceBuffer), 0, sizeof(uint32_t) * drawCtx.indirectDrawCount }}
+		};
+		DescriptorBinder::update_set(_vulkanCore->get_device(), shadowSet, _pipeline.get_reflection().sets.at(0), buffers, {});
 
 		// render each cubemap face
 		for (uint32_t face = 0; face < 6; face++) {
 			RenderDesc desc{};
 			desc.renderExtent = extent;
 			desc.depthAttachment = DepthAttachmentDesc{
-				//.view = renderTargets.at("PointShadowMap")->get_face_view(face),
 				.view = graph.get_image_view(params.pointShadowMap, face),
 				.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -101,24 +83,24 @@ void PointShadowPass::render(RenderContext& ctx, FrameData& frameData, const Dra
 			ctx.begin_rendering(desc);
 			ctx.set_viewport_scissor(extent);
 			ctx.bind_pipeline(_pipeline);
-			ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowDescriptor);
+			ctx.bind_descriptor_set(VK_PIPELINE_BIND_POINT_GRAPHICS, _pipeline.get_layout(), 0, shadowSet);
 
-			// set push constants
-			PointShadowPushConstants push{
-				.lightViewproj = shadowTransforms[face],
-				.lightPos = glm::vec4(lightPos, farPlane)
-			};
-			ctx.set_push_constants(_pipeline.get_layout(), VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, push);
+			ctx.set_cull_mode(VK_CULL_MODE_NONE);
+
+			PushConstantDispatcher pc(_pipeline.get_reflection());
+			pc.set("lightViewproj", shadowTransforms[face]);
+			pc.set("lightPos", glm::vec4(lightPos, farPlane));
+			pc.flush(ctx.get_cmd(), _pipeline.get_layout());
 
 			if (!drawCtx.opaqueBatches.empty()) {
 				ctx.bind_index_buffer(_resourceManager->get_geometry_pool().get_index_buffer(), 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
-			}
 
-			for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
-				// draw batch
-				VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
-				VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-				ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+				for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
+					// draw batch
+					VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
+					VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
+					ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+				}
 			}
 			ctx.end_rendering();
 		}

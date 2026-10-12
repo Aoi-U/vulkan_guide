@@ -75,6 +75,8 @@ bool Shader::doLoad()
 		return false;
 	}
 
+	_spirvCode = std::move(buffer);
+
 	return true;
 }
 
@@ -84,5 +86,7 @@ bool Shader::doUnload()
 		_core->get_deletion_queue().push(_module);
 		_module = VK_NULL_HANDLE;
 	}
+	_spirvCode.clear();
+
 	return true;
 }

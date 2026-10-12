@@ -15,6 +15,5 @@ public:
 private:
   VulkanCore* _vulkanCore{ nullptr };
   ResourceManager* _resourceManager{ nullptr };
-  VkDescriptorSetLayout _sceneDataDescriptorLayout{ VK_NULL_HANDLE };
-  GraphicsPipeline _pipeline;
+  VkFormat _depthFormat;
 };

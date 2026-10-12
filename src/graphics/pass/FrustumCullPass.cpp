@@ -8,33 +8,18 @@ static AutoCVar_Int cvCullMode("cull.frustum", "Toggle frustum culling", 1, CVar
 
 void FrustumCullPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager) {
 	_vulkanCore = vulkanCore;
-	//build_cull_pipeline();
-	DescriptorLayoutBuilder cullLayoutBuilder;
-	cullLayoutBuilder.add_binding(0, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 0: GPUObjectData buffer
-	cullLayoutBuilder.add_binding(1, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 1: final instance id buffer
-	cullLayoutBuilder.add_binding(2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 2: indirect draw command buffer
-	cullLayoutBuilder.add_binding(3, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 3: cull stats buffer
-	cullLayoutBuilder.add_binding(4, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER); // binding 4: batch count buffer
-	_cullDescriptorLayout = cullLayoutBuilder.build(_vulkanCore->get_device(), VK_SHADER_STAGE_COMPUTE_BIT);
 
 	auto cullShader = resourceManager->load<Shader>("frustumcull.comp", VK_SHADER_STAGE_COMPUTE_BIT, "main");
 
 	ComputePipelineDesc pipelineDesc{
 		.computeShader = cullShader,
-		.descriptorLayouts = { _cullDescriptorLayout },
-		.pushConstants = { VkPushConstantRange{VK_SHADER_STAGE_COMPUTE_BIT, 0, sizeof(CullPushConstants)} }
 	};
 
-	_pipeline = ComputePipeline(_vulkanCore->get_device(), pipelineDesc);
+	_pipeline = ComputePipeline(_vulkanCore->get_device(), resourceManager, pipelineDesc);
 }
 
 void FrustumCullPass::cleanup() {
 	_pipeline.cleanup();
-
-	if (_cullDescriptorLayout != VK_NULL_HANDLE) {
-		vkDestroyDescriptorSetLayout(_vulkanCore->get_device(), _cullDescriptorLayout, nullptr);
-		_cullDescriptorLayout = VK_NULL_HANDLE;
-	}
 	_vulkanCore = nullptr;
 }
 
@@ -116,7 +101,8 @@ void FrustumCullPass::dispatch(RenderContext& ctx, FrameData& frameData, DrawCon
 		}
 	}
 
-	VkDescriptorSet cullSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _cullDescriptorLayout);
+	VkDescriptorSetLayout cullSetLayout = _pipeline.get_descriptor_set_layout(0);
+	VkDescriptorSet cullSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), cullSetLayout);
 
 	// update descriptor set with the new buffers
 	DescriptorWriter writer;
