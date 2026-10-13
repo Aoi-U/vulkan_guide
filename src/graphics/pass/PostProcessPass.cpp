@@ -11,7 +11,7 @@ AutoCVar_Float cvExposure("r.exposure", "Camera exposure multiplier", 1.0f, CVar
 void PostProcessPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat)
 {
 	_vulkanCore = vulkanCore;
-	auto vert = resourceManager->load<Shader>("deferred_lighting.vert", VK_SHADER_STAGE_VERTEX_BIT, "main"); 
+	auto vert = resourceManager->load<Shader>("deferred_lighting.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
 	auto frag = resourceManager->load<Shader>("post_process.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
 
 	GraphicsPipelineDesc desc{
@@ -30,12 +30,14 @@ void PostProcessPass::cleanup()
 	_vulkanCore = nullptr;
 }
 
-void PostProcessPass::render(RenderContext & ctx, FrameData & frameData, const PostProcessPassParameters & params, const RenderGraph & graph)
+void PostProcessPass::render(RenderContext& ctx, FrameData& frameData, const PostProcessPassParameters& params, const RenderGraph& graph)
 {
 	VkDescriptorSet postProcessSet = frameData._frameDescriptors.allocate(_vulkanCore->get_device(), _pipeline.get_descriptor_set_layout(0));
 
 	std::unordered_map<std::string, VkDescriptorImageInfo> images = {
-		 {"sceneColor", { DefaultResources::get().defaultSamplerLinear->get_sampler(), graph.get_image_view(params.sceneColor), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
+		{"sceneColor", { DefaultResources::get().defaultSamplerLinear->get_sampler(), graph.get_image_view(params.sceneColor), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }},
+		{"bloomColor", { DefaultResources::get().defaultSamplerLinear->get_sampler(), graph.get_image_view(params.bloomColor), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL}}
+
 	};
 
 	DescriptorBinder::update_set(_vulkanCore->get_device(), postProcessSet, _pipeline.get_reflection().sets.at(0), {}, images);

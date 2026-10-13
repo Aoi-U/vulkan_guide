@@ -11,6 +11,7 @@
 #include <graphics/pass/DeferredLightingPass.h>
 #include <graphics/pass/SSAOPass.h>
 #include <graphics/pass/SSAOBlurPass.h>
+#include <graphics/pass/BloomPass.h>
 #include <graphics/pass/PostProcessPass.h>
 #include <graphics/RenderGraph.h>
 #include <graphics/utils/RGParameters.h>
@@ -165,6 +166,7 @@ private:
 	std::unique_ptr<DeferredLightingPass> _deferredLightingPass;
 	std::unique_ptr<SSAOPass> _ssaoPass;
 	std::unique_ptr<SSAOBlurPass> _ssaoBlurPass;
+	std::unique_ptr<BloomPass> _bloomPass;
 	std::unique_ptr<PostProcessPass> _postProcessPass;
 
 	std::unordered_map<std::string, TargetInfo> _debugTargets;	

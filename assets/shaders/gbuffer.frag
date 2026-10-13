@@ -59,7 +59,11 @@ void main()
 	}
 
 	// fetch emissive
-	vec3 emissive = texture(globalTextures[nonuniformEXT(mat.emissiveIndex)], inUV).rgb * mat.emissiveFactor.rgb * mat.emissiveFactor.w;
+	//vec3 emissive = texture(globalTextures[nonuniformEXT(mat.emissiveIndex)], inUV).rgb * mat.emissiveFactor.rgb * mat.emissiveFactor.w;
+
+	vec3 rawEmissive = texture(globalTextures[nonuniformEXT(mat.emissiveIndex)], inUV).rgb;
+    rawEmissive = max(rawEmissive - vec3(0.02), vec3(0.0));
+    vec3 emissive = rawEmissive * mat.emissiveFactor.rgb * mat.emissiveFactor.w;
 
 	// fetch metalrough
 	vec4 metalRough = texture(globalTextures[nonuniformEXT(mat.metalRoughIndex)], inUV);

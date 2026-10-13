@@ -10,7 +10,7 @@
 #include <core/Profiler.h>
 
 AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0, 0.1, 1.0, CVarFlags::EditFloatSlider);
-
+AutoCVar_Int cvBloom("r.bloom", "Enable Bloom", 1, CVarFlags::EditCheckBox);
 AutoCVar_Int cvSSAO("r.ssao", "Enable Screen Space Ambient Occlusion", 1, CVarFlags::EditCheckBox);
 AutoCVar_Float cvSSAORadius("r.ssao.radius", "SSAO sample hemisphere radius", 0.5f, 0.05, 3.0, CVarFlags::EditFloatSlider);
 AutoCVar_Float cvSSAOBias("r.ssao.bias", "SSAO depth comparison bias", 0.025f, 0.001, 0.1, CVarFlags::EditFloatSlider);
@@ -63,6 +63,9 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
 	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8_UNORM, VK_FORMAT_UNDEFINED);
 
+	_bloomPass = std::make_unique<BloomPass>();
+	_bloomPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
+
 	_postProcessPass = std::make_unique<PostProcessPass>();
 	_postProcessPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_UNDEFINED);
 
@@ -87,6 +90,7 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	_ssaoPass->cleanup();
 	_ssaoBlurPass->cleanup();
 	_iblSystem.cleanup();
+	_bloomPass->cleanup();
 	_postProcessPass->cleanup();
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
@@ -197,6 +201,14 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		ssaoDesc.format = VK_FORMAT_R8_UNORM;
 		RGTextureHandle ssaoColor = _renderGraph.create_texture("SSAOColor", ssaoDesc);
 		RGTextureHandle ssaoBlur = _renderGraph.create_texture("SSAOBlur", ssaoDesc);
+
+		RGTextureDesc bloomDesc = colorDesc; 
+		bloomDesc.extent.width = std::max(1u, bloomDesc.extent.width / 2);
+		bloomDesc.extent.height = std::max(1u, bloomDesc.extent.height / 2);
+		RGTextureHandle brightColor = _renderGraph.create_texture("BrightColor", bloomDesc);
+		RGTextureHandle pingpongColor0 = _renderGraph.create_texture("PingPong0", bloomDesc);
+		RGTextureHandle pingpongColor1 = _renderGraph.create_texture("PingPong1", bloomDesc);
+		RGTextureHandle currentBloomTarget;
 
 		// frustum cull
 		_renderGraph.add_pass<FrustumCullPassParameters>("FrustumCull",
@@ -322,6 +334,47 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			}
 		);
 
+		VkExtent2D bloomExtent = { bloomDesc.extent.width, bloomDesc.extent.height };
+		if (cvBloom.Get()) { // add bloom passes if enabled
+			_renderGraph.add_pass<BloomBrightExtractPassParameters>("BloomBrightExtractPass",
+				[&](RGPassBuilder& builder, BloomBrightExtractPassParameters& params) {
+					params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+					params.brightColor = builder.set_color_attachment(brightColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
+					builder.set_extent(bloomExtent);
+				},
+				[=, this, &currentFrame](const BloomBrightExtractPassParameters& params, RenderContext& rc) {
+					_bloomPass->render_extract(rc, currentFrame, params, _renderGraph);
+			});
+
+			bool horizontal = true, firstIteration = true;
+			int amount = 10; // 5 horizontal and 5 vertical blurs
+
+			for (int i = 0; i < amount; i++) { // add pingpong blur passes
+				RGTextureHandle inputTexture = firstIteration ? brightColor : (horizontal ? pingpongColor1 : pingpongColor0); // first iteration uses brightColor, then alternate pingpong textures
+				RGTextureHandle outputTexture = horizontal ? pingpongColor0 : pingpongColor1; // alternate pingpong textures for output
+
+				_renderGraph.add_pass<GaussianBlurPassParameters>(fmt::format("GaussianBlurPass_{}", i),
+					[&, inputTexture, outputTexture, horizontal](RGPassBuilder& builder, GaussianBlurPassParameters& params) {
+						params.inputColor = builder.read_texture(inputTexture, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+						params.blurColor = builder.set_color_attachment(outputTexture, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
+						params.horizontal = horizontal ? 1 : 0;
+						builder.set_extent(bloomExtent);
+					},
+					[=, this, &currentFrame](const GaussianBlurPassParameters& params, RenderContext& rc) {
+						_bloomPass->render_blur(rc, currentFrame, params, _renderGraph);
+					});
+				horizontal = !horizontal;
+				if (firstIteration)
+					firstIteration = false;
+				currentBloomTarget = outputTexture; // keep track of final pingpong texture
+			}
+		}
+		else {
+			// use black image if bloom is disabled
+			currentBloomTarget = _renderGraph.import_texture("BlackTex", DefaultResources::get().blackImage->get_image(), DefaultResources::get().blackImage->get_image_view(), VK_FORMAT_R8G8B8A8_UNORM, { 1, 1, 1 }, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		}
+		
+
 		RGTextureDesc finalColorDesc{
 			.extent = {_drawExtent.width, _drawExtent.height, 1},
 			.format = VK_FORMAT_R8G8B8A8_UNORM,
@@ -332,6 +385,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		// post process
 		_renderGraph.add_pass<PostProcessPassParameters>("PostProcessPass",
 			[&](RGPassBuilder& builder, PostProcessPassParameters& params) {
+				params.bloomColor = builder.read_texture(currentBloomTarget, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 				params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 				params.finalColor = builder.set_color_attachment(finalColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
 				builder.set_extent(_drawExtent);
@@ -356,7 +410,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 				// imgui requires shader read layout
 				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-				RGTextureHandle debugHandles[] = { finalColor, sceneDepth, shadowMap, pointShadowMap, gPosition, gNormal, gAlbedo, gMetalRough, gEmissive, ssaoColor, ssaoBlur };
+				RGTextureHandle debugHandles[] = { finalColor, sceneDepth, shadowMap, pointShadowMap, gPosition, gNormal, gAlbedo, gMetalRough, gEmissive, ssaoColor, ssaoBlur, currentBloomTarget };
 				for (RGTextureHandle handle : debugHandles) {
 					_renderGraph.transition_texture(graphCmd, handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 				}
@@ -385,6 +439,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			};
 
 		register_debug_target("FinalColor", finalColor);
+		register_debug_target("BloomTarget", currentBloomTarget);
+		register_debug_target("BrightColor", brightColor);
 		register_debug_target("SceneColor", sceneColor);
 		register_debug_target("SceneDepth", sceneDepth);
 		register_debug_target("ShadowMap", shadowMap);

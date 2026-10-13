@@ -139,9 +139,29 @@ struct SkyboxPassParameters
 	RGTextureHandle sceneDepth;
 };
 
+struct BloomBrightExtractPassParameters
+{
+	// input
+	RGTextureHandle sceneColor;
+
+	// output
+	RGTextureHandle brightColor;
+};
+
+struct GaussianBlurPassParameters
+{
+	// input
+	RGTextureHandle inputColor;
+
+	//output
+	RGTextureHandle blurColor;	
+	int horizontal;
+};
+
 struct PostProcessPassParameters
 {
 	// input
+	RGTextureHandle bloomColor;
 	RGTextureHandle sceneColor;
 
 	// output
