@@ -6,3 +6,8 @@
 /shaders/*.spv
 /CMakeFiles
 /CmakeCache.txt
+/assets/*.glb
+/assets/models/*
+/assets/textures/*
+/assets/cubemaps/*
+/assets/shaders/*.spv

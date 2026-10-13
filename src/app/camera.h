@@ -1,7 +1,8 @@
 
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 #include <SDL_events.h>
 #include <unordered_map>
+#include <core/Events.h>
 
 class Camera {
 public:
@@ -21,14 +22,17 @@ public:
 	// whether the camera is currently active and processing input
 	bool isActive{ false };
 
+	// whether the viewport is currently hovered by the mouse
+	bool isViewportHovered{ true };
+
 	glm::mat4 getViewMatrix();
 	glm::mat4 getRotationMatrix();
 
 	std::unordered_map<SDL_Keycode, bool> keyStates;
 
-	void processSDLEvent(SDL_Event& e);
-
 	void update(float deltaTime);
+
+	void on_input_event(const Events::SDLInputEvent& event);
 
 private:
 	void setCursorLocked(bool locked);

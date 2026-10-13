@@ -1,0 +1,100 @@
+#version 450
+
+#extension GL_EXT_buffer_reference : require
+
+layout (local_size_x = 256) in;
+
+struct DrawIndexedIndirectCommand {
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+struct ObjectData {
+    mat4 model;
+    vec4 sphereBounds;
+    uvec2 vertexBufferAddress;
+    uint batchIndex;
+    uint batchOffset;
+    uint materialIndex;
+};
+
+// all objects in the scene
+layout(std430, set = 0, binding = 0) readonly buffer ObjectBuffer {
+    ObjectData objects[];
+} objectBuffer;
+
+// final instance indices 
+layout(std430, set = 0, binding = 1) writeonly buffer InstanceIDBuffer {
+    uint instanceIDs[];
+} finalInstanceBuffer;
+
+// indirect draw commands
+layout(std430, set = 0, binding = 2) buffer DrawCommandBuffer {
+    DrawIndexedIndirectCommand commands[];
+} drawCommands;
+
+layout(std430, set = 0, binding = 3) buffer CullStatsBuffer {
+    uint visibleDraws;
+    uint visibleTriangles;
+} cullStats;
+
+layout(std430, set = 0, binding = 4) buffer BatchCountBuffer
+{
+    uint counts[];
+} batchCounters;
+
+layout(push_constant) uniform PushConstants {
+    vec4 frustumPlanes[6];
+    uint drawCount;
+    uint cullMode; // 1 = enabled, 0 = pass through
+} pushConstants;
+
+bool is_visible(uint objectID) {
+    if (pushConstants.cullMode == 0) return true;
+
+    vec4 sphere = objectBuffer.objects[objectID].sphereBounds;
+    mat4 model = objectBuffer.objects[objectID].model;
+
+    // transform sphere center to world space
+    vec3 center = (model * vec4(sphere.xyz, 1.0)).xyz;
+
+    // get max scale factor from model matrix to scale radius
+    float scaleX = length(model[0].xyz);
+    float scaleY = length(model[1].xyz);
+    float scaleZ = length(model[2].xyz);
+    float radius = sphere.w * max(scaleX, max(scaleY, scaleZ));
+
+    // frustum test against 6 planes
+    for (int i = 0; i < 6; ++i) {
+        if (dot(pushConstants.frustumPlanes[i].xyz, center) + pushConstants.frustumPlanes[i].w < -radius) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void main() {
+    uint gID = gl_GlobalInvocationID.x;
+    if (gID >= pushConstants.drawCount) return;
+
+    if (is_visible(gID)) {
+        ObjectData obj = objectBuffer.objects[gID];
+
+        // atomically reserve an instance slot in this batch command
+        uint countSlot = atomicAdd(batchCounters.counts[obj.batchIndex], 1);
+        uint targetCommandIdx = obj.batchOffset + countSlot;
+
+        DrawIndexedIndirectCommand cmd = drawCommands.commands[gID];
+        cmd.instanceCount = 1;
+        cmd.firstInstance = targetCommandIdx;
+        drawCommands.commands[targetCommandIdx] = cmd;
+
+        finalInstanceBuffer.instanceIDs[targetCommandIdx] = gID;
+
+        atomicAdd(cullStats.visibleDraws, 1);
+        atomicAdd(cullStats.visibleTriangles, cmd.indexCount / 3);    
+    }
+}

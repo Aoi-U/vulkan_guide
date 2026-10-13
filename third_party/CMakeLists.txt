@@ -35,6 +35,8 @@ target_include_directories(glm INTERFACE glm)
 
 add_library(imgui STATIC)
 
+add_library(spirv_reflect STATIC)
+
 target_include_directories(imgui PUBLIC imgui)
 
 target_sources(imgui PRIVATE 
@@ -47,11 +49,29 @@ target_sources(imgui PRIVATE
   imgui/imgui_tables.cpp
   imgui/imgui_impl_vulkan.cpp
   imgui/imgui_impl_sdl2.cpp
+  imgui/ImGuizmo.h
+  imgui/ImGuizmo.cpp
   )
 
-target_link_libraries(imgui PUBLIC Vulkan::Vulkan SDL2::SDL2)
+target_sources(spirv_reflect PRIVATE
+  spirv-reflect/spirv_reflect.h
+  spirv-reflect/spirv_reflect.c
+)
+
+target_link_libraries(spirv_reflect PUBLIC Vulkan::Vulkan)
+
+target_compile_definitions(spirv_reflect PUBLIC SPIRV_REFLECT_USE_SYSTEM_SPIRV_H)
+
+target_link_libraries(imgui PUBLIC Vulkan::Vulkan SDL2::SDL2 spirv_reflect)
 
 target_include_directories(stb_image INTERFACE stb_image)
 
+target_include_directories(spirv_reflect PUBLIC spirv-reflect
+    "$ENV{VULKAN_SDK}/Include"
+    ${Vulkan_INCLUDE_DIRS}
+)
+
 target_include_directories(entt INTERFACE entt)
+
+
 

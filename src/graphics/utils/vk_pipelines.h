@@ -1,5 +1,5 @@
 ﻿#pragma once 
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 
 class PipelineBuilder
 {
@@ -14,6 +14,7 @@ public:
 	VkPipelineDepthStencilStateCreateInfo _depthStencil;
 	VkPipelineRenderingCreateInfo _renderInfo;
 	VkFormat _colorAttachmentFormat;
+	std::vector<VkDynamicState> _dynamicStates;
 
 	PipelineBuilder() { clear(); }
 
@@ -21,13 +22,15 @@ public:
 
 	VkPipeline build_pipeline(VkDevice device);
 
-	void set_shaders(VkShaderModule vertexShader, VkShaderModule fragmentShader);
+	void set_dynamic_states(std::span<const VkDynamicState> states);
 
 	void set_input_topology(VkPrimitiveTopology topology);
 
 	void set_polygon_mode(VkPolygonMode mode, float lineWidth = 1.0f);
 
-	void set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace);
+	void set_cull_mode(VkCullModeFlags cullMode);
+
+	void set_front_face(VkFrontFace frontFace);
 
 	void set_multisampling_none();
 
@@ -37,11 +40,14 @@ public:
 
 	void enable_blending_alphablend();
 
-	void set_color_attachment_format(VkFormat format);
-
 	void set_depth_format(VkFormat format);
 
 	void disable_depthtest();
 
 	void enable_depthtest(bool depthWriteEnable, VkCompareOp op);
+
+	// compute pipeline building
+	VkPipelineShaderStageCreateInfo _computeShaderStage;
+
+	VkPipeline build_compute_pipeline(VkDevice device);
 };

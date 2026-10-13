@@ -2,6 +2,7 @@
 #include <SDL.h>
 #include <SDL_vulkan.h>
 #include <imgui_impl_sdl2.h>
+#include <core/Events.h>
 
 void Window::init(const std::string& name, uint32_t width, uint32_t height)
 {
@@ -32,32 +33,34 @@ void Window::cleanup()
 	SDL_Quit();
 }
 
-void Window::poll_events(const std::function<void(const SDL_Event&)>& eventCallback)
+void Window::poll_events(entt::dispatcher& dispatcher)
 {
 	SDL_Event e;
 	while (SDL_PollEvent(&e) != 0) {
+		// forward raw input event to subscribers
+		dispatcher.trigger<Events::SDLInputEvent>({ e });
+
 		if (e.type == SDL_QUIT) {
 			_shouldClose = true;
+			dispatcher.trigger<Events::WindowCloseEvent>({});
 		}
-
-		if (e.type == SDL_WINDOWEVENT) {
+		else if (e.type == SDL_WINDOWEVENT) {
 			if (e.window.event == SDL_WINDOWEVENT_MINIMIZED) {
 				_isMinimized = true;
+				dispatcher.trigger<Events::WindowMinimizeEvent>({ true });
 			}
 			else if (e.window.event == SDL_WINDOWEVENT_RESTORED) {
 				_isMinimized = false;
+				dispatcher.trigger<Events::WindowMinimizeEvent>({ false });
 			}
 			else if (e.window.event == SDL_WINDOWEVENT_RESIZED) {
-				_isResized = true;
 				int w, h;
 				SDL_GetWindowSize(_window, &w, &h);
 				_extent.width = static_cast<uint32_t>(w);
 				_extent.height = static_cast<uint32_t>(h);
-			}
-		}
 
-		if (eventCallback) {
-			eventCallback(e);
+				dispatcher.trigger<Events::WindowResizeEvent>({ _extent.width, _extent.height });
+			}
 		}
 	}
 }

@@ -1,6 +1,8 @@
 #include "camera.h"
 #include <glm/gtx/transform.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <imgui.h>
+#include <ImGuizmo.h>
 
 Camera::Camera()
 {
@@ -26,16 +28,46 @@ glm::mat4 Camera::getRotationMatrix()
 	return glm::toMat4(yawRotation) * glm::toMat4(pitchRotation);
 }
 
-void Camera::processSDLEvent(SDL_Event& e)
+void Camera::update(float deltaTime)
 {
-  if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) {
-    isActive = true;
-    setCursorLocked(true);
+  if (!isActive) return;
+
+  glm::vec3 localVelocity{ 0.f };
+  localVelocity.x = (keyStates[SDLK_d] ? 1.f : 0.f) - (keyStates[SDLK_a] ? 1.f : 0.f);
+  localVelocity.z = (keyStates[SDLK_s] ? 1.f : 0.f) - (keyStates[SDLK_w] ? 1.f : 0.f);
+
+  float worldVerticalVelocity = (keyStates[SDLK_SPACE] ? 1.f : 0.f) - (keyStates[SDLK_LCTRL] ? 1.f : 0.f);
+
+  glm::mat4 cameraRotation = getRotationMatrix();
+
+  glm::vec3 rotatedLocalVelocity = glm::vec3(cameraRotation * glm::vec4(localVelocity, 0.f));
+  glm::vec3 worldVelocity = rotatedLocalVelocity + glm::vec3(0.f, worldVerticalVelocity, 0.f);
+
+  position += worldVelocity * deltaTime * speed;
+}
+
+void Camera::on_input_event(const Events::SDLInputEvent& event)
+{
+	SDL_Event e = event.raw;
+
+  if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_RIGHT) { // activate freelook unless gizmo is being used
+    // only activate camera if the gizmo is not being used
+    if (!ImGuizmo::IsUsing() && isViewportHovered) {
+      isActive = true;
+      setCursorLocked(true);
+			ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NoMouse; // disable imgui while moving
+    }
   }
-  else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) {
+	else if (e.type == SDL_MOUSEBUTTONUP && e.button.button == SDL_BUTTON_RIGHT) { // process release of right mouse button
     isActive = false;
     setCursorLocked(false);
-    keyStates.clear(); // Clear movement keys when mouse is released
+    ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NoMouse; // renable imgui 
+    keyStates.clear(); // clear movement keys when unpressed
+  }
+  else if (e.type == SDL_WINDOWEVENT && (e.window.event == SDL_WINDOWEVENT_FOCUS_LOST || e.window.event == SDL_WINDOWEVENT_MINIMIZED)) { // reset camera when window loses focus or is minimized
+    isActive = false;
+    setCursorLocked(false);
+    keyStates.clear();
   }
 
   if (isActive) {
@@ -54,24 +86,6 @@ void Camera::processSDLEvent(SDL_Event& e)
       pitch -= (float)e.motion.yrel / 500.f;
     }
   }
-}
-
-void Camera::update(float deltaTime)
-{
-  if (!isActive) return;
-
-  glm::vec3 localVelocity{ 0.f };
-  localVelocity.x = (keyStates[SDLK_d] ? 1.f : 0.f) - (keyStates[SDLK_a] ? 1.f : 0.f);
-  localVelocity.z = (keyStates[SDLK_s] ? 1.f : 0.f) - (keyStates[SDLK_w] ? 1.f : 0.f);
-
-  float worldVerticalVelocity = (keyStates[SDLK_SPACE] ? 1.f : 0.f) - (keyStates[SDLK_LCTRL] ? 1.f : 0.f);
-
-  glm::mat4 cameraRotation = getRotationMatrix();
-
-  glm::vec3 rotatedLocalVelocity = glm::vec3(cameraRotation * glm::vec4(localVelocity, 0.f));
-  glm::vec3 worldVelocity = rotatedLocalVelocity + glm::vec3(0.f, worldVerticalVelocity, 0.f);
-
-  position += worldVelocity * deltaTime * speed;
 }
 
 void Camera::setCursorLocked(bool locked)

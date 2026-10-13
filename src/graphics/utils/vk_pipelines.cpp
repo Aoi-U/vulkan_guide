@@ -1,8 +1,8 @@
 ﻿#include <utils/vk_pipelines.h>
 #include <fstream>
 #include <utils/vk_initializers.h>
-
 #include <utils/vk_utils.h>
+#include <fmt/core.h>
 
 void PipelineBuilder::clear()
 {
@@ -16,6 +16,8 @@ void PipelineBuilder::clear()
 	_depthStencil = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO };
 	_renderInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
 	_shaderStages.clear();
+
+	_computeShaderStage = {};
 }
 
 VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
@@ -30,14 +32,16 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 
 	// setup dummy color blending. we arnt using transparent objects yet
 	// blending is just "no blend", but we do write to color attachment
+	std::vector<VkPipelineColorBlendAttachmentState> blendAttachments(_renderInfo.colorAttachmentCount, _colorBlendAttachment);
+
 	VkPipelineColorBlendStateCreateInfo colorBlending = {};
 	colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
 	colorBlending.pNext = nullptr;
 
 	colorBlending.logicOpEnable = VK_FALSE; 
 	colorBlending.logicOp = VK_LOGIC_OP_COPY;
-	colorBlending.attachmentCount = 1;
-	colorBlending.pAttachments = &_colorBlendAttachment;
+	colorBlending.attachmentCount = _renderInfo.colorAttachmentCount;
+	colorBlending.pAttachments = blendAttachments.empty() ? nullptr : blendAttachments.data();
 
 	// completely clear VertexInputStateCreateInfo as we have no need for it 
 	VkPipelineVertexInputStateCreateInfo _vertexInputInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
@@ -61,13 +65,21 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 
 	// setup dynamic state for viewport and scissor
 	// allows changing viewport and scissor without recreating pipeline
-	VkDynamicState state[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+	VkDynamicState state[] = { 
+		VK_DYNAMIC_STATE_VIEWPORT, 
+		VK_DYNAMIC_STATE_SCISSOR,
+		VK_DYNAMIC_STATE_CULL_MODE
+	};
 
 	VkPipelineDynamicStateCreateInfo dynamicInfo = { .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO };
-	dynamicInfo.pDynamicStates = &state[0];
-	dynamicInfo.dynamicStateCount = 2;
-	
-	pipelineInfo.pDynamicState = &dynamicInfo;
+	if (!_dynamicStates.empty()) {
+		dynamicInfo.pDynamicStates = _dynamicStates.data();
+		dynamicInfo.dynamicStateCount = static_cast<uint32_t>(_dynamicStates.size());
+		pipelineInfo.pDynamicState = &dynamicInfo;
+	}
+	else {
+		pipelineInfo.pDynamicState = nullptr;
+	}
 
 	// create the pipeline
 	// easy to error out on create graphics pipeline, so we handle it better than common VK_CHECK
@@ -80,12 +92,9 @@ VkPipeline PipelineBuilder::build_pipeline(VkDevice device)
 	return newPipeline;
 }
 
-void PipelineBuilder::set_shaders(VkShaderModule vertexShader, VkShaderModule fragmentShader)
+void PipelineBuilder::set_dynamic_states(std::span<const VkDynamicState> states)
 {
-	_shaderStages.clear();
-
-	_shaderStages.push_back(vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vertexShader));
-	_shaderStages.push_back(vkinit::pipeline_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, fragmentShader));
+	_dynamicStates.assign(states.begin(), states.end());
 }
 
 void PipelineBuilder::set_input_topology(VkPrimitiveTopology topology)
@@ -101,9 +110,13 @@ void PipelineBuilder::set_polygon_mode(VkPolygonMode mode, float lineWidth /* = 
 	_rasterizer.lineWidth = lineWidth;
 }
 
-void PipelineBuilder::set_cull_mode(VkCullModeFlags cullMode, VkFrontFace frontFace)
+void PipelineBuilder::set_cull_mode(VkCullModeFlags cullMode)
 {
 	_rasterizer.cullMode = cullMode;
+}
+
+void PipelineBuilder::set_front_face(VkFrontFace frontFace)
+{
 	_rasterizer.frontFace = frontFace;
 }
 
@@ -153,14 +166,6 @@ void PipelineBuilder::enable_blending_alphablend()
 	_colorBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
 }
 
-void PipelineBuilder::set_color_attachment_format(VkFormat format)
-{
-	_colorAttachmentFormat = format;
-	// connect the format to the renderInfo struct
-	_renderInfo.colorAttachmentCount = 1;
-	_renderInfo.pColorAttachmentFormats = &_colorAttachmentFormat;
-}
-
 void PipelineBuilder::set_depth_format(VkFormat format)
 {
 	_renderInfo.depthAttachmentFormat = format;
@@ -189,6 +194,23 @@ void PipelineBuilder::enable_depthtest(bool depthWriteEnable, VkCompareOp op)
 	_depthStencil.back = {};
 	_depthStencil.minDepthBounds = 0.f;
 	_depthStencil.maxDepthBounds = 1.f;
+}
+
+VkPipeline PipelineBuilder::build_compute_pipeline(VkDevice device)
+{
+	VkComputePipelineCreateInfo computeInfo{
+		.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+		.stage = _computeShaderStage,
+		.layout = _pipelineLayout
+	};
+
+	VkPipeline computePipeline;
+	if (vkCreateComputePipelines(device, VK_NULL_HANDLE, 1, &computeInfo, nullptr, &computePipeline) != VK_SUCCESS) {
+		fmt::println("Failed to create compute pipeline");
+		return VK_NULL_HANDLE;
+	}
+
+	return computePipeline;
 }
 
 

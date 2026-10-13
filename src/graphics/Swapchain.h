@@ -1,5 +1,5 @@
 // class to manage vulkan swapchains
-#include <core/vk_types.h>
+#include <graphics/utils/vk_types.h>
 
 class Swapchain 
 {
