@@ -9,6 +9,19 @@
 #include "graphics/GuiRenderer.h"
 #include <core/Profiler.h>
 
+
+#include <graphics/pass/FrustumCullpass.h>
+#include <graphics/pass/ShadowPass.h>
+#include <graphics/pass/PointShadowPass.h>
+#include <graphics/pass/GBufferPass.h>
+#include <graphics/pass/SSAOPass.h>
+#include <graphics/pass/DeferredLightingPass.h>
+#include <graphics/pass/SkyboxPass.h>
+#include <graphics/pass/ForwardTransparentPass.h>
+#include <graphics/pass/CustomPostVFXPass.h>
+#include <graphics/pass/BloomPass.h>
+#include <graphics/pass/PostProcessPass.h>
+
 AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0, 0.1, 1.0, CVarFlags::EditFloatSlider);
 AutoCVar_Int cvBloom("r.bloom", "Enable Bloom", 1, CVarFlags::EditCheckBox);
 AutoCVar_Int cvSSAO("r.ssao", "Enable Screen Space Ambient Occlusion", 1, CVarFlags::EditCheckBox);
@@ -27,47 +40,32 @@ void Renderer::init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& di
 	_renderTargetPool.init(_vulkanCore->get_device(), _vulkanCore->get_allocator());
 	update_render_extent();
 
-	_iblSystem.init(_vulkanCore, resourceManager);
-
 	recreate_swapchain();
 	create_command_buffers();
 	create_sync_structures();
 
 	dispatcher.sink<Events::WindowResizeEvent>().connect<&Renderer::on_window_resize>(this);
 
-	// create compute passes
-	_frustumCullPass = std::make_unique<FrustumCullPass>();
-	_frustumCullPass->init(_vulkanCore, resourceManager);
+	// register main rendering pipeline features 
+	add_feature<FrustumCullPass>();
+	_environmentPass = add_feature<EnvironmentPass>();
+	add_feature<ShadowPass>();
+	add_feature<PointShadowPass>();
+	add_feature<GBufferPass>();
+	add_feature<SSAOPass>();
+	add_feature<DeferredLightingPass>();
+	add_feature<SkyboxPass>();
+	add_feature<ForwardTransparentPass>();
 
-	VkDescriptorSetLayout matLayout = _resourceManager->get_bindless_layout();
+	if (_resourceManager->has_resource<Shader>("vfx_stylized_post.frag")) {
+		auto* stylizedVfx = add_feature<CustomPostVFXPass>("StylizedPostVFX", "vfx_stylized_post.frag", false);
+		stylizedVfx->set_float("aberrationStrength", 0.003f, 0.0f, 0.02f);
+		stylizedVfx->set_float("edgeStrength", 1.0f, 0.0f, 5.0f);
+		stylizedVfx->set_float("vignetteIntensity", 0.35f, 0.0f, 2.0f);
+	}
 
-	// create render passes
-	_shadowPass = std::make_unique<ShadowPass>();
-	_shadowPass->init(_vulkanCore, resourceManager, matLayout, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_D32_SFLOAT);
-
-	_pointShadowPass = std::make_unique<PointShadowPass>();
-	_pointShadowPass->init(_vulkanCore, resourceManager, matLayout, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_D32_SFLOAT);
-
-	_skyboxPass = std::make_unique<SkyboxPass>();
-	_skyboxPass->init(_vulkanCore, resourceManager, matLayout, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_D32_SFLOAT);
-
-	_gbufferPass = std::make_unique<GBufferPass>();
-	_gbufferPass->init(_vulkanCore, resourceManager, matLayout, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_D32_SFLOAT);
-
-	_deferredLightingPass = std::make_unique<DeferredLightingPass>();
-	_deferredLightingPass->init(_vulkanCore, resourceManager, matLayout, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
-
-	_ssaoPass = std::make_unique<SSAOPass>();
-	_ssaoPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8_UNORM, VK_FORMAT_UNDEFINED);
-
-	_ssaoBlurPass = std::make_unique<SSAOBlurPass>();
-	_ssaoBlurPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8_UNORM, VK_FORMAT_UNDEFINED);
-
-	_bloomPass = std::make_unique<BloomPass>();
-	_bloomPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R16G16B16A16_SFLOAT, VK_FORMAT_UNDEFINED);
-
-	_postProcessPass = std::make_unique<PostProcessPass>();
-	_postProcessPass->init(_vulkanCore, resourceManager, nullptr, VK_FORMAT_R8G8B8A8_UNORM, VK_FORMAT_UNDEFINED);
+	add_feature<BloomPass>();
+	add_feature<PostProcessPass>();
 
 	Profiler::get().init(_vulkanCore->get_device(), _vulkanCore->get_physical_device(), FRAME_OVERLAP);
 }
@@ -81,17 +79,11 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	Profiler::get().cleanup();
 	_renderTargetPool.cleanup();
 
-	_frustumCullPass->cleanup();
-	_pointShadowPass->cleanup();
-	_shadowPass->cleanup();
-	_skyboxPass->cleanup();
-	_gbufferPass->cleanup();
-	_deferredLightingPass->cleanup();
-	_ssaoPass->cleanup();
-	_ssaoBlurPass->cleanup();
-	_iblSystem.cleanup();
-	_bloomPass->cleanup();
-	_postProcessPass->cleanup();
+	for (auto& feature : _features) {
+		feature->cleanup();
+	}
+	_features.clear();
+	_environmentPass = nullptr;
 
 	for (int i = 0; i < FRAME_OVERLAP; i++) {
 		_frames[i]._cullStatsBuffer->unload();
@@ -110,7 +102,6 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 	}
 
 	_swapchain.cleanup(_vulkanCore->get_device());
-
 	_vulkanCore->get_deletion_queue().flush_all();
 }
 
@@ -142,321 +133,155 @@ void Renderer::set_viewport_extent(VkExtent2D extent)
 
 void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& sceneData)
 {
+	VkCommandBuffer cmd = begin_frame();
+	if (!cmd)
+		return;
 
-	if (VkCommandBuffer cmd = begin_frame()) {
-		DrawContext drawCtx;
-		drawCtx.environment = _iblSystem.get_environment_resources();
-		drawCtx.bindlessMaterialSet = _resourceManager->get_bindless_set();
-		extract_scene_data(registry, drawCtx);
+	DrawContext drawCtx;
+	drawCtx.bindlessMaterialSet = _resourceManager->get_bindless_set();
+	extract_scene_data(registry, drawCtx);
 
-		RenderContext ctx(cmd);
-		FrameData& currentFrame = get_current_frame();
+	RenderContext ctx(cmd);
+	FrameData& currentFrame = get_current_frame();
 
-		// upload scene data 
-		currentFrame.sceneDataBuffer->resize(sizeof(GPUSceneData));
-		currentFrame.sceneDataBuffer->copy_data(&sceneData, sizeof(GPUSceneData));
+	// upload scene data 
+	currentFrame.sceneDataBuffer->resize(sizeof(GPUSceneData));
+	currentFrame.sceneDataBuffer->copy_data(&sceneData, sizeof(GPUSceneData));
 
-		uint32_t drawCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueObjects.size()));
-		uint32_t batchCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueBatches.size()));
-		currentFrame._gpuObjectBuffer->resize(sizeof(GPUObjectData) * drawCount);
-		currentFrame._gpuInstanceBuffer->resize(sizeof(uint32_t) * drawCount);
-		currentFrame._gpuIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * drawCount);
-		currentFrame._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
+	uint32_t drawCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueObjects.size()));
+	uint32_t batchCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueBatches.size()));
+	currentFrame._gpuObjectBuffer->resize(sizeof(GPUObjectData) * drawCount);
+	currentFrame._gpuInstanceBuffer->resize(sizeof(uint32_t) * drawCount);
+	currentFrame._gpuIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * drawCount);
+	currentFrame._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
 
-		_renderGraph.init(&_renderTargetPool);
-		_renderGraph.reset();
-		_renderTargetPool.reset_frame(_frameNumber);
+	_renderGraph.init(&_renderTargetPool);
+	_renderGraph.reset();
+	_renderTargetPool.reset_frame(_frameNumber);
+	
+	// setup RGBlackboard and SceneRenderContext with fallback textures
+	RGBlackboard blackboard;
+	SceneRenderContext& targets = blackboard.add<SceneRenderContext>();
+	DefaultResources& defaults = DefaultResources::get();
 
-		RGBufferHandle objBuf = _renderGraph.import_buffer("GPUObjectBuffer", currentFrame._gpuObjectBuffer->get_buffer(), currentFrame._gpuObjectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
-		RGBufferHandle instBuf = _renderGraph.import_buffer("GPUInstanceBuffer", currentFrame._gpuInstanceBuffer->get_buffer(), currentFrame._gpuInstanceBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
-		RGBufferHandle indirBuf = _renderGraph.import_buffer("GPUIndirectBuffer", currentFrame._gpuIndirectBuffer->get_buffer(), currentFrame._gpuIndirectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
-		RGBufferHandle countBuf = _renderGraph.import_buffer("GPUCountBuffer", currentFrame._gpuCountBuffer->get_buffer(), currentFrame._gpuCountBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
-		RGBufferHandle statsBuf = _renderGraph.import_buffer("CullStatsBuffer", currentFrame._cullStatsBuffer->get_buffer(), currentFrame._cullStatsBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
-		RGBufferHandle matBuf = _renderGraph.import_buffer("MaterialBuffer", currentFrame._materialDataBuffer->get_buffer(), currentFrame._materialDataBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.defaultWhite = _renderGraph.import_texture("DefaultWhite", defaults.whiteImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	targets.defaultBlack = _renderGraph.import_texture("DefaultBlack", defaults.blackImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	targets.defaultCubeWhite = _renderGraph.import_texture("DefaultCubeWhite", defaults.whiteCubeImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-		RGTextureDesc colorDesc{ .extent = {_drawExtent.width, _drawExtent.height, 1}, .format = VK_FORMAT_R16G16B16A16_SFLOAT, .usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT };
-		RGTextureHandle sceneColor = _renderGraph.create_texture("SceneColor", colorDesc);
+	// ppopulate fallbacks 
+	targets.gPosition = targets.defaultBlack;
+	targets.gNormal = targets.defaultBlack;
+	targets.gAlbedo = targets.defaultBlack;
+	targets.gMetalRough = targets.defaultBlack;
+	targets.gEmissive = targets.defaultBlack;
+	targets.sceneDepth = targets.defaultWhite;
+	targets.sceneColor = targets.defaultBlack;
+	targets.sceneColorCopy = targets.defaultBlack;
+	targets.finalColor = targets.defaultBlack;
+	targets.dirShadowMap = targets.defaultWhite;
+	targets.pointShadowMap = targets.defaultCubeWhite;
+	targets.ssaoTexture = targets.defaultWhite;
+	targets.bloomTexture = targets.defaultBlack;
+	targets.envCubemap = targets.defaultCubeWhite;
+	targets.irradianceMap = targets.defaultCubeWhite;
+	targets.prefilterMap = targets.defaultCubeWhite;
+	targets.brdfLut = targets.defaultBlack;
 
-		RGTextureDesc depthDesc{ .extent = {_drawExtent.width, _drawExtent.height, 1}, .format = VK_FORMAT_D32_SFLOAT, .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT };
-		RGTextureHandle sceneDepth = _renderGraph.create_texture("SceneDepth", depthDesc);
+	// import frame buffers
+	targets.gpuObjectBuffer = _renderGraph.import_buffer("GPUObjectBuffer", currentFrame._gpuObjectBuffer->get_buffer(), currentFrame._gpuObjectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.gpuInstanceBuffer = _renderGraph.import_buffer("GPUInstanceBuffer", currentFrame._gpuInstanceBuffer->get_buffer(), currentFrame._gpuInstanceBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.gpuIndirectBuffer = _renderGraph.import_buffer("GPUIndirectBuffer", currentFrame._gpuIndirectBuffer->get_buffer(), currentFrame._gpuIndirectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.gpuCountBuffer = _renderGraph.import_buffer("GPUCountBuffer", currentFrame._gpuCountBuffer->get_buffer(), currentFrame._gpuCountBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.cullStatsBuffer = _renderGraph.import_buffer("CullStatsBuffer", currentFrame._cullStatsBuffer->get_buffer(), currentFrame._cullStatsBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.materialBuffer = _renderGraph.import_buffer("MaterialBuffer", currentFrame._materialDataBuffer->get_buffer(), currentFrame._materialDataBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
 
-		RGTextureDesc shadowDesc{ .extent = {2048, 2048, 1}, .format = VK_FORMAT_D32_SFLOAT, .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT };
-		RGTextureHandle shadowMap = _renderGraph.create_texture("ShadowMap", shadowDesc);
-
-		RGTextureDesc pointShadowDesc{ .extent = {1024, 1024, 1}, .format = VK_FORMAT_D32_SFLOAT, .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, .arrayLayers = 6, .flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT, .viewType = VK_IMAGE_VIEW_TYPE_CUBE };
-		RGTextureHandle pointShadowMap = _renderGraph.create_texture("PointShadowMap", pointShadowDesc);
-
-		RGTextureHandle gPosition = _renderGraph.create_texture("GBufferPosition", colorDesc);
-		RGTextureHandle gNormal = _renderGraph.create_texture("GBufferNormal", colorDesc);
-		RGTextureHandle gEmissive = _renderGraph.create_texture("GBufferEmissive", colorDesc);
-
-		RGTextureDesc albedoDesc = colorDesc;
-		albedoDesc.format = VK_FORMAT_R8G8B8A8_SRGB;
-		RGTextureHandle gAlbedo = _renderGraph.create_texture("GBufferAlbedo", albedoDesc);
-		RGTextureDesc metalRoughDesc = albedoDesc;
-		metalRoughDesc.format = VK_FORMAT_R8G8B8A8_UNORM;
-		RGTextureHandle gMetalRough = _renderGraph.create_texture("GBufferMetalRough", metalRoughDesc);
-
-		RGTextureDesc ssaoDesc = colorDesc;
-		ssaoDesc.format = VK_FORMAT_R8_UNORM;
-		RGTextureHandle ssaoColor = _renderGraph.create_texture("SSAOColor", ssaoDesc);
-		RGTextureHandle ssaoBlur = _renderGraph.create_texture("SSAOBlur", ssaoDesc);
-
-		RGTextureDesc bloomDesc = colorDesc; 
-		bloomDesc.extent.width = std::max(1u, bloomDesc.extent.width / 2);
-		bloomDesc.extent.height = std::max(1u, bloomDesc.extent.height / 2);
-		RGTextureHandle brightColor = _renderGraph.create_texture("BrightColor", bloomDesc);
-		RGTextureHandle pingpongColor0 = _renderGraph.create_texture("PingPong0", bloomDesc);
-		RGTextureHandle pingpongColor1 = _renderGraph.create_texture("PingPong1", bloomDesc);
-		RGTextureHandle currentBloomTarget;
-
-		// frustum cull
-		_renderGraph.add_pass<FrustumCullPassParameters>("FrustumCull",
-			[&](RGPassBuilder& builder, FrustumCullPassParameters& params) {
-				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuInstanceBuffer = builder.write_buffer(instBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
-				params.gpuIndirectBuffer = builder.write_buffer(indirBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
-				params.gpuCountBuffer = builder.write_buffer(countBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
-				params.cullStatsBuffer = builder.write_buffer(statsBuf, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const FrustumCullPassParameters& params, RenderContext& rc) {
-				_frustumCullPass->dispatch(rc, currentFrame, drawCtx, sceneData, _drawExtent, params, _renderGraph);
-			}
-		);
-
-		// shadow map 
-		_renderGraph.add_pass<ShadowPassParameters>("ShadowPass",
-			[&](RGPassBuilder& builder, ShadowPassParameters& params) {
-				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuIndirectBuffer = builder.read_buffer(indirBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-				params.gpuInstanceBuffer = builder.read_buffer(instBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuCountBuffer = builder.read_buffer(countBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-
-				params.shadowMap = builder.set_depth_attachment(shadowMap, VK_ATTACHMENT_LOAD_OP_CLEAR, 1.0f);
-				builder.set_extent({ 2048, 2048 });
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const ShadowPassParameters& params, RenderContext& rc) {
-				_shadowPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		// point shadow
-		_renderGraph.add_pass<PointShadowPassParameters>("PointShadowPass",
-			[&](RGPassBuilder& builder, PointShadowPassParameters& params) {
-				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuIndirectBuffer = builder.read_buffer(indirBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-				params.gpuInstanceBuffer = builder.read_buffer(instBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuCountBuffer = builder.read_buffer(countBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-
-				params.pointShadowMap = builder.write_texture(pointShadowMap, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const PointShadowPassParameters& params, RenderContext& rc) {
-				_pointShadowPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		// geometry
-		_renderGraph.add_pass<GeometryPassParameters>("GBufferPass",
-			[&](RGPassBuilder& builder, GeometryPassParameters& params) {
-				params.gpuObjectBuffer = builder.read_buffer(objBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuIndirectBuffer = builder.read_buffer(indirBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-				params.gpuInstanceBuffer = builder.read_buffer(instBuf, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gpuCountBuffer = builder.read_buffer(countBuf, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-				params.materialBuffer = builder.read_buffer(matBuf, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-				params.gPosition = builder.set_color_attachment(gPosition, VK_ATTACHMENT_LOAD_OP_CLEAR);
-				params.gNormal = builder.set_color_attachment(gNormal, VK_ATTACHMENT_LOAD_OP_CLEAR);
-				params.gAlbedo = builder.set_color_attachment(gAlbedo, VK_ATTACHMENT_LOAD_OP_CLEAR);
-				params.gMetalRough = builder.set_color_attachment(gMetalRough, VK_ATTACHMENT_LOAD_OP_CLEAR);
-				params.gEmissive = builder.set_color_attachment(gEmissive, VK_ATTACHMENT_LOAD_OP_CLEAR);
-				params.depth = builder.set_depth_attachment(sceneDepth, VK_ATTACHMENT_LOAD_OP_CLEAR, 0.0f);
-				builder.set_extent(_drawExtent);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const GeometryPassParameters& params, RenderContext& rc) {
-				_gbufferPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		// ssao
-		_renderGraph.add_pass<SSAOPassParameters>("SSAOPass",
-			[&](RGPassBuilder& builder, SSAOPassParameters& params) {
-				params.gPosition = builder.read_texture(gPosition, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.gNormal = builder.read_texture(gNormal, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.ssao = builder.set_color_attachment(ssaoColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f });
-				builder.set_extent(_drawExtent);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const SSAOPassParameters& params, RenderContext& rc) {
-				_ssaoPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		// ssao blur
-		_renderGraph.add_pass<SSAOBlurPassParameters>("SSAOBlurPass",
-			[&](RGPassBuilder& builder, SSAOBlurPassParameters& params) {
-				params.ssao = builder.read_texture(ssaoColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.ssaoBlur = builder.set_color_attachment(ssaoBlur, VK_ATTACHMENT_LOAD_OP_CLEAR, { 1.0f, 1.0f, 1.0f, 1.0f });
-				builder.set_extent(_drawExtent);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const SSAOBlurPassParameters& params, RenderContext& rc) {
-				_ssaoBlurPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		// deferred lighting
-		_renderGraph.add_pass<DeferredPassParameters>("DeferredLightingPass",
-			[&](RGPassBuilder& builder, DeferredPassParameters& params) {
-				params.gPosition = builder.read_texture(gPosition, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.gNormal = builder.read_texture(gNormal, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.gAlbedo = builder.read_texture(gAlbedo, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.gMetalRough = builder.read_texture(gMetalRough, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.gEmissive = builder.read_texture(gEmissive, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.shadowMap = builder.read_texture(shadowMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.pointShadowMap = builder.read_texture(pointShadowMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.ssao = builder.read_texture(ssaoBlur, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-
-				params.sceneColor = builder.set_color_attachment(sceneColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
-				builder.set_extent(_drawExtent);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const DeferredPassParameters& params, RenderContext& rc) {
-				_deferredLightingPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		// skybox
-		_renderGraph.add_pass<SkyboxPassParameters>("SkyboxPass",
-			[&](RGPassBuilder& builder, SkyboxPassParameters& params) {
-				params.sceneDepth = builder.read_texture(sceneDepth, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
-				params.sceneColor = builder.set_color_attachment(sceneColor, VK_ATTACHMENT_LOAD_OP_LOAD);
-				params.sceneDepth = builder.set_depth_attachment(sceneDepth, VK_ATTACHMENT_LOAD_OP_LOAD);
-				builder.set_extent(_drawExtent);
-			},
-			[=, this, &currentFrame, &drawCtx, &sceneData](const SkyboxPassParameters& params, RenderContext& rc) {
-				_skyboxPass->render(rc, currentFrame, drawCtx, sceneData, params, _renderGraph);
-			}
-		);
-
-		VkExtent2D bloomExtent = { bloomDesc.extent.width, bloomDesc.extent.height };
-		if (cvBloom.Get()) { // add bloom passes if enabled
-			_renderGraph.add_pass<BloomBrightExtractPassParameters>("BloomBrightExtractPass",
-				[&](RGPassBuilder& builder, BloomBrightExtractPassParameters& params) {
-					params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-					params.brightColor = builder.set_color_attachment(brightColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
-					builder.set_extent(bloomExtent);
-				},
-				[=, this, &currentFrame](const BloomBrightExtractPassParameters& params, RenderContext& rc) {
-					_bloomPass->render_extract(rc, currentFrame, params, _renderGraph);
-			});
-
-			bool horizontal = true, firstIteration = true;
-			int amount = 10; // 5 horizontal and 5 vertical blurs
-
-			for (int i = 0; i < amount; i++) { // add pingpong blur passes
-				RGTextureHandle inputTexture = firstIteration ? brightColor : (horizontal ? pingpongColor1 : pingpongColor0); // first iteration uses brightColor, then alternate pingpong textures
-				RGTextureHandle outputTexture = horizontal ? pingpongColor0 : pingpongColor1; // alternate pingpong textures for output
-
-				_renderGraph.add_pass<GaussianBlurPassParameters>(fmt::format("GaussianBlurPass_{}", i),
-					[&, inputTexture, outputTexture, horizontal](RGPassBuilder& builder, GaussianBlurPassParameters& params) {
-						params.inputColor = builder.read_texture(inputTexture, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-						params.blurColor = builder.set_color_attachment(outputTexture, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
-						params.horizontal = horizontal ? 1 : 0;
-						builder.set_extent(bloomExtent);
-					},
-					[=, this, &currentFrame](const GaussianBlurPassParameters& params, RenderContext& rc) {
-						_bloomPass->render_blur(rc, currentFrame, params, _renderGraph);
-					});
-				horizontal = !horizontal;
-				if (firstIteration)
-					firstIteration = false;
-				currentBloomTarget = outputTexture; // keep track of final pingpong texture
-			}
+	// build RenderGraph from all enabled features
+	RenderViewContext viewCtx{ currentFrame, drawCtx, sceneData, _drawExtent };
+	for (auto& feature : _features) {
+		if (feature->is_enabled()) {
+			feature->add_to_graph(_renderGraph, blackboard, viewCtx);
 		}
-		else {
-			// use black image if bloom is disabled
-			currentBloomTarget = _renderGraph.import_texture("BlackTex", DefaultResources::get().blackImage->get_image(), DefaultResources::get().blackImage->get_image_view(), VK_FORMAT_R8G8B8A8_UNORM, { 1, 1, 1 }, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		}
-		
+	}
 
-		RGTextureDesc finalColorDesc{
-			.extent = {_drawExtent.width, _drawExtent.height, 1},
-			.format = VK_FORMAT_R8G8B8A8_UNORM,
-			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
-		};
-		RGTextureHandle finalColor = _renderGraph.create_texture("FinalColor", finalColorDesc);
+	// if postprocess is disabled, display scene color directly 
+	if (targets.finalColor == targets.defaultBlack && targets.sceneColor != targets.defaultBlack) {
+		targets.finalColor = targets.sceneColor;
+	}
 
-		// post process
-		_renderGraph.add_pass<PostProcessPassParameters>("PostProcessPass",
-			[&](RGPassBuilder& builder, PostProcessPassParameters& params) {
-				params.bloomColor = builder.read_texture(currentBloomTarget, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.sceneColor = builder.read_texture(sceneColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				params.finalColor = builder.set_color_attachment(finalColor, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 1.0f });
-				builder.set_extent(_drawExtent);
-			},
-			[=, this, &currentFrame](const PostProcessPassParameters& params, RenderContext& rc) {
-				_postProcessPass->render(rc, currentFrame, params, _renderGraph);
-			}
-		);
+	std::vector<std::pair<std::string, RGTextureHandle>> namedDebugTargets = {
+		{ "FinalColor", targets.finalColor },
+		{ "SceneColor", targets.sceneColor },
+		{ "SceneDepth", targets.sceneDepth },
+		{ "ShadowMap", targets.dirShadowMap },
+		{ "PointShadowMap", targets.pointShadowMap },
+		{ "GBufferPosition", targets.gPosition },
+		{ "GBufferNormal", targets.gNormal },
+		{ "GBufferAlbedo", targets.gAlbedo },
+		{ "GBufferMetalRough", targets.gMetalRough },
+		{ "GBufferEmissive", targets.gEmissive },
+		{ "SSAO", targets.ssaoTexture },
+		{ "Bloom", targets.bloomTexture },
+		{ "IBL_Environment", targets.envCubemap },
+		{ "IBL_Irradiance", targets.irradianceMap },
+		{ "IBL_Prefilter", targets.prefilterMap },
+		{ "IBL_BrdfLUT", targets.brdfLut }
+	};
+	if (targets.sceneColorCopy != targets.defaultBlack) { 
+		namedDebugTargets.emplace_back("SceneColorCopy", targets.sceneColorCopy);
+	}
 
-		// present
-		struct PresentPassParams { RGTextureHandle finalColor; };
-		_renderGraph.add_pass<PresentPassParams>("PresentComposite",
-			[&](RGPassBuilder& builder, PresentPassParams& params) {
-				params.finalColor = builder.read_texture(finalColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-				builder.set_side_effect(true);
-			},
-			[=, this](const PresentPassParams& params, RenderContext& rc) {
-				VkCommandBuffer graphCmd = rc.get_cmd();
-				VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-				VkImageView swapchainView = _swapchain.get_image_views()[_swapchainImageIndex];
+	// add present and imgui pass
+	struct PresentPassParams { RGTextureHandle finalColor; };
+	_renderGraph.add_pass<PresentPassParams>("PresentComposite",
+		[&](RGPassBuilder& builder, PresentPassParams& params) {
+			params.finalColor = builder.read_texture(targets.finalColor, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+			builder.set_side_effect(true);
+		},
+		[this, namedDebugTargets](const PresentPassParams& params, RenderContext& rc) {
+			VkCommandBuffer graphCmd = rc.get_cmd();
+			VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
+			VkImageView swapchainView = _swapchain.get_image_views()[_swapchainImageIndex];
 
-				// imgui requires shader read layout
-				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			// imgui requires shader read layout
+			vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
 
-				RGTextureHandle debugHandles[] = { finalColor, sceneDepth, shadowMap, pointShadowMap, gPosition, gNormal, gAlbedo, gMetalRough, gEmissive, ssaoColor, ssaoBlur, currentBloomTarget };
-				for (RGTextureHandle handle : debugHandles) {
+			for (const auto& [name, handle] : namedDebugTargets) {
+				if (handle.is_valid()) {
 					_renderGraph.transition_texture(graphCmd, handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 				}
-				if (_guiRenderer) {
-					_sceneColorDescriptor = _guiRenderer->get_image_descriptor(_renderGraph.get_image_view(params.finalColor), DefaultResources::get().defaultSamplerLinear->get_sampler());
-					_guiRenderer->render(graphCmd, swapchainView, _swapchain.get_extent());
-				}
 			}
-		);
-
-		_renderGraph.compile(_frameNumber);
-
-		// register debug targets for imgui display
-		_debugTargets.clear();
-		auto register_debug_target = [&](const std::string& name, RGTextureHandle handle) {
-			TargetInfo info;
-			info.format = _renderGraph.get_format(handle);
-			VkExtent3D ext = _renderGraph.get_extent(handle);
-			info.extent = { ext.width, ext.height };
-			info.view = _renderGraph.get_image_view(handle);
-			info.isCube = _renderGraph.is_cube(handle);
-			if (info.isCube) {
-				for (int i = 0; i < 6; i++) info.faceViews.push_back(_renderGraph.get_image_view(handle, i));
+			if (_guiRenderer) {
+				_sceneColorDescriptor = _guiRenderer->get_image_descriptor(_renderGraph.get_image_view(params.finalColor), DefaultResources::get().defaultSamplerLinear->get_sampler());
+				_guiRenderer->render(graphCmd, swapchainView, _swapchain.get_extent());
 			}
-			_debugTargets[name] = info;
-			};
+		}
+	);
 
-		register_debug_target("FinalColor", finalColor);
-		register_debug_target("BloomTarget", currentBloomTarget);
-		register_debug_target("BrightColor", brightColor);
-		register_debug_target("SceneColor", sceneColor);
-		register_debug_target("SceneDepth", sceneDepth);
-		register_debug_target("ShadowMap", shadowMap);
-		register_debug_target("PointShadowMap", pointShadowMap);
-		register_debug_target("GBufferPosition", gPosition);
-		register_debug_target("GBufferNormal", gNormal);
-		register_debug_target("GBufferAlbedo", gAlbedo);
-		register_debug_target("GBufferMetalRough", gMetalRough);
-		register_debug_target("GBufferEmissive", gEmissive);
-		register_debug_target("SSAOColor", ssaoColor);
-		register_debug_target("SSAOBlur", ssaoBlur);
+	_renderGraph.compile(_frameNumber);
 
-		_renderGraph.execute(ctx);
+	// register debug targets for imgui display
+	_debugTargets.clear();
+	for (const auto& [name, handle] : namedDebugTargets) {
+		if (!handle.is_valid() || _renderGraph.get_image_view(handle) == VK_NULL_HANDLE)
+			continue;
 
-		end_frame();
+		TargetInfo info{};
+		info.format = _renderGraph.get_format(handle);
+		VkExtent3D extent = _renderGraph.get_extent(handle);
+		info.extent = { extent.width, extent.height };
+		info.view = _renderGraph.get_image_view(handle);
+		info.isCube = _renderGraph.is_cube(handle);
+		if (info.isCube) {
+			for (int i = 0; i < 6; i++) {
+				info.faceViews.push_back(_renderGraph.get_image_view(handle, i));
+			}
+		}
+		_debugTargets[name] = info;
 	}
+
+	_renderGraph.execute(ctx);
+
+	end_frame();
 }
 
 VkCommandBuffer Renderer::begin_frame()
@@ -713,6 +538,26 @@ void Renderer::recreate_swapchain()
 	_debugTargets.clear();
 	update_render_extent();
 	_renderTargetPool.cleanup();
+}
+
+bool Renderer::load_environment(const std::filesystem::path& path)
+{
+	return _environmentPass ? _environmentPass->request_hdr_load(path) : false;
+}
+
+void Renderer::remove_environment()
+{
+	if (_environmentPass)
+		_environmentPass->request_procedural_sky();
+}
+
+RenderFeature* Renderer::get_feature(std::string_view name) const
+{
+	for (const auto& f : _features) {
+		if (f->get_name() == name)
+			return f.get();
+	}
+	return nullptr;
 }
 
 void Renderer::create_command_buffers()

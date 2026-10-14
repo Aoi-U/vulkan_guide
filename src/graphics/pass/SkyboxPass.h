@@ -1,14 +1,25 @@
 #pragma once
 
-#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/RenderFeature.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/RenderGraph.h>
 
-class SkyboxPass : public RenderPass
+struct SkyboxGraphParams {
+  RGTextureHandle envCubemap;
+  RGTextureHandle sceneColor;
+  RGTextureHandle sceneDepth;
+};
+
+class SkyboxPass : public RenderFeature
 {
 public:
-  void init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
+  SkyboxPass()
+    : RenderFeature("SkyboxPass", true) {};
+
+  void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
   void cleanup() override;
+
+  void add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, const RenderViewContext& view) override;
 
   void render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, const SkyboxPassParameters& params, const RenderGraph& graph);
 

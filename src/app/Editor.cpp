@@ -10,6 +10,9 @@
 #include "app/editor/RenderTargetViewPanel.h"
 #include "app/editor/ContentBrowserPanel.h"
 
+#include <graphics/Renderer.h>
+#include <graphics/pass/CustomPostVFXPass.h>
+
 #include <core/Components.h>
 #include <resources/Model.h>
 #include <imgui_impl_sdl2.h>
@@ -51,6 +54,64 @@ void Editor::draw_gui(entt::registry& registry, ResourceManager& resourceManager
 
 	_isViewportHovered = ctx.isViewportHovered;
 	process_viewport_picking(ctx);
+
+	if (ImGui::Begin("Render Pipeline & VFX")) {
+		auto& features = renderer.get_features();
+
+		// runtime VFX pass 
+		if (ImGui::Button("+ Add Stylized Post VFX Pass")) {
+			auto* vfx = renderer.insert_feature_before<CustomPostVFXPass>(
+				"BloomPass",
+				"StylizedVFX_" + std::to_string(features.size()),
+				"vfx_stylized_post.frag",
+				true);
+			vfx->set_float("aberrationStrength", 0.004f, 0.0f, 0.02f);
+			vfx->set_float("edgeStrength", 1.5f, 0.0f, 5.0f);
+			vfx->set_float("vignetteIntensity", 0.4f, 0.0f, 2.0f);
+		}
+
+		ImGui::Separator();
+
+		// iterate through all registered RenderFeatures
+		for (size_t i = 0; i < features.size(); ++i) {
+			RenderFeature* feature = features[i].get();
+			ImGui::PushID(static_cast<int>(i));
+
+			bool enabled = feature->is_enabled();
+			if (ImGui::Checkbox("##Enabled", &enabled)) {
+				feature->set_enabled(enabled);
+			}
+			ImGui::SameLine();
+
+			// optional up/down arrows to reorder post/VFX passes 
+			if (i > 0 && ImGui::SmallButton("^")) {
+				std::swap(features[i], features[i - 1]);
+				ImGui::PopID();
+				break;
+			}
+			ImGui::SameLine();
+			if (i + 1 < features.size() && ImGui::SmallButton("v")) {
+				std::swap(features[i], features[i + 1]);
+				ImGui::PopID();
+				break;
+			}
+			ImGui::SameLine();
+
+			bool open = ImGui::TreeNodeEx(feature->get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+			if (open) {
+				if (enabled) {
+					feature->on_imgui();
+				}
+				else {
+					ImGui::TextDisabled("Pass disabled (using blackboard fallback)");
+				}
+				ImGui::TreePop();
+			}
+
+			ImGui::PopID();
+		}
+	}
+	ImGui::End();
 }
 
 void Editor::on_input_event(const Events::SDLInputEvent& event)

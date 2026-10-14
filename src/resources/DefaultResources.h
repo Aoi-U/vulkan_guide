@@ -27,8 +27,15 @@ public:
 	ResourceHandle<Sampler> defaultSamplerNearest;
 	ResourceHandle<Sampler> shadowSampler;
 
+	ResourceHandle<Texture> whiteCubeImage;
+	ResourceHandle<Sampler> cubemapSampler;
+	ResourceHandle<Sampler> lutSampler;
+	ResourceHandle<Sampler> hdrSampler;
+
 	ResourceHandle<MaterialTemplate> defaultPBRTemplate;
 
 private:
+	void init_environment_samplers();
+
 	ResourceManager* _manager{ nullptr };
 };

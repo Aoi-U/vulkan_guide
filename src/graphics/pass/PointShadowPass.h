@@ -1,23 +1,21 @@
 #pragma once
 
-#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/RenderFeature.h>
 #include <graphics/Pipeline.h>
 #include <graphics/RenderGraph.h>
+#include <RGBlackboard.h>
 #include <string>
 
-struct PointShadowPushConstants
-{
-	glm::mat4 lightViewproj;
-	glm::vec4 lightPos; // xyz: light position, w: far plane
-};
-
-class PointShadowPass : public RenderPass
+class PointShadowPass : public RenderFeature
 {
 public:
-	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
+	PointShadowPass()
+		: RenderFeature("PointShadowPass", true) {}
+
+	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
 	void cleanup() override;
 
-	void render(RenderContext& ctx, FrameData& frameData, const DrawContext& drawCtx, const GPUSceneData& sceneData, const PointShadowPassParameters& params, const RenderGraph& graph);
+	void add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, const RenderViewContext& view) override;
 
 private:
 	VulkanCore* _vulkanCore{ nullptr };

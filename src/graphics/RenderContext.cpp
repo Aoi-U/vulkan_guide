@@ -103,6 +103,11 @@ void RenderContext::draw_indexed_indirect_count(VkBuffer cmdBuffer, VkDeviceSize
 	vkCmdDrawIndexedIndirectCount(_cmd, cmdBuffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
 
+void RenderContext::draw_indexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance)
+{
+	vkCmdDrawIndexed(_cmd, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
 void RenderContext::dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)
 {
 	vkCmdDispatch(_cmd, groupCountX, groupCountY, groupCountZ);

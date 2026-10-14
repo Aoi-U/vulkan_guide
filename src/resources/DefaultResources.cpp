@@ -41,6 +41,20 @@ void DefaultResources::init(ResourceManager* manager)
   };
   errorCheckerboardImage = _manager->load<Texture>("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
 
+  // white cubemap image
+  std::array<uint32_t, 6> whiteCubePixels;
+  whiteCubePixels.fill(white);
+  TextureDescription cubeDesc{
+    .extent = { 1, 1, 1 },
+    .format = VK_FORMAT_R8G8B8A8_UNORM,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    .mipLevels = 1,
+    .arrayLayers = 6,
+    .flags = VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT,
+    .viewType = VK_IMAGE_VIEW_TYPE_CUBE
+  };
+	whiteCubeImage = _manager->load<Texture>("default_white_cube", cubeDesc, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(whiteCubePixels.data()), sizeof(whiteCubePixels)));
+
   // samplers
   VkSamplerCreateInfo nearestInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO, .magFilter = VK_FILTER_NEAREST, .minFilter = VK_FILTER_NEAREST };
   defaultSamplerNearest = _manager->load<Sampler>("sampler_nearest", nearestInfo);
@@ -55,6 +69,8 @@ void DefaultResources::init(ResourceManager* manager)
   auto gbufferVert = _manager->load<Shader>("gbuffer.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
   auto gbufferFrag = _manager->load<Shader>("gbuffer.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
   defaultPBRTemplate = _manager->load<MaterialTemplate>("pbr_default_template", gbufferVert, gbufferFrag);
+
+  init_environment_samplers();
 }
 
 void DefaultResources::cleanup()
@@ -64,8 +80,50 @@ void DefaultResources::cleanup()
   greyImage = {};
   errorCheckerboardImage = {};
   defaultNormalImage = {};
+  whiteCubeImage = {};
+
   defaultSamplerLinear = {};
   defaultSamplerNearest = {};
   shadowSampler = {};
+  cubemapSampler = {};
+  lutSampler = {};
+  hdrSampler = {};
+
   defaultPBRTemplate = {};
+  _manager = nullptr;
+}
+
+void DefaultResources::init_environment_samplers()
+{
+	// trilinear sampler for cubemaps
+	VkSamplerCreateInfo cubeInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+	cubeInfo.magFilter = VK_FILTER_LINEAR;
+	cubeInfo.minFilter = VK_FILTER_LINEAR;
+	cubeInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	cubeInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	cubeInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	cubeInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	cubeInfo.minLod = 0.0f;
+	cubeInfo.maxLod = 16.0f;
+	cubemapSampler = _manager->load<Sampler>("cubemapSampler", cubeInfo);
+
+	// linear clamped sampler for brdf lut
+	VkSamplerCreateInfo lutInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+	lutInfo.magFilter = VK_FILTER_LINEAR;
+	lutInfo.minFilter = VK_FILTER_LINEAR;
+	lutInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+	lutInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	lutInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	lutInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	lutSampler = _manager->load<Sampler>("lutSampler", lutInfo);
+
+	// linear clamped sampler for hdr image
+	VkSamplerCreateInfo hdrInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+	hdrInfo.magFilter = VK_FILTER_LINEAR;
+	hdrInfo.minFilter = VK_FILTER_LINEAR;
+	hdrInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+	hdrInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	hdrInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	hdrInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	hdrSampler = _manager->load<Sampler>("hdrSampler", hdrInfo);
 }

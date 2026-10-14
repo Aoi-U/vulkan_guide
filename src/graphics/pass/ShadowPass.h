@@ -1,16 +1,19 @@
 #pragma once
 
-#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/RenderFeature.h>
 #include <graphics/Pipeline.h>
 #include <graphics/RenderGraph.h>
 
-class ShadowPass : public RenderPass
+class ShadowPass : public RenderFeature
 {
 public:
-	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
+	ShadowPass()
+		: RenderFeature("DirectionalShadowPass", true) {}
+
+	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
 	void cleanup() override;
 
-	void render(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, const ShadowPassParameters& params, const RenderGraph& graph);
+	void add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, const RenderViewContext& view) override;
 
 private:
 	VulkanCore* _vulkanCore{ nullptr };

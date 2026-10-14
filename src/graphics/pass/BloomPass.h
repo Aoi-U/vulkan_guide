@@ -1,21 +1,27 @@
 #pragma once
 
-#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/RenderFeature.h>
 #include <graphics/Pipeline.h>
-#include <graphics/RenderGraph.h>
-#include <graphics/utils/RGParameters.h>
 
-class BloomPass : public RenderPass
+class BloomPass : public RenderFeature
 {
 public:
-	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
+	BloomPass()
+		: RenderFeature("BloomPass", true) {}
+
+	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
 	void cleanup() override;
 
-	void render_extract(RenderContext& ctx, FrameData& frameData, const BloomBrightExtractPassParameters& params, const RenderGraph& graph);
-	void render_blur(RenderContext& ctx, FrameData& frameData, const GaussianBlurPassParameters& params, const RenderGraph& graph);
+	void add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, const RenderViewContext& view) override;
+
+	void on_imgui() override;
 
 private:
+	void render_extract(const RenderViewContext& view, const RenderGraph& graph, const BloomBrightExtractPassParameters& params, RenderContext& ctx);
+	void render_blur(const RenderViewContext& view, const RenderGraph& graph, const GaussianBlurPassParameters& params, RenderContext& ctx);
+
 	VulkanCore* _vulkanCore{ nullptr };
 	GraphicsPipeline _brightExtractPipeline;
 	GraphicsPipeline _blurPipeline;
+	int _blurIterations{ 10 };
 };

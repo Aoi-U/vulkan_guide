@@ -1,17 +1,22 @@
 #pragma once
 
-#include <graphics/pass/RenderPass.h>
+#include <graphics/pass/RenderFeature.h>
 #include <graphics/Pipeline.h>
 #include <graphics/RenderGraph.h>
 #include <RenderContext.h>
 
-class PostProcessPass : public RenderPass
+class PostProcessPass : public RenderFeature
 {
 public:
-	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager, VkDescriptorSetLayout materialLayout, VkFormat colorFormat, VkFormat depthFormat) override;
+	PostProcessPass()
+		: RenderFeature("PostProcessPass", true) {}
+
+	void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
 	void cleanup() override;
 
-	void render(RenderContext& ctx, FrameData& frameData, const PostProcessPassParameters& params, const RenderGraph& graph);
+	void add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, const RenderViewContext& view) override;
+
+	void on_imgui() override;
 
 private:
 	VulkanCore* _vulkanCore{ nullptr };

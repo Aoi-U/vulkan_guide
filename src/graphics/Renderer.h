@@ -2,32 +2,24 @@
 #include <graphics/utils/vk_types.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/Swapchain.h>
-
-#include <graphics/pass/FrustumCullpass.h>
-#include <graphics/pass/ShadowPass.h>
-#include <graphics/pass/SkyboxPass.h>
-#include <graphics/pass/PointShadowPass.h>
-#include <graphics/pass/GBufferPass.h>
-#include <graphics/pass/DeferredLightingPass.h>
-#include <graphics/pass/SSAOPass.h>
-#include <graphics/pass/SSAOBlurPass.h>
-#include <graphics/pass/BloomPass.h>
-#include <graphics/pass/PostProcessPass.h>
 #include <graphics/RenderGraph.h>
 #include <graphics/utils/RGParameters.h>
 #include <graphics/utils/RenderTargetPool.h>
+#include <graphics/RGBlackboard.h>
+#include <graphics/pass/RenderFeature.h>
+#include <graphics/pass/EnvironmentPass.h>
 #include <resources/Buffer.h>
-#include <graphics/IBLSystem.h>
 #include <window/window.h>
 #include <utils/vk_descriptors.h>
 #include <memory>
 #include <entt.hpp>
 #include <vector>
+#include <string_view>
 #include <core/Events.h>
 #include <core/cvars.h>
 
 extern AutoCVar_Float cvRenderScale;
-
+extern AutoCVar_Int cvBloom;
 extern AutoCVar_Int cvSSAO;
 extern AutoCVar_Float cvSSAORadius;
 extern AutoCVar_Float cvSSAOBias;
@@ -58,14 +50,10 @@ struct DrawContext
 {
 	std::span<const RenderObject> opaqueObjects;
 	std::span<const RenderObject> transparentObjects;
-			 
 	std::span<const IndirectBatch> opaqueBatches;
 
 	// indirect draw 
 	uint32_t indirectDrawCount{ 0 };
-
-	EnvironmentResources environment{}; // environment resources for the scene
-
 	VkDescriptorSet bindlessMaterialSet{ VK_NULL_HANDLE };
 
 	void clear() {
@@ -81,21 +69,16 @@ struct FrameData
 {
 	VkCommandPool _commandPool;
 	VkCommandBuffer _mainCommandBuffer;
-
 	VkSemaphore _swapchainSemaphore;
 	VkFence _renderFence;
-
 	DescriptorAllocatorGrowable _frameDescriptors;
 
 	ResourceHandle<Buffer> sceneDataBuffer; // uniform buffer for scene data
-
-	// indirect draw buffers
 	ResourceHandle<Buffer> _cullStatsBuffer; // buffer for frustum cull statistics
 	ResourceHandle<Buffer> _gpuObjectBuffer; // buffer for object data used in frustum culling
 	ResourceHandle<Buffer> _gpuInstanceBuffer; // buffer for instance ids for visible objects
 	ResourceHandle<Buffer> _gpuIndirectBuffer; // buffer for indirect draw commands
 	ResourceHandle<Buffer> _gpuCountBuffer; // buffer for draw counts per batch
-
 	ResourceHandle<Buffer> _materialDataBuffer; // buffer for material data for each entity in the scene
 };
 
@@ -125,19 +108,46 @@ public:
 	void recreate_swapchain();
 
 	void mark_scene_dirty() { _drawCache.isDirty = true; }
-	bool load_environment(const std::filesystem::path& path) { return _iblSystem.load_hdr(path); }
-	void remove_environment() { _iblSystem.load_procedural_default(); }
+	bool load_environment(const std::filesystem::path& path);
+	void remove_environment();
+
+	template<typename T, typename... Args>
+	T* add_feature(Args&&... args)
+	{
+		static_assert(std::is_base_of_v<RenderFeature, T>, "T must derive from RenderFeature");
+		auto feature = std::make_unique<T>(std::forward<Args>(args)...);
+		feature->init(_vulkanCore, _resourceManager);
+		T* ptr = feature.get();
+		_features.push_back(std::move(feature));
+		return ptr;
+	}
+
+	template<typename T, typename... Args>
+	T* insert_feature_before(std::string_view targetPassName, Args&&... args)
+	{
+		static_assert(std::is_base_of_v<RenderFeature, T>, "T must derive from RenderFeature");
+		auto feature = std::make_unique<T>(std::forward<Args>(args)...);
+		feature->init(_vulkanCore, _resourceManager);
+		T* ptr = feature.get();
+
+		auto it = std::find_if(_features.begin(), _features.end(), [&](const auto& f) {
+			return f->get_name() == targetPassName;
+			});
+		_features.insert(it, std::move(feature));
+		return ptr;
+	}
+
+	RenderFeature* get_feature(std::string_view name) const;
+	std::vector<std::unique_ptr<RenderFeature>>& get_features() { return _features; }
+	const std::vector<std::unique_ptr<RenderFeature>>& get_features() const { return _features; }
 
 	VkExtent2D get_swapchain_extent() const { return _swapchain.get_extent(); }
 	VkExtent2D get_draw_extent() const { return _drawExtent; }
 	VkImageView get_current_swapchain_image_view() const { return _swapchain.get_image_views()[_swapchainImageIndex]; }
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-
-	IBLSystem& get_ibl() { return _iblSystem; }
 	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
 	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
-	
 	VkDescriptorSet get_scene_color_descriptor() const { return _sceneColorDescriptor; };
 	const std::unordered_map<std::string, TargetInfo>& get_debug_targets() const { return _debugTargets; }
 
@@ -158,23 +168,14 @@ private:
 	GuiRenderer* _guiRenderer{ nullptr };
 	float _currentRenderScale{ 1.0f };
 
-	std::unique_ptr<FrustumCullPass> _frustumCullPass;
-	std::unique_ptr<ShadowPass> _shadowPass;
-	std::unique_ptr<PointShadowPass> _pointShadowPass;
-	std::unique_ptr<SkyboxPass> _skyboxPass;
-	std::unique_ptr<GBufferPass> _gbufferPass;
-	std::unique_ptr<DeferredLightingPass> _deferredLightingPass;
-	std::unique_ptr<SSAOPass> _ssaoPass;
-	std::unique_ptr<SSAOBlurPass> _ssaoBlurPass;
-	std::unique_ptr<BloomPass> _bloomPass;
-	std::unique_ptr<PostProcessPass> _postProcessPass;
+	std::vector<std::unique_ptr<RenderFeature>> _features;
+	EnvironmentPass* _environmentPass{ nullptr };
 
 	std::unordered_map<std::string, TargetInfo> _debugTargets;	
 	RenderGraph _renderGraph{};
 	RenderTargetPool _renderTargetPool;
 	VkDescriptorSet _sceneColorDescriptor{ VK_NULL_HANDLE };
 
-	IBLSystem _iblSystem;
 	DrawCommandCache _drawCache;
 
 	// frame rendering functions

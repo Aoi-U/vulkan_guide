@@ -204,6 +204,29 @@ RGTextureHandle RenderGraph::import_texture(std::string_view name, VkImage image
 	return RGTextureHandle{ index };
 }
 
+RGTextureHandle RenderGraph::import_texture(std::string_view name, const ResourceHandle<Texture>& tex, VkImageLayout currentLayout)
+{
+	uint32_t index = static_cast<uint32_t>(_textures.size());
+	_textures.push_back(RGTextureNode{
+		.name = std::string(name),
+		.desc = {
+			.extent = tex->get_extent(),
+			.format = tex->get_format(),
+			.mipLevels = tex->get_mip_levels(),
+			.arrayLayers = tex->get_face_views().empty() ? 1u : static_cast<uint32_t>(tex->get_face_views().size()),
+			.viewType = tex->get_face_views().size() == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D,
+			.samples = VK_SAMPLE_COUNT_1_BIT
+		},
+		.image = tex->get_image(),
+		.imageView = tex->get_image_view(),
+		.faceViews = tex->get_face_views(),
+		.initialLayout = currentLayout,
+		.currentLayout = currentLayout,
+		.isExternal = true
+		});
+	return RGTextureHandle{ index };
+}
+
 RGBufferHandle RenderGraph::import_buffer(std::string_view name, VkBuffer buffer, VkDeviceSize size, VkPipelineStageFlags2 stage, VkAccessFlags2 access)
 {
 	uint32_t index = static_cast<uint32_t>(_buffers.size());
@@ -218,6 +241,12 @@ RGBufferHandle RenderGraph::import_buffer(std::string_view name, VkBuffer buffer
 		.isExternal = true
 		});
 	return RGBufferHandle{ index };
+}
+
+void RenderGraph::set_texture_layout(RGTextureHandle handle, VkImageLayout layout)
+{
+	if (!handle.is_valid()) return;
+	_textures[handle.index].currentLayout = layout;
 }
 
 RGTextureHandle RenderGraph::find_texture(std::string_view name) const
@@ -396,13 +425,47 @@ void RenderGraph::transition_texture(VkCommandBuffer cmd, RGTextureHandle handle
 
 void RenderGraph::cull_passes()
 {
-	for (auto& pass : _passes) {
-		if (pass->hasSideEffect) { // cannot cull pass with side effects
+	// traverse backwards and cull chained unused passes
+	for (int i = static_cast<int>(_passes.size()) - 1; i >= 0; i--) {
+		auto& pass = _passes[i];
+		if (pass->hasSideEffect) {
 			pass->culled = false;
+			continue;
 		}
-		else { // none of its write outputs ar read by subsequent nodes
-			// does nothing as no support for backward reference counting yet
-			//pass->culled = pass->refCount == 0; 
+
+		bool hasUsedOutput = false;
+		for (const auto& [handle, access] : pass->textureAccesses) {
+			bool isWrite = (access.usage == RGResourceUsage::StorageWrite ||
+				access.usage == RGResourceUsage::ColorAttachment ||
+				access.usage == RGResourceUsage::DepthAttachment);
+			if (isWrite && _textures[handle.index].refCount > 0) {
+				hasUsedOutput = true;
+				break;
+			}
+		}
+
+		for (const auto& [handle, access] : pass->bufferAccesses) {
+			bool isWrite = (access.usage == RGResourceUsage::StorageWrite);
+			if (isWrite && _buffers[handle.index].refCount > 0) {
+				hasUsedOutput = true;
+				break;
+			}
+		}
+
+		if (!hasUsedOutput) {
+			pass->culled = true;
+
+			// decrement ref counts of inputs since this pass is culled
+			for (const auto& [handle, access] : pass->textureAccesses) {
+				if (access.usage == RGResourceUsage::ShaderRead && _textures[handle.index].refCount > 0) {
+					_textures[handle.index].refCount--;
+				}
+			}
+			for (const auto& [handle, access] : pass->bufferAccesses) {
+				if (access.usage == RGResourceUsage::StorageRead && _buffers[handle.index].refCount > 0) {
+					_buffers[handle.index].refCount--;
+				}
+			}
 		}
 	}
 }

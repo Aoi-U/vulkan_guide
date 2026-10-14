@@ -38,6 +38,7 @@ public:
 	uint32_t get_mip_levels() const { return _mipLevels; }
 	VkFormat get_format() const { return _format; }
 	uint32_t get_bindless_index() const { return _bindlessIndex; }
+	VkImageView get_mip_array_view(uint32_t mip) const { return (mip < _mipArrayViews.size()) ? _mipArrayViews[mip] : _imageView; }
 
 protected:
 	bool doLoad() override;
@@ -62,6 +63,7 @@ private:
 	VkExtent3D _extent{ 1, 1, 1 };
 	uint32_t _mipLevels{ 0 };
 	std::vector<VkImageView> _faceViews; // for cubemaps
+	std::vector<VkImageView> _mipArrayViews;
 
 	uint32_t _bindlessIndex{ 0 }; // index in the bindless descriptor set 
 };

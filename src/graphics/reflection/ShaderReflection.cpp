@@ -188,19 +188,5 @@ PipelineLayoutReflection ShaderReflection::merge_stages(std::span<const Reflecte
 			});
 	}
 
-
-	// print names
-	fmt::println("Names:\n");
-	for (const auto& [name, var] : reflection.bindingsByName) {
-		fmt::println("Binding: {} set {} binding {} type {} count {}", name, var.set, var.binding, static_cast<uint32_t>(var.descriptorType), var.descriptorCount);
-	}
-	
-	for (const auto& [name, var] : reflection.materialVariablesByName) {
-		fmt::println("Material Variable: {} offset {} size {}", name, var.offset, var.size);
-	}
-	for (const auto& [name, var] : reflection.pushConstantsByName) {
-		fmt::println("Push Constant: {} offset {} size {}", name, var.offset, var.size);
-	}
-
 	return reflection;
 }

@@ -4,6 +4,7 @@
 #include <graphics/RenderContext.h>
 #include <graphics/utils/RGParameters.h>
 #include <graphics/utils/RenderTargetPool.h>
+#include <resources/Texture.h>
 #include <string>
 #include <vector>
 #include <memory>
@@ -141,9 +142,10 @@ public:
 	RGTextureHandle create_texture(std::string_view name, const RGTextureDesc& desc);
 	RGBufferHandle create_buffer(std::string_view name, const RGBufferDesc& desc);
 
-	// temporary funcs to import external resources into render graph
 	RGTextureHandle import_texture(std::string_view name, VkImage image, VkImageView view, VkFormat format, VkExtent3D extent, VkImageLayout currentLayout);
+	RGTextureHandle import_texture(std::string_view name, const ResourceHandle<Texture>& tex, VkImageLayout currentLayout);
 	RGBufferHandle  import_buffer(std::string_view name, VkBuffer buffer, VkDeviceSize size, VkPipelineStageFlags2 stage, VkAccessFlags2 access);
+	void set_texture_layout(RGTextureHandle handle, VkImageLayout layout);
 
 	RGTextureHandle find_texture(std::string_view name) const;
 	RGBufferHandle  find_buffer(std::string_view name) const;

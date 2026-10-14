@@ -130,6 +130,19 @@ bool Texture::doLoad()
 			faceInfo.subresourceRange.layerCount = 1;
 			vkCreateImageView(_core->get_device(), &faceInfo, nullptr, &_faceViews[i]);
 		}
+
+		if (imgInfo.arrayLayers > 1 && (_usage & VK_IMAGE_USAGE_STORAGE_BIT)) {
+			_mipArrayViews.resize(_mipLevels, VK_NULL_HANDLE);
+			for (uint32_t mip = 0; mip < _mipLevels; mip++) {
+				VkImageViewCreateInfo mipArrayInfo = viewInfo;
+				mipArrayInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+				mipArrayInfo.subresourceRange.baseMipLevel = mip;
+				mipArrayInfo.subresourceRange.levelCount = 1;
+				mipArrayInfo.subresourceRange.baseArrayLayer = 0;
+				mipArrayInfo.subresourceRange.layerCount = imgInfo.arrayLayers;
+				vkCreateImageView(_core->get_device(), &mipArrayInfo, nullptr, &_mipArrayViews[mip]);
+			}
+		}
 	}
 
 	if (pixels) { // if there is pixel data, upload to GPU
@@ -245,6 +258,13 @@ bool Texture::doUnload()
 		}
 	}
 	_faceViews.clear();
+
+	for (VkImageView view : _mipArrayViews) {
+		if (view != VK_NULL_HANDLE) {
+			_core->get_deletion_queue().push(view);
+		}
+	}
+	_mipArrayViews.clear();
 
 	if (_imageView != VK_NULL_HANDLE) {
 		_core->get_deletion_queue().push(_imageView);

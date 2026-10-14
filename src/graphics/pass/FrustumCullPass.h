@@ -1,5 +1,5 @@
 #pragma once
-#include <graphics/pass/ComputePass.h>
+#include <graphics/pass/RenderFeature.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/RenderGraph.h>
 
@@ -16,13 +16,18 @@ struct CullStatsData {
   uint32_t visibleTriangles{ 0 };
 };
 
-class FrustumCullPass : public ComputePass
+class FrustumCullPass : public RenderFeature
 {
 public:
+  FrustumCullPass()
+    : RenderFeature("FrustumCullPass", true) {}
+
   void init(VulkanCore* vulkanCore, ResourceManager* resourceManager) override;
   void cleanup() override;
 
-  void dispatch(RenderContext& ctx, FrameData& frameData, DrawContext& drawCtx, const GPUSceneData& sceneData, VkExtent2D drawExtent, const FrustumCullPassParameters& params, const RenderGraph& graph);
+  void add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, const RenderViewContext& view) override;
+
+  void on_imgui() override;
 
 private:
 

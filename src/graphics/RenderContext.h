@@ -56,6 +56,7 @@ public:
 	// draw commands
 	void draw(uint32_t vertexCount, uint32_t instanceCount = 1, uint32_t firstVertex = 0, uint32_t firstInstance = 0);
 	void draw_indexed_indirect_count(VkBuffer cmdBuffer, VkDeviceSize offset, VkBuffer countBufferOffset, VkDeviceSize countOffset, uint32_t maxDrawCount, uint32_t stride);
+	void draw_indexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance);
 	void dispatch(uint32_t groupCountX, uint32_t groupCountY = 1, uint32_t groupCountZ = 1);
 
 	// set arbitary push constants
