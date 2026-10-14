@@ -6,6 +6,7 @@ struct PointLight
 };
 
 const int MAX_POINT_LIGHTS = 256;
+const int SHADOW_CASCADE_COUNT = 4;
 
 layout (set = 0, binding = 0) uniform SceneData
 {
@@ -13,6 +14,8 @@ layout (set = 0, binding = 0) uniform SceneData
   mat4 proj;
   mat4 viewproj;
   mat4 sunlightViewproj;
+  mat4 cascadeViewproj[SHADOW_CASCADE_COUNT];
+  vec4 cascadeSplits;
   vec4 cameraPosition;
   vec4 ambientColor;
   vec4 sunlightDirection; // w for sun power

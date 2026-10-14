@@ -47,8 +47,8 @@ void PointShadowPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 	graph.add_pass<PointShadowPassParameters>("PointShadowPass",
 		[&](RGPassBuilder& builder, PointShadowPassParameters& params) {
 			params.gpuObjectBuffer = builder.read_buffer(targets.gpuObjectBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-			params.gpuIndirectBuffer = builder.read_buffer(targets.gpuIndirectBuffer, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
-			params.gpuInstanceBuffer = builder.read_buffer(targets.gpuInstanceBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+			params.gpuIndirectBuffer = builder.read_buffer(targets.gpuShadowIndirectBuffer, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
+			params.gpuInstanceBuffer = builder.read_buffer(targets.gpuShadowInstanceBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 			params.gpuCountBuffer = builder.read_buffer(targets.gpuCountBuffer, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
 			params.pointShadowMap = builder.write_texture(pointShadowMap, VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL, VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 		},
@@ -118,11 +118,12 @@ void PointShadowPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 					pc.flush(ctx.get_cmd(), _pipeline.get_layout());
 
 					ctx.bind_index_buffer(_resourceManager->get_geometry_pool().get_index_buffer(), 0, VK_INDEX_TYPE_UINT32);
+
+					VkBuffer indirectBuf = graph.get_buffer(params.gpuIndirectBuffer);
 					for (const IndirectBatch& batch : drawCtx.opaqueBatches) {
 						// draw batch
 						VkDeviceSize indirectOffset = batch.first * sizeof(VkDrawIndexedIndirectCommand);
-						VkDeviceSize countOffset = batch.batchIndex * sizeof(uint32_t);
-						ctx.draw_indexed_indirect_count(graph.get_buffer(params.gpuIndirectBuffer), indirectOffset, graph.get_buffer(params.gpuCountBuffer), countOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
+						ctx.draw_indexed_indirect(indirectBuf, indirectOffset, batch.count, sizeof(VkDrawIndexedIndirectCommand));
 					}
 				}
 				ctx.end_rendering();

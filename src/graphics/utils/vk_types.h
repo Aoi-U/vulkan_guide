@@ -61,6 +61,7 @@ struct GPUObjectData
 };
 
 constexpr uint32_t MAX_POINT_LIGHTS = 256;
+constexpr uint32_t SHADOW_CASCADE_COUNT = 4;
 
 struct GPUPointLight
 {
@@ -76,6 +77,8 @@ struct GPUSceneData
 	glm::mat4 proj;
 	glm::mat4 viewproj;
 	glm::mat4 sunlightViewproj;
+	glm::mat4 cascadeViewproj[SHADOW_CASCADE_COUNT];
+	glm::vec4 cascadeSplits; 
 	glm::vec4 cameraPosition;
 	glm::vec4 ambientColor;
 	glm::vec4 sunlightDirection; // w component for sun power

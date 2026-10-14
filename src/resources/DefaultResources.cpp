@@ -41,6 +41,21 @@ void DefaultResources::init(ResourceManager* manager)
   };
   errorCheckerboardImage = _manager->load<Texture>("default_checkerboard", desc2, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(pixels.data()), sizeof(pixels)));
 
+  // white array image
+  std::array<uint32_t, 4> whiteArrayPixels;
+  whiteArrayPixels.fill(white);
+  TextureDescription arrayDesc{
+    .extent = { 1, 1, 1},
+    .format = VK_FORMAT_R8G8B8A8_UNORM,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
+    .mipLevels = 1,
+    .arrayLayers = 4,
+    .viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY,
+    .deferBindlessRegistration = true
+  };
+	whiteArrayImage = _manager->load<Texture>("default_white_array", arrayDesc, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(whiteArrayPixels.data()), sizeof(whiteArrayPixels)));
+
+
   // white cubemap image
   std::array<uint32_t, 6> whiteCubePixels;
   whiteCubePixels.fill(white);
@@ -81,6 +96,7 @@ void DefaultResources::cleanup()
   errorCheckerboardImage = {};
   defaultNormalImage = {};
   whiteCubeImage = {};
+  whiteArrayImage = {};
 
   defaultSamplerLinear = {};
   defaultSamplerNearest = {};

@@ -32,6 +32,8 @@ void FrustumCullPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 			params.gpuIndirectBuffer = builder.write_buffer(targets.gpuIndirectBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
 			params.gpuCountBuffer = builder.write_buffer(targets.gpuCountBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
 			params.cullStatsBuffer = builder.write_buffer(targets.cullStatsBuffer, VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT, VK_ACCESS_2_SHADER_WRITE_BIT);
+			params.gpuShadowIndirectBuffer = builder.write_buffer(targets.gpuShadowIndirectBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+			params.gpuShadowInstanceBuffer = builder.write_buffer(targets.gpuShadowInstanceBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 			builder.set_side_effect(true);
 		},
 		[this, &view](const FrustumCullPassParameters&, RenderContext& ctx) {
@@ -51,11 +53,16 @@ void FrustumCullPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 			frameData._gpuInstanceBuffer->resize(sizeof(uint32_t) * totalObjects);
 			frameData._gpuIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * opaqueCount);
 			frameData._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
+			frameData._gpuShadowIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * opaqueCount);
+			frameData._gpuShadowInstanceBuffer->resize(sizeof(uint32_t) * opaqueCount);
 			std::memset(frameData._gpuCountBuffer->get_mapped_data(), 0, sizeof(uint32_t) * batchCount);
 
 			// get mapped pointers to the buffers
 			auto* mappedObjects = static_cast<GPUObjectData*>(frameData._gpuObjectBuffer->get_mapped_data());
 			auto* mappedCommands = static_cast<VkDrawIndexedIndirectCommand*>(frameData._gpuIndirectBuffer->get_mapped_data());
+
+			auto* mappedShadowCmds = static_cast<VkDrawIndexedIndirectCommand*>(frameData._gpuShadowIndirectBuffer->get_mapped_data());
+			auto* mappedShadowInst = static_cast<uint32_t*>(frameData._gpuShadowInstanceBuffer->get_mapped_data());
 
 			// fill object and indirect command buffers with data
 			for (uint32_t b = 0; b < static_cast<uint32_t>(drawCtx.opaqueBatches.size()); b++) {
@@ -78,6 +85,16 @@ void FrustumCullPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 							.vertexOffset = 0,
 							.firstInstance = i
 					};
+
+					// unculled shadow draw commands
+					mappedShadowCmds[i] = VkDrawIndexedIndirectCommand{
+						.indexCount = obj.indexCount,
+						.instanceCount = 1,
+						.firstIndex = obj.firstIndex,
+						.vertexOffset = 0,
+						.firstInstance = i
+					};
+					mappedShadowInst[i] = i;
 				}
 			}
 

@@ -12,8 +12,8 @@ layout (set = 0, binding = 2) uniform sampler2D gNormal;
 layout (set = 0, binding = 3) uniform sampler2D gAlbedo;
 layout (set = 0, binding = 4) uniform sampler2D gMetalRough;
 
-// Shadows & IBL
-layout (set = 0, binding = 5) uniform sampler2D shadowMap;
+// shadows and IBL
+layout (set = 0, binding = 5) uniform sampler2DArray shadowMap;
 layout (set = 0, binding = 6) uniform samplerCube irradianceMap;
 layout (set = 0, binding = 7) uniform samplerCube prefilterMap;
 layout (set = 0, binding = 8) uniform sampler2D brdfLUT;
@@ -60,26 +60,78 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-float calculate_shadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
-    vec4 lightSpacePos = sceneData.sunlightViewproj * vec4(worldPos, 1.0);
-    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w;
-    vec2 shadowUV = projCoords.xy * 0.5 + 0.5;
-    float currentDepth = projCoords.z;
+float sample_cascade_pcf(vec3 worldPos, vec3 normal, vec3 lightDir, uint  cascadeIdx)
+{
+    float normalOffsetScale = 0.015 * float(cascadeIdx + 1);
+    vec3 offsetPos = worldPos + normal * normalOffsetScale;
 
-    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0 || currentDepth < 0.0 || currentDepth > 1.0) {
+    vec4 lightSpacePos = sceneData.cascadeViewproj[cascadeIdx] * vec4(offsetPos, 1.0);
+    vec3 projCoords = lightSpacePos.xyz / lightSpacePos.w; // perspective divide 
+    vec2 shadowUV = projCoords.xy * 0.5 + 0.5; // map to [0, 1] range
+    float currentDepth = projCoords.z; // current depth from lights perspective
+
+    // outside of shadowmap bounds
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 || shadowUV.y < 0.0 || shadowUV.y > 1.0 || currentDepth < 0.0 || currentDepth > 1.0) { 
         return 0.0;
     }
 
-    float bias = max(0.002 * (1.0 - max(dot(normal, lightDir), 0.0)), 0.0005);
+    // bias based on surface angle and cascade index
+    float baseBias = max(0.0015 * (1.0 - max(dot(normal, lightDir), 0.0)), 0.0002);
+    float bias = baseBias / (float(cascadeIdx) * 0.5 + 1.0);
+
     float shadow = 0.0;
-    vec2 texelSize = 1.0 / textureSize(shadowMap, 0);
-    for (int x = -1; x <= 1; ++x) {
-        for (int y = -1; y <= 1; ++y) {
-            float pcfDepth = texture(shadowMap, shadowUV + vec2(x, y) * texelSize).r;
+    vec2 texelSize = 1.0 / vec2(textureSize(shadowMap, 0).xy);
+
+    // https://learnopengl.com/Advanced-Lighting/Shadows/Shadow-Mapping
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            float pcfDepth = texture(shadowMap, vec3(shadowUV + vec2(x, y) * texelSize, float(cascadeIdx))).r;
             shadow += (currentDepth - bias > pcfDepth) ? 1.0 : 0.0;
         }
     }
+
     return shadow / 9.0;
+}
+
+
+float calculate_shadow(vec3 worldPos, vec3 normal, vec3 lightDir) {
+    vec3 viewPos = (sceneData.view * vec4(worldPos, 1.0)).xyz;
+    float viewDepth = abs(viewPos.z);
+
+    uint cascadeIdx = 3u;
+    for (uint i = 0u; i < 4u; i++) {
+        if (viewDepth < sceneData.cascadeSplits[i]) {
+            cascadeIdx = i;
+            break;
+        }
+    }
+
+    // distance fade out at end of last cascadeIdx
+    float maxShadowDist = sceneData.cascadeSplits[3];
+    if (viewDepth >= maxShadowDist) {
+        return 0.0;
+    }
+
+    float shadow = sample_cascade_pcf(worldPos, normal, lightDir, cascadeIdx);
+    
+    // smooth blend between adjacent cascades
+    if (cascadeIdx < 3u) {
+        float splitDist = sceneData.cascadeSplits[cascadeIdx];
+        float blendZone = splitDist * 0.1; // 10% of split distance
+        float distToSplit = splitDist - viewDepth;
+        if (distToSplit < blendZone) {
+            float nextShadow = sample_cascade_pcf(worldPos, normal, lightDir, cascadeIdx + 1u);
+            float blendFactor = clamp(1.0 - (distToSplit / blendZone), 0.0, 1.0);
+            shadow = mix(shadow, nextShadow, blendFactor);
+        }
+    } 
+    else { // smooth fade out at far edge of 3rd cascade
+        float fadeRange = maxShadowDist * 0.15;
+        float fade = clamp((maxShadowDist - viewDepth) / fadeRange, 0.0, 1.0);
+        shadow *= fade;
+    }
+
+    return shadow;
 }
 
 // 20-sample spherical distribution for omnidirectional PCF 

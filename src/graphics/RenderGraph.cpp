@@ -183,27 +183,6 @@ RGBufferHandle RenderGraph::create_buffer(std::string_view name, const RGBufferD
 	return RGBufferHandle{ index };
 }
 
-RGTextureHandle RenderGraph::import_texture(std::string_view name, VkImage image, VkImageView view, VkFormat format, VkExtent3D extent, VkImageLayout currentLayout)
-{
-	uint32_t index = static_cast<uint32_t>(_textures.size());
-	_textures.push_back(RGTextureNode{
-		.name = std::string(name),
-		.desc = {
-			.extent = extent,
-			.format = format,
-			.mipLevels = 1,
-			.arrayLayers = 1,
-			.samples = VK_SAMPLE_COUNT_1_BIT
-		},
-		.image = image,
-		.imageView = view,
-		.initialLayout = currentLayout,
-		.currentLayout = currentLayout,
-		.isExternal = true
-		});
-	return RGTextureHandle{ index };
-}
-
 RGTextureHandle RenderGraph::import_texture(std::string_view name, const ResourceHandle<Texture>& tex, VkImageLayout currentLayout)
 {
 	uint32_t index = static_cast<uint32_t>(_textures.size());
@@ -214,7 +193,7 @@ RGTextureHandle RenderGraph::import_texture(std::string_view name, const Resourc
 			.format = tex->get_format(),
 			.mipLevels = tex->get_mip_levels(),
 			.arrayLayers = tex->get_face_views().empty() ? 1u : static_cast<uint32_t>(tex->get_face_views().size()),
-			.viewType = tex->get_face_views().size() == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : VK_IMAGE_VIEW_TYPE_2D,
+			.viewType = tex->get_face_views().size() == 6 ? VK_IMAGE_VIEW_TYPE_CUBE : (tex->get_face_views().size() > 1 ? VK_IMAGE_VIEW_TYPE_2D_ARRAY : VK_IMAGE_VIEW_TYPE_2D),
 			.samples = VK_SAMPLE_COUNT_1_BIT
 		},
 		.image = tex->get_image(),
@@ -364,11 +343,19 @@ VkImageView RenderGraph::get_image_view(RGTextureHandle handle, uint32_t faceInd
 	}
 	
 	const auto& tex = _textures[handle.index];
-	if (tex.desc.viewType == VK_IMAGE_VIEW_TYPE_CUBE && faceIndex < tex.faceViews.size()) {
+	if (faceIndex != UINT32_MAX && faceIndex < tex.faceViews.size()) {
 		return tex.faceViews[faceIndex];
 	}
 
 	return tex.imageView;
+}
+
+uint32_t RenderGraph::get_array_layers(RGTextureHandle handle) const
+{
+	if (!handle.is_valid()) {
+		return 1;
+	}
+	return _textures[handle.index].desc.arrayLayers;
 }
 
 VkFormat RenderGraph::get_format(RGTextureHandle handle) const

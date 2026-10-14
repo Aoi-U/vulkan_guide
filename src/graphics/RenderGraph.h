@@ -142,7 +142,6 @@ public:
 	RGTextureHandle create_texture(std::string_view name, const RGTextureDesc& desc);
 	RGBufferHandle create_buffer(std::string_view name, const RGBufferDesc& desc);
 
-	RGTextureHandle import_texture(std::string_view name, VkImage image, VkImageView view, VkFormat format, VkExtent3D extent, VkImageLayout currentLayout);
 	RGTextureHandle import_texture(std::string_view name, const ResourceHandle<Texture>& tex, VkImageLayout currentLayout);
 	RGBufferHandle  import_buffer(std::string_view name, VkBuffer buffer, VkDeviceSize size, VkPipelineStageFlags2 stage, VkAccessFlags2 access);
 	void set_texture_layout(RGTextureHandle handle, VkImageLayout layout);
@@ -172,6 +171,7 @@ public:
 	// getters
 	VkImage get_image(RGTextureHandle handle) const;
 	VkImageView get_image_view(RGTextureHandle handle, uint32_t faceIndex = UINT32_MAX) const;
+	uint32_t get_array_layers(RGTextureHandle handle) const;
 	VkFormat get_format(RGTextureHandle handle) const;
 	VkExtent3D get_extent(RGTextureHandle handle) const;
 	bool is_cube(RGTextureHandle handle) const;

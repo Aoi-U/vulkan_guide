@@ -15,6 +15,8 @@ struct SceneRenderContext
 	RGBufferHandle gpuCountBuffer;
 	RGBufferHandle cullStatsBuffer;
 	RGBufferHandle materialBuffer;
+	RGBufferHandle gpuShadowIndirectBuffer;
+	RGBufferHandle gpuShadowInstanceBuffer;
 
 	// gbuffer
 	RGTextureHandle gPosition;
@@ -47,6 +49,7 @@ struct SceneRenderContext
 	RGTextureHandle defaultWhite;
 	RGTextureHandle defaultBlack;
 	RGTextureHandle defaultCubeWhite;
+	RGTextureHandle defaultArrayWhite;
 };
 
 class RGBlackboard

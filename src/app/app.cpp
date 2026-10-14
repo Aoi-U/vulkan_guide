@@ -164,19 +164,84 @@ void App::update_scene(float deltaTime) {
 	auto dirLightView = _registry.view<const DirectionalLightComponent>();
 	for (auto [entity, dirLight] : dirLightView.each()) {
 		if (!dirLight.visible) continue;
-
 		_sceneData.sunlightColor = glm::vec4(dirLight.color, 1.0f);
-		_sceneData.sunlightDirection = glm::vec4(glm::normalize(dirLight.direction), dirLight.intensity);
-
 		glm::vec3 lightDir = glm::normalize(dirLight.direction);
-		glm::vec3 lightPos = _camera.position + lightDir * dirLight.shadowExtent;
-		glm::mat4 lightView = glm::lookAt(lightPos, _camera.position, glm::vec3(0.0f, 1.0f, 0.0f));
-		float orthoSize = dirLight.shadowExtent;
-		glm::mat4 lightProj = glm::ortho(-orthoSize, orthoSize, -orthoSize, orthoSize, 0.1f, 80.0f);
-		lightProj[1][1] *= -1.0f;
-		_sceneData.sunlightViewproj = lightProj * lightView;
+		_sceneData.sunlightDirection = glm::vec4(lightDir, dirLight.intensity);
 
-		break; // Primary sun light
+		constexpr uint32_t CASCADE_COUNT = 4;
+		constexpr float SHADOW_MAP_RES = 2048.0f;
+		const float nearClip = 0.1f;
+		const float maxShadowDist = std::max(dirLight.shadowExtent * 3.0f, 40.0f); 
+		const float lambda = 0.85f; 
+
+		std::array<float, CASCADE_COUNT + 1> splits{};
+		splits[0] = nearClip;
+		for (uint32_t i = 1; i <= CASCADE_COUNT; ++i) {
+			float p = static_cast<float>(i) / static_cast<float>(CASCADE_COUNT);
+			float logSplit = nearClip * std::pow(maxShadowDist / nearClip, p);
+			float uniformSplit = nearClip + (maxShadowDist - nearClip) * p;
+			splits[i] = lambda * logSplit + (1.0f - lambda) * uniformSplit;
+		}
+
+		_sceneData.cascadeSplits = glm::vec4(splits[1], splits[2], splits[3], splits[4]);
+
+		glm::vec3 up = (std::abs(lightDir.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+
+		for (uint32_t c = 0; c < CASCADE_COUNT; ++c) {
+			float cNear = splits[c];
+			float cFar = splits[c + 1];
+
+			// standard perspective slice for [cNear, cFar] to extract 8 frustum slice corners
+			glm::mat4 sliceProj = glm::perspective(glm::radians(70.0f), aspect, cNear, cFar);
+			sliceProj[1][1] *= -1.0f;
+			glm::mat4 invSliceViewProj = glm::inverse(sliceProj * _sceneData.view);
+
+			std::array<glm::vec3, 8> frustumCorners{};
+			uint32_t idx = 0;
+			for (uint32_t x = 0; x < 2; ++x) {
+				for (uint32_t y = 0; y < 2; ++y) {
+					for (uint32_t z = 0; z < 2; ++z) {
+						glm::vec4 pt = invSliceViewProj * glm::vec4(
+							x ? 1.0f : -1.0f,
+							y ? 1.0f : -1.0f,
+							static_cast<float>(z),
+							1.0f);
+						frustumCorners[idx++] = glm::vec3(pt) / pt.w;
+					}
+				}
+			}
+
+			// compute frustum slice center and rotation invariant bounding sphere radius
+			glm::vec3 center(0.0f);
+			for (const auto& corner : frustumCorners) center += corner;
+			center /= 8.0f;
+
+			float radius = 0.0f;
+			for (const auto& corner : frustumCorners) {
+				radius = std::max(radius, glm::length(corner - center));
+			}
+			radius = std::ceil(radius * 16.0f) / 16.0f;
+
+			// texel snap cascade center in light view space to eliminate shadow edge swimming
+			glm::mat4 baseLightView = glm::lookAt(lightDir * radius, glm::vec3(0.0f), up);
+			glm::vec4 lightSpaceCenter = baseLightView * glm::vec4(center, 1.0f);
+			float texelSize = (radius * 2.0f) / SHADOW_MAP_RES;
+			lightSpaceCenter.x = std::floor(lightSpaceCenter.x / texelSize) * texelSize;
+			lightSpaceCenter.y = std::floor(lightSpaceCenter.y / texelSize) * texelSize;
+			glm::vec3 snappedCenter = glm::vec3(glm::inverse(baseLightView) * lightSpaceCenter);
+
+			glm::mat4 lightView = glm::lookAt(snappedCenter + lightDir * radius, snappedCenter, up);
+
+			// pull zNear back (-radius * 6.0f) so tall objects outside the view frustum cast shadows into the slice
+			float zPullback = std::max(radius * 6.0f, maxShadowDist);
+			glm::mat4 lightProj = glm::ortho(-radius, radius, -radius, radius, -zPullback, radius * 2.0f);
+			lightProj[1][1] *= -1.0f;
+
+			_sceneData.cascadeViewproj[c] = lightProj * lightView;
+		}
+
+		_sceneData.sunlightViewproj = _sceneData.cascadeViewproj[0];
+		break;
 	}
 
 	// point lights

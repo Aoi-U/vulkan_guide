@@ -28,6 +28,7 @@ struct RasterState
 	VkCullModeFlags cullMode{ VK_CULL_MODE_BACK_BIT };
 	VkFrontFace frontFace{ VK_FRONT_FACE_CLOCKWISE };
 	VkPolygonMode polygonMode{ VK_POLYGON_MODE_FILL };
+	bool depthClamp{ false };
 };
 
 struct GraphicsPipelineDesc

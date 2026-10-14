@@ -50,6 +50,9 @@ struct FrustumCullPassParameters
 	RGBufferHandle gpuIndirectBuffer;
 	RGBufferHandle gpuCountBuffer;
 	RGBufferHandle cullStatsBuffer;
+
+	RGBufferHandle gpuShadowIndirectBuffer;
+	RGBufferHandle gpuShadowInstanceBuffer;
 };
 
 struct GeometryPassParameters

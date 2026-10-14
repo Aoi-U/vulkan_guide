@@ -98,14 +98,19 @@ void RenderContext::draw(uint32_t vertexCount, uint32_t instanceCount, uint32_t 
 	vkCmdDraw(_cmd, vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
-void RenderContext::draw_indexed_indirect_count(VkBuffer cmdBuffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
-{
-	vkCmdDrawIndexedIndirectCount(_cmd, cmdBuffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
-}
-
 void RenderContext::draw_indexed(uint32_t indexCount, uint32_t instanceCount, uint32_t firstIndex, int32_t vertexOffset, uint32_t firstInstance)
 {
 	vkCmdDrawIndexed(_cmd, indexCount, instanceCount, firstIndex, vertexOffset, firstInstance);
+}
+
+void RenderContext::draw_indexed_indirect(VkBuffer cmdBuffer, VkDeviceSize offset, uint32_t drawCount, uint32_t stride)
+{
+	vkCmdDrawIndexedIndirect(_cmd, cmdBuffer, offset, drawCount, stride);
+}
+
+void RenderContext::draw_indexed_indirect_count(VkBuffer cmdBuffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
+{
+	vkCmdDrawIndexedIndirectCount(_cmd, cmdBuffer, offset, countBuffer, countBufferOffset, maxDrawCount, stride);
 }
 
 void RenderContext::dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ)

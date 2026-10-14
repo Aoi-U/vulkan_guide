@@ -101,6 +101,7 @@ GraphicsPipeline::GraphicsPipeline(VkDevice device, ResourceManager* resourceMan
 	builder.set_cull_mode(desc.rasterState.cullMode);
 	builder.set_front_face(desc.rasterState.frontFace);
 	builder.set_multisampling_none();
+	builder._rasterizer.depthClampEnable = desc.rasterState.depthClamp ? VK_TRUE : VK_FALSE;
 
 	switch (desc.blendMode) {
 	case BlendMode::None:

@@ -93,6 +93,8 @@ void Renderer::cleanup(entt::dispatcher& dispatcher)
 		_frames[i]._gpuIndirectBuffer->unload();
 		_frames[i]._gpuCountBuffer->unload();
 		_frames[i]._materialDataBuffer->unload();
+		_frames[i]._gpuShadowIndirectBuffer->unload();
+		_frames[i]._gpuShadowInstanceBuffer->unload();
 
 		_frames[i]._frameDescriptors.destroy_pools(_vulkanCore->get_device());
 
@@ -154,6 +156,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	currentFrame._gpuInstanceBuffer->resize(sizeof(uint32_t) * drawCount);
 	currentFrame._gpuIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * drawCount);
 	currentFrame._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
+	currentFrame._gpuShadowIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * drawCount);
+	currentFrame._gpuShadowInstanceBuffer->resize(sizeof(uint32_t) * drawCount);
 
 	_renderGraph.init(&_renderTargetPool);
 	_renderGraph.reset();
@@ -167,6 +171,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	targets.defaultWhite = _renderGraph.import_texture("DefaultWhite", defaults.whiteImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	targets.defaultBlack = _renderGraph.import_texture("DefaultBlack", defaults.blackImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	targets.defaultCubeWhite = _renderGraph.import_texture("DefaultCubeWhite", defaults.whiteCubeImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+	targets.defaultArrayWhite = _renderGraph.import_texture("DefaultArrayWhite", defaults.whiteArrayImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
 	VkExtent3D drawExtent3D = { _drawExtent.width, _drawExtent.height, 1 };
 	RGTextureDesc sceneColorDesc{
@@ -190,7 +195,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	targets.sceneDepth = _renderGraph.create_texture("SceneDepth", sceneDepthDesc);
 	targets.sceneColorCopy = targets.defaultBlack;
 	targets.finalColor = targets.defaultBlack;
-	targets.dirShadowMap = targets.defaultWhite;
+	targets.dirShadowMap = targets.defaultArrayWhite;
 	targets.pointShadowMap = targets.defaultCubeWhite;
 	targets.ssaoTexture = targets.defaultWhite;
 	targets.bloomTexture = targets.defaultBlack;
@@ -206,6 +211,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	targets.gpuCountBuffer = _renderGraph.import_buffer("GPUCountBuffer", currentFrame._gpuCountBuffer->get_buffer(), currentFrame._gpuCountBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
 	targets.cullStatsBuffer = _renderGraph.import_buffer("CullStatsBuffer", currentFrame._cullStatsBuffer->get_buffer(), currentFrame._cullStatsBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
 	targets.materialBuffer = _renderGraph.import_buffer("MaterialBuffer", currentFrame._materialDataBuffer->get_buffer(), currentFrame._materialDataBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.gpuShadowIndirectBuffer = _renderGraph.import_buffer("GPUShadowIndirectBuffer", currentFrame._gpuShadowIndirectBuffer->get_buffer(), currentFrame._gpuShadowIndirectBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
+	targets.gpuShadowInstanceBuffer = _renderGraph.import_buffer("GPUShadowInstanceBuffer", currentFrame._gpuShadowInstanceBuffer->get_buffer(), currentFrame._gpuShadowInstanceBuffer->get_size(), VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE);
 
 	// build RenderGraph from all enabled features
 	RenderViewContext viewCtx{ currentFrame, drawCtx, sceneData, _drawExtent };
@@ -283,11 +290,26 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 		info.extent = { extent.width, extent.height };
 		info.view = _renderGraph.get_image_view(handle);
 		info.isCube = _renderGraph.is_cube(handle);
-		if (info.isCube) {
-			for (int i = 0; i < 6; i++) {
+
+		uint32_t layers = _renderGraph.get_array_layers(handle);
+		info.view = (layers > 1) ? _renderGraph.get_image_view(handle, 0) : _renderGraph.get_image_view(handle);
+
+		if (layers > 1) {
+			for (uint32_t i = 0; i < layers; i++) {
 				info.faceViews.push_back(_renderGraph.get_image_view(handle, i));
 			}
 		}
+		_debugTargets[name] = info;
+
+		if (!info.isCube && layers > 1) {
+			for (uint32_t i = 0; i < layers; i++) {
+				TargetInfo cascadeInfo = info;
+				cascadeInfo.view = _renderGraph.get_image_view(handle, i);
+				cascadeInfo.faceViews.clear();
+				_debugTargets[fmt::format("{}_cascade{}", name, i)] = cascadeInfo;
+			}
+		}
+		
 		_debugTargets[name] = info;
 	}
 
@@ -643,9 +665,9 @@ void Renderer::create_sync_structures()
 		_frames[i]._gpuInstanceBuffer = _resourceManager->load<Buffer>("gpuInstance" + fi, sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		_frames[i]._gpuIndirectBuffer = _resourceManager->load<Buffer>("gpuIndirect" + fi, sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		_frames[i]._gpuCountBuffer = _resourceManager->load<Buffer>("gpuCount" + fi, sizeof(MaterialConstants), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-
-
 		_frames[i]._materialDataBuffer = _resourceManager->load<Buffer>("materialData" + fi, sizeof(MaterialConstants) * 1000, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuShadowIndirectBuffer = _resourceManager->load<Buffer>("gpuShadowIndirect" + fi, sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
+		_frames[i]._gpuShadowInstanceBuffer = _resourceManager->load<Buffer>("gpuShadowInstance" + fi, sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 	}
 }
 

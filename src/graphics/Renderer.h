@@ -80,6 +80,8 @@ struct FrameData
 	ResourceHandle<Buffer> _gpuIndirectBuffer; // buffer for indirect draw commands
 	ResourceHandle<Buffer> _gpuCountBuffer; // buffer for draw counts per batch
 	ResourceHandle<Buffer> _materialDataBuffer; // buffer for material data for each entity in the scene
+	ResourceHandle<Buffer> _gpuShadowIndirectBuffer; // buffer for indirect draw commands for shadow pass
+	ResourceHandle<Buffer> _gpuShadowInstanceBuffer; // buffer for instance ids for visible objects in shadow pass
 };
 
 struct TargetInfo

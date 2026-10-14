@@ -22,6 +22,7 @@ public:
 	ResourceHandle<Texture> greyImage;
 	ResourceHandle<Texture> errorCheckerboardImage;
 	ResourceHandle<Texture> defaultNormalImage;
+	ResourceHandle<Texture> whiteArrayImage;
 
 	ResourceHandle<Sampler> defaultSamplerLinear;
 	ResourceHandle<Sampler> defaultSamplerNearest;
