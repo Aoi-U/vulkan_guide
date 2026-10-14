@@ -2,10 +2,13 @@
 
 #include <graphics/pass/RenderFeature.h>
 #include <graphics/Pipeline.h>
+#include <graphics/utils/RGParameters.h>
 
 class BloomPass : public RenderFeature
 {
 public:
+	static constexpr uint32_t MAX_BLOOM_MIPS = 6;
+
 	BloomPass()
 		: RenderFeature("BloomPass", true) {}
 
@@ -17,11 +20,15 @@ public:
 	void on_imgui() override;
 
 private:
-	void render_extract(const RenderViewContext& view, const RenderGraph& graph, const BloomBrightExtractPassParameters& params, RenderContext& ctx);
-	void render_blur(const RenderViewContext& view, const RenderGraph& graph, const GaussianBlurPassParameters& params, RenderContext& ctx);
+	void render_downsample(const RenderViewContext& view, const RenderGraph& graph, const BloomDownsampleParams& params, RenderContext& ctx);
+	void render_upsample(const RenderViewContext& view, const RenderGraph& graph, const BloomUpsampleParams& params, RenderContext& ctx);
 
 	VulkanCore* _vulkanCore{ nullptr };
-	GraphicsPipeline _brightExtractPipeline;
-	GraphicsPipeline _blurPipeline;
-	int _blurIterations{ 10 };
+	GraphicsPipeline _downsamplePipeline;
+	GraphicsPipeline _upsamplePipeline;
+	
+	float _threshold{ 1.0f };
+	float _knee{ 0.5f };
+	float _filterRadius{ 0.005f };
+	int _mipCount{ 5 };
 };

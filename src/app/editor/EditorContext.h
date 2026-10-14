@@ -3,7 +3,6 @@
 #include <entt.hpp>
 #include <imgui.h>
 #include <resources/ResourceManager.h>
-#include <graphics/pass/Pass.h>
 #include <graphics/utils/vk_types.h>
 
 class Renderer; 

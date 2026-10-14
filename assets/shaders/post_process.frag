@@ -10,6 +10,7 @@ layout(set = 0, binding = 1) uniform sampler2D bloomColor;
 layout(push_constant) uniform PushConstants 
 {
 	float exposure;
+    float bloomStrength;
 } push;
 
 vec3 ACESFilm(vec3 x) {
@@ -26,8 +27,7 @@ void main()
     vec3 color = texture(sceneColor, inUV).rgb;
     vec3 bloom = texture(bloomColor, inUV).rgb;
 
-    color += bloom; // bloom blending
-
+    color = mix(color, color + bloom, push.bloomStrength); // bloom blending
     color *= push.exposure; // exposure adjustment
     color = ACESFilm(color); // hdr to ldr tone mapping
     color = pow(color, vec3(1.0 / 2.2)); // gamma correction

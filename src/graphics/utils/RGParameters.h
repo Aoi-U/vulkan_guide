@@ -142,23 +142,18 @@ struct SkyboxPassParameters
 	RGTextureHandle sceneDepth;
 };
 
-struct BloomBrightExtractPassParameters
+struct BloomDownsampleParams
 {
-	// input
-	RGTextureHandle sceneColor;
-
-	// output
-	RGTextureHandle brightColor;
+	RGTextureHandle src;
+	RGTextureHandle dst;
+	glm::vec2 srcTexelSize;
+	int mipLevel;
 };
 
-struct GaussianBlurPassParameters
+struct BloomUpsampleParams
 {
-	// input
-	RGTextureHandle inputColor;
-
-	//output
-	RGTextureHandle blurColor;	
-	int horizontal;
+	RGTextureHandle src;
+	RGTextureHandle dst;
 };
 
 struct PostProcessPassParameters

@@ -8,6 +8,7 @@
 #include <imgui.h>
 
 AutoCVar_Float cvExposure("r.exposure", "Camera exposure multiplier", 1.0f, CVarFlags::EditFloatSlider, 0.1f, 10.0f);
+AutoCVar_Float cvBloomStrength("r.bloom.strength", "Bloom intensity", 0.04f, 0.0f, 1.0f, CVarFlags::EditFloatSlider);
 
 void PostProcessPass::init(VulkanCore* vulkanCore, ResourceManager* resourceManager)
 {
@@ -66,6 +67,7 @@ void PostProcessPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 			// set push constants
 			PushConstantDispatcher pc(_pipeline.get_reflection());
 			pc.set("exposure", static_cast<float>(cvExposure.Get()));
+			pc.set("bloomStrength", static_cast<float>(cvBloomStrength.Get()));
 			pc.flush(rc.get_cmd(), _pipeline.get_layout());
 
 			rc.set_cull_mode(VK_CULL_MODE_NONE);
@@ -81,6 +83,11 @@ void PostProcessPass::on_imgui()
 	float exposure = static_cast<float>(cvExposure.Get());
 	if (ImGui::SliderFloat("Exposure", &exposure, 0.1f, 10.0f)) {
 		cvExposure.Set(exposure);
+	}
+
+	float bloomStrength = static_cast<float>(cvBloomStrength.Get());
+	if (ImGui::SliderFloat("Bloom Strength", &bloomStrength, 0.0f, 1.0f)) {
+		cvBloomStrength.Set(bloomStrength);
 	}
 }
 
