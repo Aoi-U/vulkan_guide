@@ -148,7 +148,7 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	currentFrame.sceneDataBuffer->resize(sizeof(GPUSceneData));
 	currentFrame.sceneDataBuffer->copy_data(&sceneData, sizeof(GPUSceneData));
 
-	uint32_t drawCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueObjects.size()));
+	uint32_t drawCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueObjects.size() + drawCtx.transparentObjects.size()));
 	uint32_t batchCount = std::max(1u, static_cast<uint32_t>(drawCtx.opaqueBatches.size()));
 	currentFrame._gpuObjectBuffer->resize(sizeof(GPUObjectData) * drawCount);
 	currentFrame._gpuInstanceBuffer->resize(sizeof(uint32_t) * drawCount);
@@ -168,14 +168,26 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	targets.defaultBlack = _renderGraph.import_texture("DefaultBlack", defaults.blackImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 	targets.defaultCubeWhite = _renderGraph.import_texture("DefaultCubeWhite", defaults.whiteCubeImage, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+	VkExtent3D drawExtent3D = { _drawExtent.width, _drawExtent.height, 1 };
+	RGTextureDesc sceneColorDesc{
+		.extent = drawExtent3D,
+		.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+		.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+	};
+	RGTextureDesc sceneDepthDesc{
+		.extent = drawExtent3D,
+		.format = VK_FORMAT_D32_SFLOAT,
+		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
+	};
+
 	// ppopulate fallbacks 
 	targets.gPosition = targets.defaultBlack;
 	targets.gNormal = targets.defaultBlack;
 	targets.gAlbedo = targets.defaultBlack;
 	targets.gMetalRough = targets.defaultBlack;
 	targets.gEmissive = targets.defaultBlack;
-	targets.sceneDepth = targets.defaultWhite;
-	targets.sceneColor = targets.defaultBlack;
+	targets.sceneColor = _renderGraph.create_texture("SceneColor", sceneColorDesc);
+	targets.sceneDepth = _renderGraph.create_texture("SceneDepth", sceneDepthDesc);
 	targets.sceneColorCopy = targets.defaultBlack;
 	targets.finalColor = targets.defaultBlack;
 	targets.dirShadowMap = targets.defaultWhite;
@@ -482,30 +494,55 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	}
 	else
 	{
-		for (auto& obj : _drawCache.opaqueObjects) {
-			entt::entity e = static_cast<entt::entity>(obj.entityId);
-			if (!registry.valid(e))
-				continue;
+		//for (auto& obj : _drawCache.opaqueObjects) {
+		//	entt::entity e = static_cast<entt::entity>(obj.entityId);
+		//	if (!registry.valid(e))
+		//		continue;
 
-			const auto& tc = registry.get<TransformComponent>(e);
-			obj.transform = tc.worldTransform;
+		//	const auto& tc = registry.get<TransformComponent>(e);
+		//	obj.transform = tc.worldTransform;
 
-			auto* matComp = registry.try_get<MaterialComponent>(e);
-			if (matComp && matComp->material) {
-				auto paramData = matComp->material->get_parameter_data();
-				size_t offset = obj.materialIndex * paramData.size();
+		//	auto* matComp = registry.try_get<MaterialComponent>(e);
+		//	if (matComp && matComp->material) {
+		//		auto paramData = matComp->material->get_parameter_data();
+		//		size_t offset = obj.materialIndex * paramData.size();
 
-				size_t requiredSize = (obj.materialIndex + 1) * paramData.size();
-				if (currentFrame._materialDataBuffer->get_size() < requiredSize) {
-					currentFrame._materialDataBuffer->resize(requiredSize * 1.5, true);
+		//		size_t requiredSize = (obj.materialIndex + 1) * paramData.size();
+		//		if (currentFrame._materialDataBuffer->get_size() < requiredSize) {
+		//			currentFrame._materialDataBuffer->resize(requiredSize * 1.5, true);
+		//		}
+
+		//		std::memcpy(static_cast<uint8_t*>(currentFrame._materialDataBuffer->get_mapped_data()) + offset, paramData.data(), paramData.size());
+
+		//		//matComp->material->clear_dirty();
+		//		//matComp->isDirty = false;
+		//	}
+		//}
+
+		auto update_cached_objects = [&](std::vector<RenderObject>& objects) {
+			for (RenderObject& obj : objects) {
+				entt::entity e = static_cast<entt::entity>(obj.entityId);
+				if (!registry.valid(e))
+					continue;
+
+				const auto& tc = registry.get<TransformComponent>(e);
+				obj.transform = tc.worldTransform;
+
+				auto* matComp = registry.try_get<MaterialComponent>(e);
+				if (matComp && matComp->material) {
+					auto paramData = matComp->material->get_parameter_data();
+					size_t offset = obj.materialIndex * paramData.size();
+
+					size_t requiredSize = (obj.materialIndex + 1) * paramData.size();
+					if (currentFrame._materialDataBuffer->get_size() < requiredSize) {
+						currentFrame._materialDataBuffer->resize(requiredSize * 1.5, true);
+					}
+					memcpy(static_cast<uint8_t*>(currentFrame._materialDataBuffer->get_mapped_data()) + offset, paramData.data(), paramData.size());
 				}
-
-				std::memcpy(static_cast<uint8_t*>(currentFrame._materialDataBuffer->get_mapped_data()) + offset, paramData.data(), paramData.size());
-
-				//matComp->material->clear_dirty();
-				//matComp->isDirty = false;
 			}
-		}
+		};
+		update_cached_objects(_drawCache.opaqueObjects);
+		update_cached_objects(_drawCache.transparentObjects);
 	}
 
 	ctx.opaqueObjects = _drawCache.opaqueObjects;
@@ -603,7 +640,7 @@ void Renderer::create_sync_structures()
 		_frames[i].sceneDataBuffer = _resourceManager->load<Buffer>("sceneData" + fi, sizeof(GPUSceneData), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 
 		_frames[i]._gpuObjectBuffer = _resourceManager->load<Buffer>("gpuObject" + fi, sizeof(GPUObjectData), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		_frames[i]._gpuInstanceBuffer = _resourceManager->load<Buffer>("gpuInstance" + fi, sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_GPU_ONLY);
+		_frames[i]._gpuInstanceBuffer = _resourceManager->load<Buffer>("gpuInstance" + fi, sizeof(uint32_t), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		_frames[i]._gpuIndirectBuffer = _resourceManager->load<Buffer>("gpuIndirect" + fi, sizeof(VkDrawIndexedIndirectCommand), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 		_frames[i]._gpuCountBuffer = _resourceManager->load<Buffer>("gpuCount" + fi, sizeof(MaterialConstants), VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
 

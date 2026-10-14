@@ -13,9 +13,9 @@ void ForwardTransparentPass::init(VulkanCore* core, ResourceManager* rm)
 	_core = core;
 	_rm = rm;
 
-	if (_rm->has_resource<Shader>("forward.frag")) { // use custom forward vfx shader if it exists, otherwise use default template
-		auto vert = _rm->load<Shader>("gbuffer.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
-		auto frag = _rm->load<Shader>("forward.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
+	auto vert = _rm->load<Shader>("gbuffer.vert", VK_SHADER_STAGE_VERTEX_BIT, "main");
+	auto frag = _rm->load<Shader>("forward.frag", VK_SHADER_STAGE_FRAGMENT_BIT, "main");
+	if (vert.is_valid() && frag.is_valid()) {
 		_forwardVfxTemplate = _rm->load<MaterialTemplate>("forward_vfx_template", vert, frag);
 	}
 	else {
@@ -75,8 +75,11 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 			params.prefilterMap = builder.read_texture(targets.prefilterMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			params.brdfLut = builder.read_texture(targets.brdfLut, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
+			bool gbufferActive = (targets.gPosition != targets.defaultBlack);
+			VkAttachmentLoadOp depthLoadOp = gbufferActive ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+
 			params.sceneColor = builder.set_color_attachment(targets.sceneColor, VK_ATTACHMENT_LOAD_OP_LOAD);
-			params.sceneDepth = builder.set_depth_attachment(targets.sceneDepth, VK_ATTACHMENT_LOAD_OP_LOAD);
+			params.sceneDepth = builder.set_depth_attachment(targets.sceneDepth, depthLoadOp, 0.0);
 			builder.set_extent(view.drawExtent);
 		},
 		[this, &view, &graph](const TransparentPassParams& params, RenderContext& rc) {
@@ -102,7 +105,7 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 			frameData._gpuInstanceBuffer->resize(sizeof(uint32_t) * totalObjects, true);
 
 			auto* mappedObjects = static_cast<GPUObjectData*>(frameData._gpuObjectBuffer->get_mapped_data());
-			std::vector<uint32_t> instanceIndices(transCount);
+			auto* mappedInstances = static_cast<uint32_t*>(frameData._gpuInstanceBuffer->get_mapped_data());
 
 			for (uint32_t i = 0; i < transCount; ++i) {
 				const RenderObject& obj = sortedObjects[i];
@@ -115,17 +118,9 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 					.batchOffset = 0,
 					.materialIndex = obj.materialIndex
 				};
-				instanceIndices[i] = globalIdx;
+				mappedInstances[globalIdx] = globalIdx;
 			}
 
-			// copy transparent instance indices to GPU instance buffer
-			VkBufferCopy instanceCopy{
-					.srcOffset = 0,
-					.dstOffset = baseInstanceOffset * sizeof(uint32_t),
-					.size = transCount * sizeof(uint32_t)
-			};
-			vkCmdUpdateBuffer(rc.get_cmd(), frameData._gpuInstanceBuffer->get_buffer(), instanceCopy.dstOffset, instanceCopy.size, instanceIndices.data());
-			vkutil::buffer_mem_barrier2(rc.get_cmd(), frameData._gpuInstanceBuffer->get_buffer(), VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT);
 
 			// bind global descriptor set 0 and bindless texture set 1
 			VkDescriptorSetLayout layout0 = _rm->get_pipeline_layout_cache().get_descriptor_set_layout(_forwardVfxTemplate->get_reflection().sets.at(0), false);

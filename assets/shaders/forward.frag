@@ -17,7 +17,7 @@ layout (location = 0) out vec4 outFragColor;
 struct MaterialConstants {
 	vec4 colorFactors;
 	vec4 metalRoughFactors;
-	vec4 extraFactors;   // x: occlusionStrength, y: normalScale, z: isDoubleSided
+	vec4 extraFactors;   // x: occlusionStrength, y: normalScale, z: isDoubleSided, w: transmission factor
 	vec4 emissiveFactor; // xyz: emissiveFactor, w: emissiveStrength
 	uint albedoIndex;
 	uint normalIndex;
@@ -99,8 +99,15 @@ void main() {
     vec3 emissive = texture(globalTextures[nonuniformEXT(mat.emissiveIndex)], inUV).rgb
                   * mat.emissiveFactor.rgb * mat.emissiveFactor.w;
 
-    vec3 surfaceColor = mix(refractedBg * baseSample.rgb, diffuseIBL, alpha) + specularIBL + sunSpec + emissive;
-    float finalAlpha  = clamp(alpha + dot(F, vec3(0.333)), 0.0, 1.0);
+    float transmission = mat.extraFactors.w;
+    vec3 directAndIBL = diffuseIBL * (1.0 - transmission) + specularIBL + sunSpec + emissive;
 
-    outFragColor = vec4(surfaceColor, finalAlpha);
+    if (transmission > 0.01) { // output refracted background tinted by baseSample
+        vec3 glassColor = refractedBg * baseSample.rgb + directAndIBL;
+        outFragColor = vec4(glassColor, 1.0);
+    } 
+    else { // output standard alpha-blended surface lighting + fresnel rim
+        float finalAlpha = clamp(alpha + dot(F, vec3(0.333)) * (1.0 - alpha), 0.0, 1.0);
+        outFragColor = vec4(directAndIBL / max(finalAlpha, 0.001), finalAlpha);
+    }
 }

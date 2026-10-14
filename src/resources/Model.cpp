@@ -109,7 +109,10 @@ bool Model::doUnload()
 
 bool Model::parse_gltf_file(fastgltf::Asset& gltf)
 {
-	fastgltf::Parser parser{};
+	fastgltf::Parser parser{ 
+		fastgltf::Extensions::KHR_materials_transmission | 
+		fastgltf::Extensions::KHR_materials_ior
+	};
 	constexpr auto gltfOptions =
 		fastgltf::Options::DontRequireValidAssetMember |
 		fastgltf::Options::AllowDouble |
@@ -564,6 +567,29 @@ void Model::create_materials(const fastgltf::Asset& gltf, const ModelStagingUplo
 		);
 		matInstance->set_parameter("colorFactors", baseColorFactor);
 
+		float transmissionFactor = 0.0f;
+		if (gltfMat.transmission != nullptr) {
+			transmissionFactor = gltfMat.transmission->transmissionFactor;
+		}
+
+		if (gltfMat.alphaMode == fastgltf::AlphaMode::Blend || transmissionFactor > 0.0f) {
+			matInstance->set_alpha_mode(AlphaMode::Blend);
+
+			// Adjust alpha based on transmission factor if base color alpha is fully opaque
+			if (transmissionFactor > 0.0f && baseColorFactor.a >= 0.99f) {
+				baseColorFactor.a = glm::clamp(1.0f - transmissionFactor * 0.75f, 0.15f, 0.85f);
+			}
+		}
+		else if (gltfMat.alphaMode == fastgltf::AlphaMode::Mask) {
+			matInstance->set_alpha_mode(AlphaMode::Mask);
+		}
+		else {
+			matInstance->set_alpha_mode(AlphaMode::Opaque);
+		}
+
+		matInstance->set_double_sided(gltfMat.doubleSided);
+		matInstance->set_parameter("colorFactors", baseColorFactor);
+
 		// metallic roughness factor
 		glm::vec4 metalRoughFactor = glm::vec4(
 			gltfMat.pbrData.metallicFactor,
@@ -578,7 +604,7 @@ void Model::create_materials(const fastgltf::Asset& gltf, const ModelStagingUplo
 			gltfMat.occlusionTexture.has_value() ? gltfMat.occlusionTexture->strength : 1.0f,
 			gltfMat.normalTexture.has_value() ? gltfMat.normalTexture->scale : 1.0f,
 			gltfMat.doubleSided ? 1.0f : 0.0f,
-			0.0f
+			transmissionFactor
 		);
 		matInstance->set_parameter("extraFactors", extraFactors);
 

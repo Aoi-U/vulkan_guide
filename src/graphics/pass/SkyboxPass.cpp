@@ -36,9 +36,12 @@ void SkyboxPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, cons
 
 	graph.add_pass<SkyboxGraphParams>("SkyboxPass",
 		[&](RGPassBuilder& builder, SkyboxGraphParams& params) {
+			bool gbufferActive = (targets.gPosition != targets.defaultBlack);
+			VkAttachmentLoadOp depthLoadOp = gbufferActive ? VK_ATTACHMENT_LOAD_OP_LOAD : VK_ATTACHMENT_LOAD_OP_CLEAR;
+
 			params.envCubemap = builder.read_texture(targets.envCubemap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			params.sceneColor = builder.set_color_attachment(targets.sceneColor, VK_ATTACHMENT_LOAD_OP_LOAD);
-			params.sceneDepth = builder.set_depth_attachment(targets.sceneDepth, VK_ATTACHMENT_LOAD_OP_LOAD);
+			params.sceneDepth = builder.set_depth_attachment(targets.sceneDepth, depthLoadOp, 0.0);
 			builder.set_extent(view.drawExtent);
 		},
 		[this, &view, &graph](const SkyboxGraphParams& params, RenderContext& ctx) {

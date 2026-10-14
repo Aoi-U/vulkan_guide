@@ -44,7 +44,7 @@ void GBufferPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, con
 	targets.gAlbedo = graph.create_texture("GBufferAlbedo", albedoDesc);
 	targets.gMetalRough = graph.create_texture("GBufferMetalRough", metalRoughDesc);
 	targets.gEmissive = graph.create_texture("GBufferEmissive", hdrGbufferDesc);
-	targets.sceneDepth = graph.create_texture("SceneDepth", depthDesc);
+	//targets.sceneDepth = graph.create_texture("SceneDepth", depthDesc); // set in main renderer class
 
 	graph.add_pass<GeometryPassParameters>("GBufferPass",
 		[&](RGPassBuilder& builder, GeometryPassParameters& params) {

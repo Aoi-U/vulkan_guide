@@ -137,6 +137,27 @@ public:
 		return ptr;
 	}
 
+	bool remove_feature(std::string_view name) {
+		auto it = std::find_if(_features.begin(), _features.end(), [&](const auto& f) {
+			return f->get_name() == name;
+			});
+		if (it != _features.end()) {
+			vkDeviceWaitIdle(_vulkanCore->get_device());
+			(*it)->cleanup();
+			_features.erase(it);
+			return true;
+		}
+		return false;
+	}
+
+	void remove_feature_at(size_t index) {
+		if (index < _features.size()) {
+			vkDeviceWaitIdle(_vulkanCore->get_device());
+			_features[index]->cleanup();
+			_features.erase(_features.begin() + static_cast<std::ptrdiff_t>(index));
+		}
+	}
+
 	RenderFeature* get_feature(std::string_view name) const;
 	std::vector<std::unique_ptr<RenderFeature>>& get_features() { return _features; }
 	const std::vector<std::unique_ptr<RenderFeature>>& get_features() const { return _features; }

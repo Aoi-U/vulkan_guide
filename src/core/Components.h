@@ -64,13 +64,6 @@ struct MeshComponent
 	}
 };
 
-enum class AlphaMode : uint8_t
-{
-	Opaque = 0,
-	Mask = 1,
-	Blend = 2
-};
-
 struct MaterialComponent {
 	std::shared_ptr<MaterialInstance> material;
 	bool doubleSided{ false };

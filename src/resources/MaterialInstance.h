@@ -56,6 +56,12 @@ public:
 		}
 	}
 
+	void set_alpha_mode(AlphaMode mode) { _alphaMode = mode; }
+	void set_double_sided(bool doubleSided) { _doubleSided = doubleSided; }
+
+	AlphaMode get_alpha_mode() const { return _alphaMode; }
+	bool is_double_sided() const { return _doubleSided; }
+
 	ResourceHandle<Texture> get_texture(const std::string& slotName) const
 	{
 		auto it = _textures.find(slotName);
@@ -72,5 +78,7 @@ private:
 	uint32_t _materialBlockSize{ 0 };
 	std::vector<uint8_t> _parameterBuffer;
 	std::unordered_map<std::string, ResourceHandle<Texture>> _textures;
+	AlphaMode _alphaMode{ AlphaMode::Opaque };
+	bool _doubleSided{ false };
 	bool _isDirty{ true };
 };

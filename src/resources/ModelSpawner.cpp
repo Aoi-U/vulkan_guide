@@ -30,7 +30,7 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 	}
 
 	if (!node->submeshes.empty()) {
-		if (node->submeshes.size() == 1) {
+		if (node->submeshes.size() == 1) { // only one submesh, attach it to the node directly
 			const auto& sm = node->submeshes[0];
 			registry.emplace<MeshComponent>(nodeEntity, MeshComponent{
 					.mesh = sm.mesh,
@@ -42,11 +42,13 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 			if (sm.material) {
 				MaterialComponent mat{};
 				mat.material = sm.material;
+				mat.alphaMode = sm.material->get_alpha_mode();
+				mat.doubleSided = sm.material->is_double_sided();
 				mat.isDirty = true;
 				registry.emplace<MaterialComponent>(nodeEntity, mat);
 			}
 		}
-		else {
+		else { // multiple submeshes, create child entities for each submesh
 			for (size_t i = 0; i < node->submeshes.size(); ++i) {
 				const auto& sm = node->submeshes[i];
 				entt::entity smEntity = registry.create();
@@ -68,6 +70,8 @@ static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<M
 				if (sm.material) {
 					MaterialComponent mat{};
 					mat.material = sm.material;
+					mat.alphaMode = sm.material->get_alpha_mode();
+					mat.doubleSided = sm.material->is_double_sided();
 					mat.isDirty = true;
 					registry.emplace<MaterialComponent>(smEntity, mat);
 				}

@@ -97,6 +97,18 @@ void Editor::draw_gui(entt::registry& registry, ResourceManager& resourceManager
 			}
 			ImGui::SameLine();
 
+			if (dynamic_cast<CustomPostVFXPass*>(feature) != nullptr) {
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.15f, 0.15f, 1.0f));
+				if (ImGui::SmallButton("X")) {
+					renderer.remove_feature_at(i);
+					ImGui::PopStyleColor();
+					ImGui::PopID();
+					break; // Exit loop safely since vector size changed
+				}
+				ImGui::PopStyleColor();
+				ImGui::SameLine();
+			}
+
 			bool open = ImGui::TreeNodeEx(feature->get_name().c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 			if (open) {
 				if (enabled) {

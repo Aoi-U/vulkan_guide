@@ -84,6 +84,13 @@ struct GPUSceneData
 	glm::vec4 lightCount; // active point light count
 };
 
+enum class AlphaMode : uint8_t
+{
+	Opaque = 0,
+	Mask = 1,
+	Blend = 2
+};
+
 // data that is sent to shader for a material instance
 struct MaterialConstants
 {

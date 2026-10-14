@@ -41,7 +41,7 @@ void DeferredLightingPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackb
 			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
 			.usage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT
 	};
-	targets.sceneColor = graph.create_texture("SceneColor", colorDesc);
+	//targets.sceneColor = graph.create_texture("SceneColor", colorDesc); // set in main renderer class
 
 	graph.add_pass<DeferredLightingGraphParams>("DeferredLightingPass",
 		[&](RGPassBuilder& builder, DeferredLightingGraphParams& params) {
