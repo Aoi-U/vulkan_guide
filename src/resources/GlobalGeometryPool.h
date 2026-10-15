@@ -71,12 +71,6 @@ public:
 			_ranges.erase(_ranges.begin() + bestFitIndex);
 		}
 
-		// print debug info
-		fmt::println("RangeAllocator: allocated {} units at offset {}. remaining free ranges:", count, allocatedOffset);
-		for (const auto& r : _ranges) {
-			fmt::println("  - offset: {}, count: {}", r.offset, r.count);
-		}
-
 		return allocatedOffset;
 	}
 
@@ -109,12 +103,6 @@ public:
 				_ranges[insertIndex - 1].count += _ranges[insertIndex].count;
 				_ranges.erase(_ranges.begin() + insertIndex);
 			}
-		}
-
-		// debug info
-		fmt::println("RangeAllocator: freed {} units at offset {}. remaining free ranges:", count, offset);
-		for (const auto& r : _ranges) {
-			fmt::println("  - offset: {}, count: {}", r.offset, r.count);
 		}
 	}
 

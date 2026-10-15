@@ -2,10 +2,16 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
+#include <core/UUID.h>
 #include <resources/Mesh.h>
 #include <resources/Texture.h>
 #include <resources/MaterialInstance.h>
 #include <string>
+
+struct IDComponent
+{
+	UUID id{ UUID::generate() };
+};
 
 struct TagComponent
 {

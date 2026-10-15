@@ -1,24 +1,13 @@
 #pragma once
 
-#include <string>
-#include <vector>
+#include <cstdint>
 #include <filesystem>
-
-enum class AssetType
-{
-	Texture,
-	Model,
-	Shader,
-	EnvironmentHDR,
-	Unknown
-};
-
-struct AssetRecord
-{
-	std::string id;
-	std::filesystem::path path;
-	AssetType type;
-};
+#include <resources/AssetMetadata.h>
+#include <shared_mutex>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
 
 class AssetRegistry
 {
@@ -30,12 +19,44 @@ public:
 	}
 
 	void scan_directory(const std::filesystem::path& rootPath);
-	
-	std::vector<AssetRecord> get_assets_by_type(AssetType type) const;
-	const AssetRecord* find_asset_by_path(const std::filesystem::path& path) const;
-	const AssetRecord* find_asset_by_id(const std::string& id) const;
-	const std::vector<AssetRecord>& get_all_assets() const { return _assets; }
+
+	// uuid queries
+	const AssetMetadata* get_metadata(const UUID& uuid) const;
+	AssetMetadata* get_metadata_mutable(const UUID& uuid);
+	bool contains(const UUID& uuid) const;
+
+	// path/name queries
+	UUID find_uuid_by_path(const std::filesystem::path& path) const;
+	UUID find_uuid_by_id(std::string_view id) const;
+	const AssetMetadata* find_asset_by_path(const std::filesystem::path& path) const;
+	const AssetMetadata* find_asset_by_id(const std::string& id) const;
+
+	// resolve existing disk asset uuid by path/name or create uuid for runtime resources
+	UUID resolve_or_derive_uuid(std::string_view identifier) const;
+
+	// register sub-asset under parent asset
+	UUID register_sub_asset(const UUID& parentUUID, std::string_view subName, AssetType subType, const std::filesystem::path& cookedPath = "");
+
+	// runtime state tracking
+	void set_resource_state(const UUID& uuid, ResourceState state);
+	void set_gpu_size(const UUID& uuid, uint64_t gpuBytes);
+	ResourceState get_resource_state(const UUID& uuid) const;
+
+	std::vector<AssetMetadata> get_assets_by_type(AssetType type) const;
+	const std::vector<AssetMetadata>& get_all_assets() const { return _assetListCache; }
+
+	void print_manifest() const;
 
 private:
-	std::vector<AssetRecord> _assets;
+	static std::string normalize_path_key(const std::filesystem::path& path);
+	static uint64_t get_file_timestamp(const std::filesystem::path& path);
+	static std::filesystem::path get_default_cooked_path(const UUID& uuid, AssetType type);
+
+	mutable std::shared_mutex _mutex;
+	
+	std::unordered_map<UUID, AssetMetadata> _assetsByUUID;
+	std::unordered_map<std::string, UUID> _uuidByNormalizedPath;
+	std::unordered_map<std::string, UUID> _uuidById;
+	std::vector<AssetMetadata> _assetListCache;
+	double _lastScanDurationMs{ 0.0f };
 };

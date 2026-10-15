@@ -1,0 +1,6 @@
+uuid: 82683afd-e629-4354-87c3-337e6aebe058
+type: Shader
+name: deferred_lighting.vert
+version: 1
+lastWriteTime: 134355155764974910
+sourceHash: ""

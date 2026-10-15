@@ -8,6 +8,8 @@ add_library(stb_image INTERFACE)
 
 add_library(entt INTERFACE)
 
+add_library(stduuid INTERFACE)
+
 add_subdirectory(fastgltf)
 add_subdirectory(fmt EXCLUDE_FROM_ALL)
 add_subdirectory(SDL EXCLUDE_FROM_ALL)
@@ -32,6 +34,23 @@ target_include_directories(glm INTERFACE glm)
 #target_link_directories(sdl2 INTERFACE $ENV{VULKAN_SDK}/Lib )
 
 #target_link_libraries(sdl2 INTERFACE SDL2 SDL2main)
+
+add_library(yamlcpp INTERFACE)
+
+include(FetchContent)
+
+set(YAML_CPP_BUILD_TESTS OFF CACHE INTERNAL "")
+set(YAML_CPP_BUILD_TOOLS OFF CACHE INTERNAL "")
+set(YAML_CPP_BUILD_CONTRIB OFF CACHE INTERNAL "")
+
+FetchContent_Declare(
+  yaml-cpp
+  GIT_REPOSITORY https://github.com/jbeder/yaml-cpp.git
+  GIT_TAG yaml-cpp-0.9.0 # Can be a tag (yaml-cpp-x.x.x), a commit hash, or a branch name (master)
+)
+FetchContent_MakeAvailable(yaml-cpp)
+
+target_link_libraries(yamlcpp INTERFACE yaml-cpp::yaml-cpp) # The library or executable that require yaml-cpp library
 
 add_library(imgui STATIC)
 
@@ -65,6 +84,8 @@ target_compile_definitions(spirv_reflect PUBLIC SPIRV_REFLECT_USE_SYSTEM_SPIRV_H
 target_link_libraries(imgui PUBLIC Vulkan::Vulkan SDL2::SDL2 spirv_reflect)
 
 target_include_directories(stb_image INTERFACE stb_image)
+
+target_include_directories(stduuid INTERFACE stduuid)
 
 target_include_directories(spirv_reflect PUBLIC spirv-reflect
     "$ENV{VULKAN_SDK}/Include"

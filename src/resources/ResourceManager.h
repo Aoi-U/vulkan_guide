@@ -1,5 +1,7 @@
 #pragma once
 
+#include <core/UUID.h>
+#include <resources/AssetRegistry.h>
 #include <graphics/reflection/PipelineLayoutCache.h>
 #include <vulkan/vulkan.h>
 #include <string>
@@ -30,17 +32,19 @@ class ResourceHandle
 {
 public:
 	ResourceHandle();
+	ResourceHandle(const UUID& uuid, std::string_view debugId, ResourceManager* manager);
+	ResourceHandle(const UUID& uuid, ResourceManager* manager);
 	ResourceHandle(const std::string& id, ResourceManager* manager);
 
-	ResourceHandle(const ResourceHandle& other); 
+	ResourceHandle(const ResourceHandle& other);
 	ResourceHandle& operator=(const ResourceHandle& other);
-	ResourceHandle(ResourceHandle&& other) noexcept; 
-	ResourceHandle& operator=(ResourceHandle&& other) noexcept; 
-	~ResourceHandle(); 
+	ResourceHandle(ResourceHandle&& other) noexcept;
+	ResourceHandle& operator=(ResourceHandle&& other) noexcept;
+	~ResourceHandle();
 
 	T* get() const;
 	bool is_valid() const;
-
+	const UUID& get_uuid() const { return resourceUuid; }
 	const std::string& get_id() const { return resourceId; }
 
 	// Declarations only
@@ -49,39 +53,57 @@ public:
 	operator bool() const;
 
 private:
+	UUID resourceUuid{};
 	std::string resourceId;
 	ResourceManager* resourceManager;
 };
+
+template<typename T>
+using AssetHandle = ResourceHandle<T>;
 
 // resource base class
 class Resource
 {
 public:
 	explicit Resource(const std::string& id, VulkanCore* core, ResourceManager* manager)
-		: resourceId(id), _core(core), _resourceManager(manager) {}
+		: resourceUuid(AssetRegistry::get().resolve_or_derive_uuid(id)), resourceId(id), _core(core), _resourceManager(manager) {}
+
+	explicit Resource(const UUID& uuid, const std::string& id, VulkanCore* core, ResourceManager* manager)
+		: resourceUuid(uuid), resourceId(id), _core(core), _resourceManager(manager) {}
 
 	virtual ~Resource() = default;
 
+	const UUID& get_uuid() const { return resourceUuid; }
+	void set_uuid(const UUID& uuid) { resourceUuid = uuid; }
 	const std::string& get_id() const { return resourceId; }
 	bool is_loaded() const { return loaded; }
 
 	bool load()
 	{
-		if (loaded)
+		if (loaded) 
 			return true;
 
 		loaded = doLoad();
+		if (loaded && resourceUuid.is_valid()) {
+			AssetRegistry::get().set_resource_state(resourceUuid, ResourceState::Loaded);
+		}
+		else if (!loaded && resourceUuid.is_valid()) {
+			AssetRegistry::get().set_resource_state(resourceUuid, ResourceState::Failed);
+		}
 		return loaded;
 	}
 
 	void unload()
 	{
-		if (!loaded)
+		if (!loaded) 
 			return;
 
 		doUnload();
 		loaded = false;
-		
+		if (resourceUuid.is_valid()) {
+			AssetRegistry::get().set_resource_state(resourceUuid, ResourceState::Unloaded);
+			AssetRegistry::get().set_gpu_size(resourceUuid, 0);
+		}
 	}
 
 protected:
@@ -90,26 +112,30 @@ protected:
 
 	Resource() = default;
 	Resource(Resource&& other) noexcept
-		: resourceId(std::move(other.resourceId)), loaded(other.loaded), _core(other._core), _resourceManager(other._resourceManager)
+		: resourceUuid(other.resourceUuid), resourceId(std::move(other.resourceId)), loaded(other.loaded), _core(other._core), _resourceManager(other._resourceManager)
 	{
+		other.resourceUuid = UUID::null();
 		other.loaded = false;
 		other._core = nullptr;
 		other._resourceManager = nullptr;
 	}
 
-	Resource& operator=(Resource&& other) noexcept {
+	Resource& operator=(Resource&& other) noexcept
+	{
 		if (this != &other) {
+			resourceUuid = other.resourceUuid;
 			resourceId = std::move(other.resourceId);
 			loaded = other.loaded;
 			_core = other._core;
 			_resourceManager = other._resourceManager;
-
+			other.resourceUuid = UUID::null();
 			other.loaded = false;
 			other._core = nullptr;
 			other._resourceManager = nullptr;
 		}
 		return *this;
 	}
+
 	Resource(const Resource&) = delete;
 	Resource& operator=(const Resource&) = delete;
 
@@ -117,6 +143,7 @@ protected:
 	ResourceManager* _resourceManager{ nullptr };
 
 private:
+	UUID resourceUuid{};
 	std::string resourceId;
 	bool loaded = false;
 
@@ -132,6 +159,7 @@ public:
 	{
 		std::shared_ptr<Resource> resource; // the actual resource
 		int refCount; // reference count for this resource
+		uint64_t lastAccessedFrame{ 0 }; // frame index when this resource was last accessed
 	};
 	
 	void init(VulkanCore* core);
@@ -154,59 +182,105 @@ public:
 	PipelineLayoutCache& get_pipeline_layout_cache() { return _layoutCache; }
 
 	template<typename T, typename... Args>
+	ResourceHandle<T> load_by_uuid(const UUID& uuid, const std::string& debugName, Args&&... args)
+	{
+		static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+		if (!uuid.is_valid()) return ResourceHandle<T>();
+
+		auto typeKey = std::type_index(typeid(T));
+		auto& typeResources = _resources[typeKey];
+		auto it = typeResources.find(uuid);
+		if (it != typeResources.end()) {
+			return ResourceHandle<T>(uuid, debugName, this);
+		}
+
+		auto resource = std::make_shared<T>(debugName, _vulkanCore, this, std::forward<Args>(args)...);
+		resource->set_uuid(uuid);
+		if (!resource->load()) {
+			return ResourceHandle<T>();
+		}
+
+		typeResources[uuid] = resource;
+		_refCounts[typeKey][uuid] = ResourceData{ resource, 0, _currentFrame };
+		return ResourceHandle<T>(uuid, debugName, this);
+	}
+
+	template<typename T, typename... Args> // string based load resolving UUID first
 	ResourceHandle<T> load(const std::string& resourceId, Args&&... args)
 	{
-		static_assert(std::is_base_of<Resource, T>::value, "T must derive from Resource");
-		auto typeKey = std::type_index(typeid(T));
-
-		// check existing resource cache to avoid redundant loading
-		auto& typeResources = _resources[typeKey];
-		auto it = typeResources.find(resourceId);
-
-		if (it != typeResources.end()) {
-			// resource exists in cache, increment reference count and return handle
-			//_refCounts[typeKey][resourceId].refCount++;
-			return ResourceHandle<T>(resourceId, this);
-		}
-
-		// create new resource instance and attempt loading
-		auto resource = std::make_shared<T>(resourceId, _vulkanCore, this, std::forward<Args>(args)...);
-		if (!resource->load()) {
-			return ResourceHandle<T>(); // return invalid handle if loading fails
-		}
-
-		// cache successful resource and initialize reference tracking
-		typeResources[resourceId] = resource;
-		_refCounts[typeKey][resourceId] = ResourceData{ resource, 0 };
-
-		return ResourceHandle<T>(resourceId, this);
+		UUID uuid = AssetRegistry::get().resolve_or_derive_uuid(resourceId);
+		return load_by_uuid<T>(uuid, resourceId, std::forward<Args>(args)...);
 	}
 
 	template<typename T>
-	T* get_resource(const std::string& resourceId)
+	T* get_or_request(const UUID& uuid)
 	{
-		// access type specific resource container 
-		auto& typeResources = _resources[std::type_index(typeid(T))];
-		auto it = typeResources.find(resourceId);
-
-		if (it != typeResources.end()) {
-			// resource found, perform safe downcast and return typed pointer
-			return static_cast<T*>(it->second.get());
-		}
-
-		// resource not found, return null
+		if (!uuid.is_valid()) 
+			return nullptr;
+		if (T* res = get_resource<T>(uuid)) 
+			return res;
+		
+		ResourceState currentState = AssetRegistry::get().get_resource_state(uuid);
+		if (currentState == ResourceState::Unloaded) 
+			AssetRegistry::get().set_resource_state(uuid, ResourceState::Queued);
+		
 		return nullptr;
 	}
 
 	template<typename T>
-	ResourceHandle<T> get_handle(const std::string& resourceId) 
+	T* get_resource(const UUID& uuid) // resource by uuid
 	{
-		static_assert(std::is_base_of<Resource, T>::value, "T must derive from resource");
-		if (has_resource<T>(resourceId)) {
-			return ResourceHandle<T>(resourceId, this);
-		}
+		auto& typeResources = _resources[std::type_index(typeid(T))];
+		auto it = typeResources.find(uuid);
+		if (it != typeResources.end()) {
+			_refCounts[std::type_index(typeid(T))][uuid].lastAccessedFrame = _currentFrame;
 
+			return static_cast<T*>(it->second.get());
+		}
+		return nullptr;
+	}
+
+	template<typename T>
+	T* get_resource(const std::string& resourceId) // resource by resourceid
+	{
+		return get_resource<T>(AssetRegistry::get().resolve_or_derive_uuid(resourceId));
+	}
+
+	template<typename T>
+	ResourceHandle<T> get_handle(const UUID& uuid) // handle by uuid
+	{
+		static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+		if (has_resource<T>(uuid)) {
+			const auto* meta = AssetRegistry::get().get_metadata(uuid);
+			std::string debugId = meta ? meta->name : uuid.to_string();
+			return ResourceHandle<T>(uuid, debugId, this);
+		}
 		return ResourceHandle<T>();
+	}
+
+	template<typename T>
+	ResourceHandle<T> get_handle(const std::string& resourceId) // handle by resourceId
+	{
+		static_assert(std::is_base_of_v<Resource, T>, "T must derive from Resource");
+		UUID uuid = AssetRegistry::get().resolve_or_derive_uuid(resourceId);
+		if (has_resource<T>(uuid)) {
+			return ResourceHandle<T>(uuid, resourceId, this);
+		}
+		return ResourceHandle<T>();
+	}
+
+	template<typename T>
+	std::vector<UUID> get_loaded_resource_uuids() const
+	{
+		std::vector<UUID> keys;
+		auto typeKey = std::type_index(typeid(T));
+		auto it = _resources.find(typeKey);
+		if (it != _resources.end()) {
+			for (const auto& [uuid, _] : it->second) {
+				keys.push_back(uuid);
+			}
+		}
+		return keys;
 	}
 
 	template<typename T>
@@ -216,70 +290,78 @@ public:
 		auto typeKey = std::type_index(typeid(T));
 		auto it = _resources.find(typeKey);
 		if (it != _resources.end()) {
-			for (const auto& [id, _] : it->second) {
-				keys.push_back(id);
+			for (const auto& [_, res] : it->second) {
+				keys.push_back(res->get_id());
 			}
 		}
 		return keys;
 	}
 
 	template<typename T>
-	bool has_resource(const std::string& resourceId)
+	bool has_resource(const UUID& uuid) const
 	{
 		auto resourceTypeIt = _resources.find(std::type_index(typeid(T)));
 		if (resourceTypeIt != _resources.end()) {
-			return resourceTypeIt->second.contains(resourceId);
+			return resourceTypeIt->second.contains(uuid);
 		}
 		return false;
 	}
 
 	template<typename T>
-	void add_ref(const std::string& resourceId) 
+	bool has_resource(const std::string& resourceId) const
+	{
+		return has_resource<T>(AssetRegistry::get().resolve_or_derive_uuid(resourceId));
+	}
+
+	template<typename T>
+	void add_ref(const UUID& uuid)
 	{
 		auto typeKey = std::type_index(typeid(T));
 		auto typeIt = _refCounts.find(typeKey);
 		if (typeIt != _refCounts.end()) {
-			auto it = typeIt->second.find(resourceId);
-			if (it != typeIt->second.end()) {
+			auto it = typeIt->second.find(uuid);
+			if (it != typeIt->second.end()) { // increment ref count and update last accessed frame
 				it->second.refCount++;
+				it->second.lastAccessedFrame = _currentFrame;
 			}
 		}
 	}
 
 	template<typename T>
-	void release(const std::string& resourceId)
+	void release(const UUID& uuid)
 	{
 		auto typeKey = std::type_index(typeid(T));
-
-		// find the map for type T
 		auto typeIt = _refCounts.find(typeKey);
-		if (typeIt == _refCounts.end())
+		if (typeIt == _refCounts.end()) 
 			return;
 
-		// locate reference count for this resource
-		auto it = typeIt->second.find(resourceId);
-
-		if (it == typeIt->second.end())
+		auto it = typeIt->second.find(uuid);
+		if (it == typeIt->second.end()) 
 			return;
 
 		it->second.refCount--;
-
-		if (it->second.refCount <= 0) {
-			queue_unload(_resources[typeKey][resourceId]);
-
-			_resources[typeKey].erase(resourceId);
+		if (it->second.refCount <= 0) { // no more references, unload resource
+			queue_unload(_resources[typeKey][uuid]);
+			_resources[typeKey].erase(uuid);
 			typeIt->second.erase(it);
 		}
 	}
 
 	template<typename T>
-	void force_unload(const std::string& resourceId) {
+	void force_unload(const UUID& uuid)
+	{
 		auto typeKey = std::type_index(typeid(T));
-		if (_resources.contains(typeKey) && _resources[typeKey].contains(resourceId)) {
-			_resources[typeKey][resourceId]->unload();
-			_resources[typeKey].erase(resourceId);
-			_refCounts[typeKey].erase(resourceId);
+		if (_resources.contains(typeKey) && _resources[typeKey].contains(uuid)) {
+			_resources[typeKey][uuid]->unload();
+			_resources[typeKey].erase(uuid);
+			_refCounts[typeKey].erase(uuid);
 		}
+	}
+
+	template<typename T>
+	void force_unload(const std::string& resourceId)
+	{
+		force_unload<T>(AssetRegistry::get().resolve_or_derive_uuid(resourceId));
 	}
 
 	void unload_all();
@@ -302,12 +384,13 @@ private:
 
 	std::unique_ptr<GlobalGeometryPool> _geometryPool;
 	PipelineLayoutCache _layoutCache;
+	uint64_t _currentFrame{ 0 };
 
 	// two level storage system
 	// organize by type first, then by unique id
-	std::unordered_map<std::type_index, std::unordered_map<std::string, std::shared_ptr<Resource>>> _resources;
+	std::unordered_map<std::type_index, std::unordered_map<UUID, std::shared_ptr<Resource>>> _resources;
 
-	std::unordered_map<std::type_index, std::unordered_map<std::string, ResourceData>> _refCounts;
+	std::unordered_map<std::type_index, std::unordered_map<UUID, ResourceData>> _refCounts;
 
 	void init_bindless();
 	void clean_bindless();
@@ -315,93 +398,113 @@ private:
 };
 
 template<typename T>
-inline ResourceHandle<T>::ResourceHandle()
+inline ResourceHandle<T>::ResourceHandle() 
 	: resourceManager(nullptr) {}
 
 template<typename T>
+inline ResourceHandle<T>::ResourceHandle(const UUID& uuid, std::string_view debugId, ResourceManager* manager)
+	: resourceUuid(uuid), resourceId(debugId), resourceManager(manager)
+{
+	if (resourceManager && resourceUuid.is_valid()) {
+		resourceManager->add_ref<T>(resourceUuid);
+	}
+}
+
+template<typename T>
+inline ResourceHandle<T>::ResourceHandle(const UUID& uuid, ResourceManager* manager)
+	: resourceUuid(uuid), resourceId(uuid.to_string()), resourceManager(manager)
+{
+	if (resourceManager && resourceUuid.is_valid()) {
+		resourceManager->add_ref<T>(resourceUuid);
+	}
+}
+
+template<typename T>
 inline ResourceHandle<T>::ResourceHandle(const std::string& id, ResourceManager* manager)
-	: resourceId(id), resourceManager(manager) 
+	: resourceUuid(AssetRegistry::get().resolve_or_derive_uuid(id)), resourceId(id), resourceManager(manager)
 {
-	if (resourceManager && !resourceId.empty()) {
-		resourceManager->add_ref<T>(resourceId);
+	if (resourceManager && resourceUuid.is_valid()) {
+		resourceManager->add_ref<T>(resourceUuid);
 	}
 }
 
-template<typename T> // copy constructor
-inline ResourceHandle<T>::ResourceHandle(const ResourceHandle& other)
-	:resourceId(other.resourceId), resourceManager(other.resourceManager)
+template<typename T>
+inline ResourceHandle<T>::ResourceHandle(const ResourceHandle& other) // copy constructor
+	: resourceUuid(other.resourceUuid), resourceId(other.resourceId), resourceManager(other.resourceManager)
 {
-	if (resourceManager && !resourceId.empty()) {
-		resourceManager->add_ref<T>(resourceId);
+	if (resourceManager && resourceUuid.is_valid()) {
+		resourceManager->add_ref<T>(resourceUuid);
 	}
 }
 
-template<typename T> // copy assignment operator
-inline ResourceHandle<T>& ResourceHandle<T>::operator=(const ResourceHandle& other)
+template<typename T>
+inline ResourceHandle<T>& ResourceHandle<T>::operator=(const ResourceHandle& other) // copy assignment
 {
 	if (this != &other) {
-		if (resourceManager && !resourceId.empty()) {
-			resourceManager->release<T>(resourceId);
+		if (resourceManager && resourceUuid.is_valid()) {
+			resourceManager->release<T>(resourceUuid);
 		}
+		resourceUuid = other.resourceUuid;
 		resourceId = other.resourceId;
 		resourceManager = other.resourceManager;
-		if (resourceManager && !resourceId.empty()) {
-			resourceManager->add_ref<T>(resourceId);
+		if (resourceManager && resourceUuid.is_valid()) {
+			resourceManager->add_ref<T>(resourceUuid);
 		}
 	}
 	return *this;
 }
 
-template<typename T> // move constructor
-inline ResourceHandle<T>::ResourceHandle(ResourceHandle&& other) noexcept
-	: resourceId(std::move(other.resourceId)), resourceManager(other.resourceManager)
+template<typename T>
+inline ResourceHandle<T>::ResourceHandle(ResourceHandle&& other) noexcept // move constructor
+	: resourceUuid(other.resourceUuid), resourceId(std::move(other.resourceId)), resourceManager(other.resourceManager)
 {
+	other.resourceUuid = UUID::null();
 	other.resourceManager = nullptr;
 }
 
-template<typename T> // move assignment
-inline ResourceHandle<T>& ResourceHandle<T>::operator=(ResourceHandle&& other) noexcept
+template<typename T>
+inline ResourceHandle<T>& ResourceHandle<T>::operator=(ResourceHandle&& other) noexcept // move assignment
 {
 	if (this != &other) {
-		if (resourceManager && !resourceId.empty()) {
-			resourceManager->release<T>(resourceId);
+		if (resourceManager && resourceUuid.is_valid()) {
+			resourceManager->release<T>(resourceUuid);
 		}
+		resourceUuid = other.resourceUuid;
 		resourceId = std::move(other.resourceId);
 		resourceManager = other.resourceManager;
+		other.resourceUuid = UUID::null();
 		other.resourceManager = nullptr;
 	}
 	return *this;
 }
 
-template<typename T> // destructor
-inline ResourceHandle<T>::~ResourceHandle()
+template<typename T>
+inline ResourceHandle<T>::~ResourceHandle() // destructor
 {
-	if (resourceManager && !resourceId.empty()) {
-		resourceManager->release<T>(resourceId);
+	if (resourceManager && resourceUuid.is_valid()) {
+		resourceManager->release<T>(resourceUuid);
 	}
 }
 
 template<typename T>
 inline T* ResourceHandle<T>::get() const
 {
-	if (!resourceManager)
-		return nullptr;
-
-	return resourceManager->get_resource<T>(resourceId);
+	if (!resourceManager || !resourceUuid.is_valid()) return nullptr;
+	return resourceManager->get_resource<T>(resourceUuid);
 }
 
 template<typename T>
 inline bool ResourceHandle<T>::is_valid() const
 {
-	return resourceManager && resourceManager->has_resource<T>(resourceId);
+	return resourceManager && resourceUuid.is_valid() && resourceManager->has_resource<T>(resourceUuid);
 }
 
 template<typename T>
-inline T* ResourceHandle<T>::operator->() const 
-{ 
+inline T* ResourceHandle<T>::operator->() const
+{
 	T* ptr = get();
 	assert(ptr != nullptr && "ResourceHandle: attempted to dereference an invalid or unloaded ResourceHandle");
-	return ptr; 
+	return ptr;
 }
 
 template<typename T>

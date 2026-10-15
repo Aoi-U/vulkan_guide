@@ -62,6 +62,7 @@ void App::init()
 	dispatcher.sink<Events::ResetEnvironmentEvent>().connect<&App::on_reset_environment>(this);
 
 	AssetRegistry::get().scan_directory("../../assets");	
+	//AssetRegistry::get().print_manifest();
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;

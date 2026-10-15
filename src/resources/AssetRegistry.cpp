@@ -1,76 +1,332 @@
 #include "AssetRegistry.h"
-#include <algorithm>
+
+#include <resources/AssetSerializer.h>
 #include <fmt/core.h>
+#include <algorithm>
+#include <chrono>
+#include <cctype>
+
+std::string AssetRegistry::normalize_path_key(const std::filesystem::path& path)
+{
+	std::string key = path.lexically_normal().generic_string();
+  std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { 
+    return static_cast<char>(std::tolower(c)); 
+    });
+	return key;
+}
+
+uint64_t AssetRegistry::get_file_timestamp(const std::filesystem::path& path)
+{
+	std::error_code ec;
+	auto ftime = std::filesystem::last_write_time(path, ec);
+	if (ec)
+		return 0;
+	return static_cast<uint64_t>(ftime.time_since_epoch().count());
+}
+
+std::filesystem::path AssetRegistry::get_default_cooked_path(const UUID& uuid, AssetType type)
+{
+	switch (type) {
+	case AssetType::Texture:
+	case AssetType::EnvironmentHDR:
+		return std::filesystem::path(".cache/textures") / (uuid.to_string() + ".tex");
+	case AssetType::Mesh:
+	case AssetType::Model:
+		return std::filesystem::path(".cache/meshes") / (uuid.to_string() + ".mesh");
+	default:
+		return {};
+	}
+}
 
 void AssetRegistry::scan_directory(const std::filesystem::path& rootPath)
 {
-	_assets.clear();
+	auto startTime = std::chrono::high_resolution_clock::now();
+
+	std::unique_lock lock(_mutex);
+	_assetsByUUID.clear();
+	_uuidByNormalizedPath.clear();
+	_uuidById.clear();
+	_assetListCache.clear();
 
 	if (!std::filesystem::exists(rootPath)) {
-		fmt::println("AssetRegistry: Directory does not exist: {}", rootPath.string());
-		return;
+		fmt::println("AssetRegistry: directory does not exist: {}", rootPath.string());
+			return;
 	}
 
-	// scan directory using std filesystem
 	for (const auto& entry : std::filesystem::recursive_directory_iterator(rootPath)) {
-		if (entry.is_regular_file()) {
-			AssetRecord record;
-			record.path = entry.path();
-			record.id = entry.path().stem().string();
-			std::string ext = record.path.extension().string();
-			std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+		if (!entry.is_regular_file())
+			continue;
 
-			if (ext == ".glb" || ext == ".gltf") // model
-				record.type = AssetType::Model;
+		const std::filesystem::path& filePath = entry.path();
+		std::string ext = filePath.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { 
+      return static_cast<char>(std::tolower(c)); 
+      });
 
-			else if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga") // texture
-				record.type = AssetType::Texture;
-			
-			else if (ext == ".hdr") // environment map
-				record.type = AssetType::EnvironmentHDR;
-			
-			else if (ext == ".vert" || ext == ".frag" || ext == ".comp") { // shader 
-				record.type = AssetType::Shader;
-				record.id = entry.path().filename().string();
-			}
-			else // unsupported
-				record.type = AssetType::Unknown;
-			
-			if (record.type != AssetType::Unknown) {
-				_assets.push_back(record);
+		if (ext == ".meta" || ext == ".spv")
+			continue;
+
+		AssetType deducedType = AssetUtils::asset_type_from_extension(filePath);
+		if (deducedType == AssetType::Unknown)
+			continue;
+
+		std::filesystem::path metaPath = filePath;
+		metaPath += ".meta";
+
+		AssetMetadata meta{};
+    bool loadedFromMeta = AssetSerializer::load_meta_file(metaPath, meta);
+    uint64_t currentWriteTime = get_file_timestamp(filePath);
+    std::error_code ec;
+    uint64_t fileSize = std::filesystem::file_size(filePath, ec);
+
+    // determine canonical asset id, match existing shader filename vs stem convention
+    std::string canonicalId = (deducedType == AssetType::Shader) ? filePath.filename().string() : filePath.stem().string();
+
+    bool needsMetaSave = false;
+    if (!loadedFromMeta || !meta.uuid.is_valid()) {
+      meta.uuid = UUID::generate();
+      meta.type = deducedType;
+      meta.name = canonicalId;
+      meta.cookedPath = get_default_cooked_path(meta.uuid, meta.type);
+
+      // default import settings
+      if (meta.type == AssetType::Texture) {
+        std::string lowerName = canonicalId;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), [](unsigned char c) { 
+          return static_cast<char>(std::tolower(c)); 
+          });
+        meta.textureSettings.sRGB = (lowerName.find("albedo") != std::string::npos ||
+          lowerName.find("basecolor") != std::string::npos ||
+          lowerName.find("diffuse") != std::string::npos ||
+          lowerName.find("emissive") != std::string::npos);
+      }
+      needsMetaSave = true;
+    }
+    else if (meta.lastWriteTime != currentWriteTime) {
+      needsMetaSave = true;
+    }
+
+    meta.type = deducedType;
+    meta.name = canonicalId;
+    meta.id = canonicalId;
+    meta.virtualPath = filePath;
+    meta.path = filePath;
+    meta.diskSizeBytes = ec ? 0 : fileSize;
+    meta.gpuSizeBytes = 0;
+    meta.lastWriteTime = currentWriteTime;
+    meta.state = ResourceState::Unloaded;
+
+    if (meta.cookedPath.empty()) {
+      meta.cookedPath = get_default_cooked_path(meta.uuid, meta.type);
+    }
+
+    if (needsMetaSave) {
+      AssetSerializer::save_meta_file(metaPath, meta);
+    }
+
+    std::string normPath = normalize_path_key(filePath);
+    _uuidByNormalizedPath[normPath] = meta.uuid;
+    _uuidById[meta.id] = meta.uuid;
+
+    // register any subassets stored inside containers meta file
+    for (const auto& sub : meta.subAssets) {
+      if (!sub.uuid.is_valid()) continue;
+      AssetMetadata subMeta{};
+      subMeta.uuid = sub.uuid;
+      subMeta.type = sub.type;
+      subMeta.name = sub.name;
+      subMeta.id = sub.name;
+      subMeta.virtualPath = filePath;
+      subMeta.path = filePath;
+      subMeta.parentAssetUUID = meta.uuid;
+      subMeta.cookedPath = get_default_cooked_path(sub.uuid, sub.type);
+      subMeta.state = ResourceState::Unloaded;
+
+      _assetsByUUID[subMeta.uuid] = subMeta;
+      _uuidById[subMeta.id] = subMeta.uuid;
+    }
+
+    _assetsByUUID[meta.uuid] = meta;
+    _assetListCache.push_back(std::move(meta));
+	}
+
+  auto endTime = std::chrono::high_resolution_clock::now();
+  _lastScanDurationMs = std::chrono::duration<double, std::milli>(endTime - startTime).count();
+}
+
+const AssetMetadata* AssetRegistry::get_metadata(const UUID & uuid) const
+{
+  std::shared_lock lock(_mutex);
+  auto it = _assetsByUUID.find(uuid);
+  return (it != _assetsByUUID.end()) ? &it->second : nullptr;
+}
+
+AssetMetadata* AssetRegistry::get_metadata_mutable(const UUID& uuid)
+{
+  std::unique_lock lock(_mutex);
+  auto it = _assetsByUUID.find(uuid);
+  return (it != _assetsByUUID.end()) ? &it->second : nullptr;
+}
+
+bool AssetRegistry::contains(const UUID& uuid) const
+{
+  std::shared_lock lock(_mutex);
+  return _assetsByUUID.contains(uuid);
+}
+
+UUID AssetRegistry::find_uuid_by_path(const std::filesystem::path& path) const
+{
+  std::shared_lock lock(_mutex);
+  auto it = _uuidByNormalizedPath.find(normalize_path_key(path));
+  return (it != _uuidByNormalizedPath.end()) ? it->second : UUID::null();
+}
+
+UUID AssetRegistry::find_uuid_by_id(std::string_view id) const
+{
+  std::shared_lock lock(_mutex);
+  auto it = _uuidById.find(std::string(id));
+  return (it != _uuidById.end()) ? it->second : UUID::null();
+}
+
+const AssetMetadata* AssetRegistry::find_asset_by_path(const std::filesystem::path& path) const
+{
+  UUID uuid = find_uuid_by_path(path);
+  return uuid.is_valid() ? get_metadata(uuid) : nullptr;
+}
+
+const AssetMetadata* AssetRegistry::find_asset_by_id(const std::string& id) const
+{
+  UUID uuid = find_uuid_by_id(id);
+  if (uuid.is_valid())
+    return get_metadata(uuid);
+
+  fmt::println("AssetRegistery: no asset found with ID {}", id);
+  return nullptr;
+}
+
+UUID AssetRegistry::resolve_or_derive_uuid(std::string_view identifier) const
+{
+  if (identifier.empty())
+    return UUID::null();
+
+  // check if identifier already a registed asset id/stem
+  UUID found = find_uuid_by_id(identifier);
+  if (found.is_valid())
+    return found;
+
+  // check if identifier is file path
+	found = find_uuid_by_path(std::filesystem::path(identifier));
+  if (found.is_valid())
+    return found;
+
+  // fallback, hash runtime resource names
+  return UUID::from_name(identifier);
+}
+
+UUID AssetRegistry::register_sub_asset(const UUID& parentUUID, std::string_view subName, AssetType subType, const std::filesystem::path& cookedPath)
+{
+  UUID subUUID = UUID::derive(parentUUID, subName);
+
+  std::unique_lock lock(_mutex);
+  auto parentIt = _assetsByUUID.find(parentUUID);
+
+	// register sub-asset metadata
+  AssetMetadata subMeta{};
+  subMeta.uuid = subUUID;
+  subMeta.type = subType;
+  subMeta.name = std::string(subName);
+  subMeta.id = std::string(subName);
+  subMeta.parentAssetUUID = parentUUID;
+  subMeta.cookedPath = cookedPath.empty() ? get_default_cooked_path(subUUID, subType) : cookedPath;
+  subMeta.state = ResourceState::Unloaded;
+
+  if (parentIt != _assetsByUUID.end()) {
+    subMeta.virtualPath = parentIt->second.virtualPath;
+    subMeta.path = parentIt->second.path;
+
+    auto& subs = parentIt->second.subAssets;
+    auto existingSub = std::find_if(subs.begin(), subs.end(), [&](const SubAssetEntry& e) {
+      return e.uuid == subUUID;
+      });
+    if (existingSub == subs.end()) {
+      subs.push_back(SubAssetEntry{ std::string(subName), subUUID, subType });
+      std::filesystem::path metaPath = parentIt->second.virtualPath;
+      metaPath += ".meta";
+      AssetSerializer::save_meta_file(metaPath, parentIt->second);
+    }
+  }
+
+  _assetsByUUID[subUUID] = std::move(subMeta);
+  _uuidById[std::string(subName)] = subUUID;
+  return subUUID;
+}
+
+void AssetRegistry::set_resource_state(const UUID& uuid, ResourceState state)
+{
+  std::unique_lock lock(_mutex);
+  if (auto it = _assetsByUUID.find(uuid); it != _assetsByUUID.end()) {
+    it->second.state = state;
+
+		for (auto& cached : _assetListCache) { // update cached to new state
+      if (cached.uuid == uuid) {
+        cached.state = state;
+        break;
+      }
+    }
+  }
+}
+
+void AssetRegistry::set_gpu_size(const UUID & uuid, uint64_t gpuBytes)
+{
+  std::unique_lock lock(_mutex);
+  if (auto it = _assetsByUUID.find(uuid); it != _assetsByUUID.end()) {
+		it->second.gpuSizeBytes = gpuBytes;
+		for (auto& cached : _assetListCache) { // update cached to new size
+			if (cached.uuid == uuid) {
+				cached.gpuSizeBytes = gpuBytes;
+				break;
 			}
 		}
-	}
+  }
 }
 
-std::vector<AssetRecord> AssetRegistry::get_assets_by_type(AssetType type) const
+ResourceState AssetRegistry::get_resource_state(const UUID & uuid) const
 {
-	std::vector<AssetRecord> filtered;
-	for (const auto& asset : _assets) {
-		if (asset.type == type)
+  std::shared_lock lock(_mutex);
+  auto it = _assetsByUUID.find(uuid);
+  return (it != _assetsByUUID.end()) ? it->second.state : ResourceState::Unloaded;
+}
+
+std::vector<AssetMetadata> AssetRegistry::get_assets_by_type(AssetType type) const
+{
+  std::shared_lock lock(_mutex);
+  std::vector<AssetMetadata> filtered;
+  for (const AssetMetadata& asset : _assetListCache) {
+    if (asset.type == type) {
 			filtered.push_back(asset);
-	}
-	return filtered;
+    }
+  }
+  
+  return filtered;
 }
 
-const AssetRecord* AssetRegistry::find_asset_by_path(const std::filesystem::path& path) const
+void AssetRegistry::print_manifest() const
 {
-	for (const auto& asset : _assets) {
-		if (asset.path == path)
-			return &asset;
-	}
+  std::shared_lock lock(_mutex);
+  uint64_t totalDiskBytes = 0;
+  uint64_t totalGpuBytes = 0;
 
-	//fmt::println("AssetRegistry: No asset found at path: {}", path.string());
-	return nullptr;
-}
-
-const AssetRecord* AssetRegistry::find_asset_by_id(const std::string& id) const
-{
-	for (const auto& asset : _assets) {
-		if (asset.id == id)
-			return &asset;
-	}
-
-	fmt::println("AssetRegistry: No asset found with ID: {}", id);
-	return nullptr;
+  fmt::println("AssetRegistery manifest ({} disk assets scanned in {:.2f} ms)", _assetListCache.size(), _lastScanDurationMs);
+  for (const auto& meta : _assetListCache) {
+    totalDiskBytes += meta.diskSizeBytes;
+    totalGpuBytes += meta.gpuSizeBytes;
+    fmt::println(" [{}] {:<14} | {:<28} | Disk: {:>7.1f} KB | GPU: {:>4} B | {}",
+      meta.uuid,
+      AssetUtils::asset_type_to_string(meta.type),
+      meta.name,
+      static_cast<double>(meta.diskSizeBytes) / 1024.0,
+      meta.gpuSizeBytes,
+      AssetUtils::resource_state_to_string(meta.state));
+  }
+	fmt::println("Total disk size: {:.2f} MB, Total GPU size: {:.2f} MB", static_cast<double>(totalDiskBytes) / (1024.0 * 1024.0), static_cast<double>(totalGpuBytes) / (1024.0 * 1024.0));
 }

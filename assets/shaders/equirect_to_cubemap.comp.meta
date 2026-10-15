@@ -1,0 +1,6 @@
+uuid: 13d0a5c5-2626-4896-a61a-6c07d1f1bbcb
+type: Shader
+name: equirect_to_cubemap.comp
+version: 1
+lastWriteTime: 134355040713935637
+sourceHash: ""

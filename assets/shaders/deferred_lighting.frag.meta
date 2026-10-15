@@ -1,0 +1,6 @@
+uuid: e117e13a-405e-400e-afe4-d02e635f1371
+type: Shader
+name: deferred_lighting.frag
+version: 1
+lastWriteTime: 134364643729852436
+sourceHash: ""
