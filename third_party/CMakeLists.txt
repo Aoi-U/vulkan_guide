@@ -35,6 +35,20 @@ target_include_directories(glm INTERFACE glm)
 
 #target_link_libraries(sdl2 INTERFACE SDL2 SDL2main)
 
+add_library(offsetallocator STATIC)
+
+target_sources(offsetallocator PRIVATE
+    offsetallocator/offsetAllocator.hpp
+    offsetallocator/offsetAllocator.cpp
+)
+
+target_include_directories(offsetallocator PUBLIC 
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/offsetallocator
+)
+
+set_property(TARGET offsetallocator PROPERTY CXX_STANDARD 20)
+
 add_library(yamlcpp INTERFACE)
 
 include(FetchContent)

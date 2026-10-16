@@ -1,7 +1,7 @@
 #include "SceneSerializer.h"
 
 #include <core/Components.h>
-#include <core/ComponentRegistry.h>
+#include <scene/ComponentRegistry.h>
 #include <core/YamlConverters.h>
 #include <core/cvars.h>
 #include <resources/AssetRegistry.h>

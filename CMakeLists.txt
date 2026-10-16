@@ -18,8 +18,8 @@ add_subdirectory(third_party)
 # Source modules
 add_subdirectory(src/core)
 add_subdirectory(src/window)
-add_subdirectory(src/graphics)
 add_subdirectory(src/resources)
+add_subdirectory(src/graphics)
 add_subdirectory(src/app)
 add_subdirectory(src/scene)
 

@@ -25,7 +25,8 @@ target_link_libraries(core PUBLIC
     entt
     imgui
 	stduuid
-	yaml-cpp
+	yamlcpp
+	offsetallocator
 )
 
 # Optional IDE target to view headers cleanly in Visual Studio / Xcode

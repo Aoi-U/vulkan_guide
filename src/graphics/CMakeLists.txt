@@ -24,6 +24,7 @@ target_link_libraries(graphics PUBLIC
     imgui
     fmt::fmt
     glm
+	offsetallocator
 )
 
 add_dependencies(graphics Shaders)

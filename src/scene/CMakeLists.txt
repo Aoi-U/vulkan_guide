@@ -17,4 +17,5 @@ target_link_libraries(scene PUBLIC
     core
 	resources
 	graphics
+	offsetallocator
 )
