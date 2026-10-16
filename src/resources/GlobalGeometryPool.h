@@ -11,6 +11,7 @@
 #include <offsetAllocator.hpp>
 
 class VulkanCore;
+class StagingUploader;
 
 // allocation of geometry data 
 struct GeometryAllocation

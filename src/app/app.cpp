@@ -12,6 +12,8 @@
 #include <resources/AssetRegistry.h>
 #include <resources/DefaultResources.h>
 
+#include <resources/GlobalGeometryPool.h>
+
 static void update_transform_hierarchy(entt::registry& registry, entt::entity entity, const glm::mat4& parentMatrix, bool parentDirty) {
 	auto& tc = registry.get<TransformComponent>(entity);
 
@@ -48,6 +50,7 @@ void App::init()
 	_resourceManager = std::make_unique<ResourceManager>();
 	_resourceManager->init(_vulkanCore.get());
 	DefaultResources::get().init(_resourceManager.get());
+	//_resourceManager->get_geometry_pool().run_test();
 
 	_renderer->init(_window.get(), _vulkanCore.get(), dispatcher, _resourceManager.get());
 	_guiRenderer->init(_window.get(), _vulkanCore.get(), _renderer->get_swapchain_format());

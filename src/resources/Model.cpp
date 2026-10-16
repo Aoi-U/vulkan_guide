@@ -495,11 +495,11 @@ void Model::upload_gpu_resources(const fastgltf::Asset& gltf, std::vector<RawIma
 	_core->immediate_submit([&](VkCommandBuffer cmd) {
 		// copy all vertex data to gpu
 		VkBufferCopy vCopy{
-			.srcOffset = 0,
-			.dstOffset = uploadContext.geomAlloc.vertexOffset * sizeof(Vertex),
-			.size = vertSize
+		.srcOffset = 0,
+		.dstOffset = uploadContext.geomAlloc.vertexOffset * sizeof(Vertex),
+		.size = vertSize
 		};
-		vkCmdCopyBuffer(cmd, staging->get_buffer(), _resourceManager->get_geometry_pool().get_vertex_buffer(), 1, &vCopy);
+		vkCmdCopyBuffer(cmd, staging->get_buffer(), uploadContext.geomAlloc.vertexBuffer, 1, &vCopy);
 
 		// copy all index data to gpu
 		VkBufferCopy iCopy{
@@ -664,12 +664,20 @@ void Model::create_meshes(const fastgltf::Asset& gltf, const ModelStagingUploadC
 		uint32_t indexCount = static_cast<uint32_t>(uploadContext.meshPickingIndices[i].size());
 		uint32_t vertexCount = static_cast<uint32_t>(uploadContext.meshPickingPositions[i].size());
 
-		GeometryAllocation meshAlloc;
+		GeometryAllocation meshAlloc{};
+		meshAlloc.pageIndex = uploadContext.geomAlloc.pageIndex;
+		meshAlloc.vertexBuffer = uploadContext.geomAlloc.vertexBuffer;
 		meshAlloc.firstIndex = currentFirstIndex;
 		meshAlloc.indexCount = indexCount;
 		meshAlloc.vertexOffset = currentVertexOffset;
 		meshAlloc.vertexCount = vertexCount;
 		meshAlloc.vertexBufferAddress = currentVertexAddress;
+
+		if (i == 0) {
+			// only first subhandle owns parent OffsetAllocator nodes for this batched model upload
+			meshAlloc.vertexAlloc = uploadContext.geomAlloc.vertexAlloc;
+			meshAlloc.indexAlloc = uploadContext.geomAlloc.indexAlloc;
+		}
 
 		if (_resourceManager->has_resource<Mesh>(meshName)) {
 			batchedMesh = _resourceManager->get_handle<Mesh>(meshName);

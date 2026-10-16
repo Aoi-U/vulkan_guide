@@ -2,6 +2,7 @@
 
 #include <core/UUID.h>
 #include <resources/AssetRegistry.h>
+#include <graphics/utils/StagingUploader.h>
 #include <graphics/reflection/PipelineLayoutCache.h>
 #include <vulkan/vulkan.h>
 #include <string>
@@ -180,6 +181,7 @@ public:
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
 	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }
 	PipelineLayoutCache& get_pipeline_layout_cache() { return _layoutCache; }
+	StagingUploader& get_staging_uploader() { return *_stagingUploader; }
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> load_by_uuid(const UUID& uuid, const std::string& debugName, Args&&... args)
@@ -385,6 +387,8 @@ private:
 	std::unique_ptr<GlobalGeometryPool> _geometryPool;
 	PipelineLayoutCache _layoutCache;
 	uint64_t _currentFrame{ 0 };
+
+	std::unique_ptr<StagingUploader> _stagingUploader;
 
 	// two level storage system
 	// organize by type first, then by unique id

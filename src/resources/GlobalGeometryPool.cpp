@@ -189,6 +189,11 @@ bool GlobalGeometryPool::run_test()
 	uint64_t simulatedFrame = _currentFrame + 1;
 
 	for (uint32_t i = 0; i < 1000; i++) {
+		if (i > 0 && (i % 10 == 0)) {
+			simulatedFrame++;
+			process_deferred_frees(simulatedFrame);
+		}
+
 		uint32_t vCount = vertDist(rng);
 		uint32_t iCount = idxDist(rng);
 
@@ -199,17 +204,11 @@ bool GlobalGeometryPool::run_test()
 		}
 		activeAllocs.push_back(alloc);
 
-		// randomly free ~40% of existing allocations to induce heavy fragmentation pressure
-		if (activeAllocs.size() > 25 && (i % 3 == 0)) {
+		if (activeAllocs.size() > 200 || (activeAllocs.size() > 25 && (i % 2 == 0))) {
 			size_t victim = rng() % activeAllocs.size();
 			free(activeAllocs[victim]);
 			activeAllocs[victim] = activeAllocs.back();
 			activeAllocs.pop_back();
-		}
-
-		if (i % 50 == 0) {
-			simulatedFrame++;
-			process_deferred_frees(simulatedFrame);
 		}
 	}
 

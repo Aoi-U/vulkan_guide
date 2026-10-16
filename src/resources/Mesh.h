@@ -21,7 +21,7 @@ public:
 		fmt::println("Mesh: unloading mesh {}", get_id());
 		Resource::unload(); }
 
-	VkBuffer get_vertex_buffer() const { return _resourceManager->get_geometry_pool().get_vertex_buffer(); }
+	VkBuffer get_vertex_buffer() const { return _allocation.vertexBuffer; }
 	VkBuffer get_index_buffer() const { return _resourceManager->get_geometry_pool().get_index_buffer(); }
 	VkDeviceAddress get_vertex_buffer_address() const { return _allocation.vertexBufferAddress; }
 	uint32_t get_index_count() const { return _allocation.indexCount; }

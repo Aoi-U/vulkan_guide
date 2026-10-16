@@ -1,6 +1,7 @@
 #include "resources/Mesh.h"
 
 #include <graphics/VulkanCore.h>
+#include <graphics/utils/StagingUploader.h>
 #include <fmt/core.h>
 
 Mesh::Mesh(const std::string& id, VulkanCore* core, ResourceManager* resourceManager, std::vector<uint32_t> indices, std::vector<Vertex> vertices, bool keepCpuGeometry)
@@ -28,45 +29,32 @@ bool Mesh::doLoad() {
 
   if (_cpuVertices.empty() || _cpuIndices.empty()) return false;
 
-  // allocate space in the global geometry pool for this meshs vertices and indices
+  // suballocate from paged globalgeometrypool
 	_allocation = _resourceManager->get_geometry_pool().allocate(
     static_cast<uint32_t>(_cpuVertices.size()), 
     static_cast<uint32_t>(_cpuIndices.size())
   );
 
-  const size_t vertexBufferSize = _cpuVertices.size() * sizeof(Vertex);
-  const size_t indexBufferSize = _cpuIndices.size() * sizeof(uint32_t);
+  if (!_allocation.is_valid()) {
+    return false;
+  }
 
-	// create staging buffer to transfer vertex and index data to gpu
-  size_t stagingSize = vertexBufferSize + indexBufferSize;
-  ResourceHandle<Buffer> staging = _resourceManager->load<Buffer>(get_id() + "_stagin", stagingSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_ONLY);
+  // stage async transfer via StagingUploader ring buffer 
+  const VkDeviceSize dstVertOffset = static_cast<VkDeviceSize>(_allocation.vertexOffset) * sizeof(Vertex);
+  const VkDeviceSize dstIdxOffset = static_cast<VkDeviceSize>(_allocation.firstIndex) * sizeof(uint32_t);
 
-  // copy vertex and index data into staging 
-  uint8_t* mapped = static_cast<uint8_t*>(staging->get_mapped_data());
-  memcpy(mapped, _cpuVertices.data(), vertexBufferSize);
-  memcpy(mapped + vertexBufferSize, _cpuIndices.data(), indexBufferSize);
-
-  // submit command buffer to copy from staging to global buffers
-  _core->immediate_submit([&](VkCommandBuffer cmd) {
-    VkBufferCopy vertCopy{};
-    vertCopy.srcOffset = 0;
-    vertCopy.dstOffset = _allocation.vertexOffset * sizeof(Vertex);
-    vertCopy.size = vertexBufferSize;
-		vkCmdCopyBuffer(cmd, staging->get_buffer(), get_vertex_buffer(), 1, &vertCopy);
-
-    VkBufferCopy idxCopy{};
-    idxCopy.srcOffset = vertexBufferSize;
-		idxCopy.dstOffset = _allocation.firstIndex * sizeof(uint32_t);
-    idxCopy.size = indexBufferSize;
-    vkCmdCopyBuffer(cmd, staging->get_buffer(), get_index_buffer(), 1, &idxCopy);
-    });
-  // unload staging
-  staging->unload();
+	bool staged = _resourceManager->get_staging_uploader().stage_geometry_upload(
+    _allocation.vertexBuffer,
+    dstVertOffset,
+    _cpuVertices,
+    get_index_buffer(),
+    dstIdxOffset,
+    _cpuIndices
+  );
 
   _cpuVertices.clear();
   _cpuIndices.clear();
-
-  return true;
+  return staged;
 }
 
 bool Mesh::doUnload() {

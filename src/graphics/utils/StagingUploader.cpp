@@ -172,7 +172,7 @@ bool StagingUploader::record_transfers(VkCommandBuffer cmd, uint64_t frameNumber
 	// swap out pending copies and overflow buffers to local vectors for processing
 	{
 		std::lock_guard<std::mutex> lock(_mutex);
-		if (_pendingBufferCopies.empty() || _pendingTextureCopies.empty()) {
+		if (_pendingBufferCopies.empty() && _pendingTextureCopies.empty()) {
 			return false;
 		}
 		bufCopies.swap(_pendingBufferCopies);

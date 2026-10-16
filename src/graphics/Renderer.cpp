@@ -5,10 +5,11 @@
 #include <algorithm>
 #include <resources/Model.h>
 #include <core/Components.h>
-#include <resources/DefaultResources.h>
-#include "graphics/GuiRenderer.h"
 #include <core/Profiler.h>
-
+#include <resources/DefaultResources.h>
+#include <resources/GlobalGeometryPool.h>
+#include <graphics/utils/StagingUploader.h>
+#include "graphics/GuiRenderer.h"
 
 #include <graphics/pass/FrustumCullpass.h>
 #include <graphics/pass/ShadowPass.h>
@@ -138,6 +139,11 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	VkCommandBuffer cmd = begin_frame();
 	if (!cmd)
 		return;
+
+	// record all pending resource transfers for this frame
+	if (_resourceManager->get_staging_uploader().record_transfers(cmd, _frameNumber)) {
+		mark_scene_dirty();
+	}
 
 	DrawContext drawCtx;
 	drawCtx.bindlessMaterialSet = _resourceManager->get_bindless_set();
@@ -327,9 +333,12 @@ VkCommandBuffer Renderer::begin_frame()
 	FrameData& currentFrame = get_current_frame();
 	VK_CHECK(vkWaitForFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence, true, 1000000000));
 
-	if (_frameNumber >= FRAME_OVERLAP) { // flush safe to delete resources
-		_vulkanCore->get_deletion_queue().flush_retired(_frameNumber - FRAME_OVERLAP);
+	if (_frameNumber >= FRAME_OVERLAP) {
+		uint64_t completedFrame = _frameNumber - FRAME_OVERLAP;
+		_vulkanCore->get_deletion_queue().flush_retired(completedFrame);
+		_resourceManager->get_staging_uploader().reclaim_completed_frames(completedFrame);
 	}
+	_resourceManager->get_geometry_pool().process_deferred_frees(_frameNumber);
 	currentFrame._frameDescriptors.clear_pools(_vulkanCore->get_device());
 
 	// request image from swapchain

@@ -1,5 +1,6 @@
 #include "ResourceManager.h"
 #include "GlobalGeometryPool.h"
+#include <graphics/utils/StagingUploader.h>
 #include <graphics/VulkanCore.h>
 
 void ResourceManager::init(VulkanCore* core)
@@ -8,12 +9,20 @@ void ResourceManager::init(VulkanCore* core)
 	_layoutCache.init(_vulkanCore->get_device());
 	init_bindless(); // create bindless descriptor resources
 
+	_stagingUploader = std::make_unique<StagingUploader>();
+	_stagingUploader->init(_vulkanCore);
+
 	_geometryPool = std::make_unique<GlobalGeometryPool>();
 	_geometryPool->init(_vulkanCore, this);
 }
 
 void ResourceManager::cleanup()
 {
+	if (_stagingUploader) {
+		_stagingUploader->cleanup();
+		_stagingUploader.reset();
+	}
+
 	if (_geometryPool) {
 		_geometryPool->cleanup();
 		_geometryPool.reset();
