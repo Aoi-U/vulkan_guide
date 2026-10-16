@@ -6,5 +6,5 @@
 #include <filesystem>
 #include <glm/vec3.hpp>
 
-// spawns an entire model hierarchy directly into the ECS
-entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceManager, const std::string& modelId, const std::filesystem::path& path, const glm::vec3& position = glm::vec3(0.0f));
+// spawns .prefab hierarchy (cooked .gmesh + .mat assets) directly into ECS
+entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceManager, const std::filesystem::path& prefabOrModelPath, const glm::vec3& position = glm::vec3(0.0f));

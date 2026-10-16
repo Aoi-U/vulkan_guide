@@ -1,4 +1,4 @@
-uuid: 13d0a5c5-2626-4896-a61a-6c07d1f1bbcb
+uuid: f76f4d1a-ad68-4eac-9bae-4f7a23f9a5ce
 type: Shader
 name: equirect_to_cubemap.comp
 version: 1

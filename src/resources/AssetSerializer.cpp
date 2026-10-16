@@ -88,44 +88,44 @@ namespace AssetUtils
 	std::string_view asset_type_to_string(AssetType type)
 	{
 		switch (type) {
-		case AssetType::Texture:        
+		case AssetType::Texture:
 			return "Texture";
-		case AssetType::Model:          
+		case AssetType::Model:
 			return "Model";
-		case AssetType::Mesh:           
+		case AssetType::Mesh:
 			return "Mesh";
-		case AssetType::Material:       
+		case AssetType::Material:
 			return "Material";
-		case AssetType::Shader:         
+		case AssetType::Shader:
 			return "Shader";
-		case AssetType::EnvironmentHDR: 
+		case AssetType::EnvironmentHDR:
 			return "EnvironmentHDR";
-		case AssetType::Scene:          
+		case AssetType::Scene:
 			return "Scene";
-		case AssetType::Prefab:         
+		case AssetType::Prefab:
 			return "Prefab";
-		default:                        
+		default:
 			return "Unknown";
 		}
 	}
 
 	AssetType asset_type_from_string(std::string_view str)
 	{
-		if (str == "Texture")        
+		if (str == "Texture")
 			return AssetType::Texture;
-		if (str == "Model")          
+		if (str == "Model")
 			return AssetType::Model;
-		if (str == "Mesh")           
+		if (str == "Mesh")
 			return AssetType::Mesh;
-		if (str == "Material")       
+		if (str == "Material")
 			return AssetType::Material;
-		if (str == "Shader")         
+		if (str == "Shader")
 			return AssetType::Shader;
-		if (str == "EnvironmentHDR") 
+		if (str == "EnvironmentHDR")
 			return AssetType::EnvironmentHDR;
-		if (str == "Scene")          
+		if (str == "Scene")
 			return AssetType::Scene;
-		if (str == "Prefab")         
+		if (str == "Prefab")
 			return AssetType::Prefab;
 		return AssetType::Unknown;
 	}
@@ -158,17 +158,17 @@ namespace AssetUtils
 	std::string_view resource_state_to_string(ResourceState state)
 	{
 		switch (state) {
-		case ResourceState::Unloaded: 
+		case ResourceState::Unloaded:
 			return "Unloaded";
-		case ResourceState::Queued:   
+		case ResourceState::Queued:
 			return "Queued";
-		case ResourceState::Loading:  
+		case ResourceState::Loading:
 			return "Loading";
-		case ResourceState::Loaded:   
+		case ResourceState::Loaded:
 			return "Loaded";
-		case ResourceState::Failed:   
+		case ResourceState::Failed:
 			return "Failed";
-		default:                      
+		default:
 			return "Unknown";
 		}
 	}
@@ -185,9 +185,9 @@ bool AssetSerializer::save_meta_file(const std::filesystem::path& metaFilePath, 
 	out << YAML::Key << "lastWriteTime" << YAML::Value << metadata.lastWriteTime;
 	out << YAML::Key << "sourceHash" << YAML::Value << metadata.sourceHash;
 
-	if (!metadata.cookedPath.empty()) 
+	if (!metadata.cookedPath.empty())
 		out << YAML::Key << "cookedPath" << YAML::Value << metadata.cookedPath.generic_string();
-	
+
 	if (metadata.parentAssetUUID.is_valid())
 		out << YAML::Key << "parentAssetUUID" << YAML::Value << metadata.parentAssetUUID;
 
@@ -261,28 +261,28 @@ bool AssetSerializer::load_meta_file(const std::filesystem::path& metaFilePath, 
 	try {
 		YAML::Node root = YAML::LoadFile(metaFilePath.string());
 
-		if (!root["uuid"]) 
+		if (!root["uuid"])
 			return false;
 
 		outMetadata.uuid = root["uuid"].as<UUID>();
-		if (root["type"]) 
+		if (root["type"])
 			outMetadata.type = AssetUtils::asset_type_from_string(root["type"].as<std::string>());
-		
-		if (root["name"]) 
+
+		if (root["name"])
 			outMetadata.name = root["name"].as<std::string>();
-		
-		if (root["lastWriteTime"]) 
+
+		if (root["lastWriteTime"])
 			outMetadata.lastWriteTime = root["lastWriteTime"].as<uint64_t>();
-		
-		if (root["sourceHash"]) 
+
+		if (root["sourceHash"])
 			outMetadata.sourceHash = root["sourceHash"].as<std::string>();
-		
-		if (root["cookedPath"]) 
+
+		if (root["cookedPath"])
 			outMetadata.cookedPath = root["cookedPath"].as<std::string>();
-		
-		if (root["parentAssetUUID"]) 
+
+		if (root["parentAssetUUID"])
 			outMetadata.parentAssetUUID = root["parentAssetUUID"].as<UUID>();
-		
+
 
 		if (YAML::Node settings = root["importSettings"]) {
 			if (outMetadata.type == AssetType::Texture || outMetadata.type == AssetType::EnvironmentHDR) {
@@ -471,16 +471,37 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 		}
 		if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid)) {
 			VkFormat fmt = meta->textureSettings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : defaultFormat;
+			std::filesystem::path loadPath = (meta->is_sub_asset() && !meta->cookedPath.empty())
+				? meta->cookedPath
+				: meta->virtualPath;
+
+			if (std::filesystem::exists(loadPath)) {
+				auto loaded = rm.load_by_uuid<Texture>(
+					texUuid,
+					meta->name,
+					loadPath,
+					fmt,
+					VK_IMAGE_USAGE_SAMPLED_BIT,
+					meta->textureSettings.generateMips
+				);
+				if (loaded.is_valid()) return loaded;
+			}
+		}
+
+		// fallback: check directly if .cache/textures/<texUuid>.gtex exists on disk
+		std::filesystem::path directCachePath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
+		if (std::filesystem::exists(directCachePath)) {
 			auto loaded = rm.load_by_uuid<Texture>(
 				texUuid,
-				meta->name,
-				meta->virtualPath,
-				fmt,
+				texUuid.to_string(),
+				directCachePath,
+				defaultFormat,
 				VK_IMAGE_USAGE_SAMPLED_BIT,
-				meta->textureSettings.generateMips
+				true
 			);
 			if (loaded.is_valid()) return loaded;
 		}
+
 		return fallback;
 		};
 
@@ -558,11 +579,11 @@ bool AssetSerializer::load_prefab_file(const std::filesystem::path& prefabFilePa
 
 	try { // parse YAML
 		YAML::Node root = YAML::LoadFile(prefabFilePath.string());
-		if (root["uuid"])            
+		if (root["uuid"])
 			outPrefabData.uuid = root["uuid"].as<UUID>();
-		if (root["name"])            
+		if (root["name"])
 			outPrefabData.name = root["name"].as<std::string>();
-		if (root["sourceModelUUID"]) 
+		if (root["sourceModelUUID"])
 			outPrefabData.sourceModelUUID = root["sourceModelUUID"].as<UUID>();
 
 		outPrefabData.nodes.clear();
@@ -572,11 +593,11 @@ bool AssetSerializer::load_prefab_file(const std::filesystem::path& prefabFilePa
 				nodeData.name = n["name"].as<std::string>("Node");
 				nodeData.parentIndex = n["parentIndex"].as<int32_t>(-1);
 
-				if (n["position"]) 
+				if (n["position"])
 					nodeData.position = n["position"].as<glm::vec3>();
-				if (n["rotation"]) 
+				if (n["rotation"])
 					nodeData.rotation = n["rotation"].as<glm::vec3>();
-				if (n["scale"])    
+				if (n["scale"])
 					nodeData.scale = n["scale"].as<glm::vec3>();
 
 				if (YAML::Node children = n["childrenIndices"]; children && children.IsSequence()) {
@@ -588,15 +609,15 @@ bool AssetSerializer::load_prefab_file(const std::filesystem::path& prefabFilePa
 				if (YAML::Node submeshes = n["submeshes"]; submeshes && submeshes.IsSequence()) {
 					for (const auto& smNode : submeshes) {
 						PrefabSubmeshBinding sm{};
-						if (smNode["meshAssetUUID"])     
+						if (smNode["meshAssetUUID"])
 							sm.meshAssetUUID = smNode["meshAssetUUID"].as<UUID>();
-						if (smNode["materialAssetUUID"]) 
+						if (smNode["materialAssetUUID"])
 							sm.materialAssetUUID = smNode["materialAssetUUID"].as<UUID>();
-						if (smNode["startIndex"])        
+						if (smNode["startIndex"])
 							sm.startIndex = smNode["startIndex"].as<uint32_t>();
-						if (smNode["indexCount"])        
+						if (smNode["indexCount"])
 							sm.indexCount = smNode["indexCount"].as<uint32_t>();
-						if (smNode["bounds"]) 
+						if (smNode["bounds"])
 							sm.bounds = smNode["bounds"].as<Bounds>();
 						nodeData.submeshes.push_back(sm);
 					}

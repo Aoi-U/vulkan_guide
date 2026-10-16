@@ -1,10 +1,15 @@
 #include "resources/Texture.h"
-#include <graphics/VulkanCore.h>
+#include <resources/CookedFormats.h>
+#include <resources/AssetImporter.h>
 #include <resources/Buffer.h>
+#include <graphics/VulkanCore.h>
+#include <graphics/utils/StagingUploader.h>
 #include <graphics/utils/vk_utils.h>
 #include <fmt/core.h>
-#define STB_IMAGE_IMPLEMENTATION 
+
+#define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+#include <fstream>
 #include <cmath>
 #include <algorithm>
 
@@ -47,21 +52,71 @@ void Texture::destroy_immediate()
 bool Texture::doLoad()
 {
 	int width = 0, height = 0, channels = 0;
-	stbi_uc* pixels = nullptr;
-	bool isRaw = false;
+	stbi_uc* stbiPixels = nullptr;
+	std::vector<uint8_t> cookedPixels;
+	const uint8_t* uploadPixels = nullptr;
+	size_t uploadByteSize = 0;
+	bool loadedFromCookedGtex = false;
+	CookedTextureHeader gtexHeader{};
 
-	// load pixels based on source type
+	// check if cooked .gtex binary exists for this texture
 	if (_sourceType == SourceType::File) {
-		pixels = stbi_load(_filePath.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
-		if (!pixels) {
-			fmt::print("Texture: failed to load pixels from file: {}\n", _filePath.string());
-			return false;
+		std::filesystem::path gtexPath;
+		if (_filePath.extension() == ".gtex") {
+			gtexPath = _filePath;
+		}
+		else if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(get_uuid())) {
+			if (!meta->cookedPath.empty()) {
+				gtexPath = meta->cookedPath; 
+
+				if (!std::filesystem::exists(gtexPath) && std::filesystem::exists(meta->virtualPath) && !meta->is_sub_asset()) {
+					AssetImporter::cook_texture(*meta);
+				}
+			}
+		}
+
+		if (!gtexPath.empty() && std::filesystem::exists(gtexPath)) {
+			std::ifstream in(gtexPath, std::ios::binary);
+			if (in.is_open()) {
+				in.read(reinterpret_cast<char*>(&gtexHeader), sizeof(CookedTextureHeader));
+				if (in.good() && gtexHeader.magic == GTEX_MAGIC && gtexHeader.payloadSizeBytes > 0) {
+					cookedPixels.resize(gtexHeader.payloadSizeBytes);
+					in.read(reinterpret_cast<char*>(cookedPixels.data()), static_cast<std::streamsize>(gtexHeader.payloadSizeBytes));
+
+					if (in.good()) {
+						loadedFromCookedGtex = true;
+						width = static_cast<int>(gtexHeader.width);
+						height = static_cast<int>(gtexHeader.height);
+						_extent = { gtexHeader.width, gtexHeader.height, gtexHeader.depth };
+						_mipLevels = gtexHeader.mipLevels;
+						_format = gtexHeader.format;
+						_mipmapped = (_mipLevels > 1);
+						uploadPixels = cookedPixels.data();
+						uploadByteSize = cookedPixels.size();
+					}
+				}
+			}
+		}
+
+		// fallback to raw stb_image file if .gtex not found
+		if (!loadedFromCookedGtex) {
+			if (_filePath.extension() == ".gtex") {
+				fmt::println("Texture: cooked .gtex file missing or corrupt: {}", _filePath.string());
+				return false;
+			}
+			stbiPixels = stbi_load(_filePath.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
+			if (!stbiPixels) {
+				fmt::print("Texture: failed to load pixels from file: {}\n", _filePath.string());
+				return false;
+			}
+			uploadPixels = stbiPixels;
+			uploadByteSize = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
 		}
 	}
 	else if (_sourceType == SourceType::Encoded) {
-		pixels = stbi_load_from_memory(_bufferData.data(), static_cast<int>(_bufferData.size()), &width, &height, &channels, STBI_rgb_alpha);
+		stbiPixels = stbi_load_from_memory(_bufferData.data(), static_cast<int>(_bufferData.size()), &width, &height, &channels, STBI_rgb_alpha);
 		_bufferData.clear();
-		if (!pixels) {
+		if (!stbiPixels) {
 			fmt::print("Texture: failed to load pixels from memory\n");
 			return false;
 		}
@@ -70,14 +125,14 @@ bool Texture::doLoad()
 		width = _extent.width;
 		height = _extent.height;
 		if (!_bufferData.empty()) {
-			pixels = _bufferData.data();
-			isRaw = true;
+			uploadPixels = _bufferData.data();
+			uploadByteSize = _bufferData.size();
 		}
 	}
 
-	if (_sourceType != SourceType::Description) {
+	if (_sourceType != SourceType::Description && !loadedFromCookedGtex) {
 		_extent = { static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1 };
-		_mipLevels = _mipmapped ? static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1 : 1;
+		_mipLevels = _mipmapped ? static_cast<uint32_t>(std::floor(std::log2(std::max(width, height)))) + 1u : 1u;
 	}
 
 	// setup image create info
@@ -90,7 +145,7 @@ bool Texture::doLoad()
 	imgInfo.samples = (_sourceType == SourceType::Description) ? _desc.samples : VK_SAMPLE_COUNT_1_BIT;
 	imgInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
 	imgInfo.usage = _usage;
-	if (pixels) {
+	if (uploadPixels) {
 		imgInfo.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	}
 	if (_sourceType == SourceType::Description) {
@@ -145,41 +200,37 @@ bool Texture::doLoad()
 		}
 	}
 
-	if (pixels) { // if there is pixel data, upload to GPU
-		size_t dataSize = width * height * 4 * _extent.depth;
-		if (isRaw)
-			dataSize = _bufferData.size();
+	// upload pixel data via staginguploader
+	if (uploadPixels && uploadByteSize > 0) {
+		StagedTextureUploadDesc desc{
+			.dstImage = _image,
+			.format = _format,
+			.extent = _extent,
+			.mipLevels = _mipLevels,
+			.arrayLayers = imgInfo.arrayLayers,
+			.aspectMask = viewInfo.subresourceRange.aspectMask,
+			.generateMips = (_mipmapped && _mipLevels > 1)
+		};
 
-		//Buffer staging(get_id() + "_staging", _core, dataSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		//staging.load();
-		//staging.copy_data(pixels, dataSize);
-		ResourceHandle<Buffer> staging = _resourceManager->load<Buffer>(get_id() + "_staging", std::span<const uint8_t>(pixels, dataSize), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VMA_MEMORY_USAGE_CPU_TO_GPU);
-		staging->copy_data(pixels, dataSize);
-
-		_core->immediate_submit([&](VkCommandBuffer cmd) {
-			vkutil::image_mem_barrier2(cmd, _image, _format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, imgInfo.arrayLayers, _mipLevels, 0);
-
-			VkBufferImageCopy copyRegion = {};
-			copyRegion.imageSubresource.aspectMask = viewInfo.subresourceRange.aspectMask;
-			copyRegion.imageSubresource.layerCount = imgInfo.arrayLayers;
-			copyRegion.imageExtent = _extent;
-			vkCmdCopyBufferToImage(cmd, staging->get_buffer(), _image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copyRegion);
-
-			if (_mipmapped && _mipLevels > 1) {
-				vkutil::generate_mipmaps(cmd, _image, { _extent.width, _extent.height });
+		UUID selfUuid = get_uuid();
+		_resourceManager->get_staging_uploader().stage_texture_upload(
+			desc,
+			uploadPixels,
+			uploadByteSize,
+			[selfUuid, uploadByteSize]() { // callback to mark texture as loaded
+				if (selfUuid.is_valid()) {
+					AssetRegistry::get().set_resource_state(selfUuid, ResourceState::Loaded);
+					AssetRegistry::get().set_gpu_size(selfUuid, uploadByteSize);
+				}
 			}
-			else {
-				vkutil::image_mem_barrier2(cmd, _image, _format, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, imgInfo.arrayLayers, _mipLevels, 0);
-			}
-			});
-		//staging.destroy_immediate();
+		);
 
-		if (!isRaw) {
-			stbi_image_free(pixels);
+		AssetRegistry::get().set_gpu_size(selfUuid, uploadByteSize);
+
+		if (stbiPixels) {
+			stbi_image_free(stbiPixels);
 		}
-		if (isRaw) {
-			_bufferData.clear();
-		}
+		_bufferData.clear();
 	}
 	else if (_sourceType == SourceType::Description && (_usage & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT || _usage & VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT)) {
 		// leave undefined; RenderGraph manages runtime transitions
@@ -190,42 +241,39 @@ bool Texture::doLoad()
 			});
 	}
 
-	// create sampler if not description type
-	if (_sourceType != SourceType::Description) {
-		VkSamplerCreateInfo samplerInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
-		samplerInfo.magFilter = VK_FILTER_LINEAR;
-		samplerInfo.minFilter = VK_FILTER_LINEAR;
-		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
-		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = static_cast<float>(_mipLevels);
-		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-		samplerInfo.unnormalizedCoordinates = VK_FALSE;
-
-		if (vkCreateSampler(_core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
-			fmt::print("Texture: failed to create sampler for: {}\n", get_id());
-			return false;
-		}
+	VkSamplerCreateInfo samplerInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+	if (loadedFromCookedGtex) { // create sampler using .gtex settings
+		samplerInfo.magFilter = gtexHeader.magFilter;
+		samplerInfo.minFilter = gtexHeader.minFilter;
+		samplerInfo.mipmapMode = gtexHeader.mipmapMode;
+		samplerInfo.addressModeU = gtexHeader.addressModeU;
+		samplerInfo.addressModeV = gtexHeader.addressModeV;
+		samplerInfo.addressModeW = gtexHeader.addressModeU;
 	}
-	else {
-		VkSamplerCreateInfo samplerInfo = { .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+	else if (_sourceType == SourceType::Description) { // create sampler using description settings
 		samplerInfo.magFilter = _desc.magFilter;
 		samplerInfo.minFilter = _desc.minFilter;
 		samplerInfo.mipmapMode = _desc.mipmapMode;
 		samplerInfo.addressModeU = _desc.addressModeU;
 		samplerInfo.addressModeV = _desc.addressModeV;
 		samplerInfo.addressModeW = _desc.addressModeW;
-		samplerInfo.minLod = 0.0f;
-		samplerInfo.maxLod = static_cast<float>(_mipLevels);
-		samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
-		samplerInfo.unnormalizedCoordinates = VK_FALSE;
+	}
+	else { // create samplers with lienar defaults
+		samplerInfo.magFilter = VK_FILTER_LINEAR;
+		samplerInfo.minFilter = VK_FILTER_LINEAR;
+		samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	}
+	samplerInfo.minLod = 0.0f;
+	samplerInfo.maxLod = static_cast<float>(_mipLevels);
+	samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+	samplerInfo.unnormalizedCoordinates = VK_FALSE;
 
-		if (vkCreateSampler(_core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
-			fmt::print("Texture: failed to create sampler for: {}\n", get_id());
-			return false;
-		}
+	if (vkCreateSampler(_core->get_device(), &samplerInfo, nullptr, &_sampler) != VK_SUCCESS) {
+		fmt::println("Texture: failed to create sampler for: {}", get_id());
+		return false;
 	}
 
 	// register texture in bindless descriptor set

@@ -66,6 +66,7 @@ struct PrefabAssetData
 	std::vector<PrefabNodeData> nodes;
 };
 
+// serialization helper for asset metadata and asset data files
 class AssetSerializer
 {
 public:

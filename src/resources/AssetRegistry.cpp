@@ -29,10 +29,10 @@ std::filesystem::path AssetRegistry::get_default_cooked_path(const UUID& uuid, A
 	switch (type) {
 	case AssetType::Texture:
 	case AssetType::EnvironmentHDR:
-		return std::filesystem::path(".cache/textures") / (uuid.to_string() + ".tex");
+		return std::filesystem::path(".cache/textures") / (uuid.to_string() + ".gtex");
 	case AssetType::Mesh:
 	case AssetType::Model:
-		return std::filesystem::path(".cache/meshes") / (uuid.to_string() + ".mesh");
+		return std::filesystem::path(".cache/meshes") / (uuid.to_string() + ".gmesh");
 	default:
 		return {};
 	}
@@ -141,6 +141,25 @@ void AssetRegistry::scan_directory(const std::filesystem::path& rootPath)
       subMeta.parentAssetUUID = meta.uuid;
       subMeta.cookedPath = get_default_cooked_path(sub.uuid, sub.type);
       subMeta.state = ResourceState::Unloaded;
+
+      if (sub.type == AssetType::Material) {
+        std::filesystem::path matPath = filePath.parent_path() / "materials" / (sub.name + ".mat");
+        subMeta.virtualPath = matPath;
+        subMeta.path = matPath;
+        subMeta.cookedPath = matPath;
+      }
+      else if (sub.type == AssetType::Prefab) {
+        std::filesystem::path prefabPath = filePath;
+        prefabPath.replace_extension(".prefab");
+        subMeta.virtualPath = prefabPath;
+        subMeta.path = prefabPath;
+        subMeta.cookedPath = prefabPath;
+      }
+      else {
+        subMeta.virtualPath = filePath;
+        subMeta.path = filePath;
+        subMeta.cookedPath = get_default_cooked_path(sub.uuid, sub.type);
+      }
 
       _assetsByUUID[subMeta.uuid] = subMeta;
       _uuidById[subMeta.id] = subMeta.uuid;

@@ -11,3 +11,4 @@
 /assets/textures/*
 /assets/cubemaps/*
 /assets/shaders/*.spv
+/assets/shaders/*.meta

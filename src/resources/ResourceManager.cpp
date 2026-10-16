@@ -1,7 +1,15 @@
 #include "ResourceManager.h"
 #include "GlobalGeometryPool.h"
+#include "AssetStreamer.h"
+#include "DefaultResources.h"
 #include <graphics/utils/StagingUploader.h>
 #include <graphics/VulkanCore.h>
+#include <core/cvars.h>
+
+AutoCVar_Int cvVramBudgetMB("r.vramBudgetMB", "VRAM budget in MB for resource eviction", 2048);
+
+ResourceManager::ResourceManager() = default;
+ResourceManager::~ResourceManager() = default;
 
 void ResourceManager::init(VulkanCore* core)
 {
@@ -12,26 +20,38 @@ void ResourceManager::init(VulkanCore* core)
 	_stagingUploader = std::make_unique<StagingUploader>();
 	_stagingUploader->init(_vulkanCore);
 
+	_assetStreamer = std::make_unique<AssetStreamer>();
+	_assetStreamer->init(this, 2);
+
 	_geometryPool = std::make_unique<GlobalGeometryPool>();
 	_geometryPool->init(_vulkanCore, this);
 }
 
 void ResourceManager::cleanup()
 {
-	if (_stagingUploader) {
-		_stagingUploader->cleanup();
-		_stagingUploader.reset();
+	if (_assetStreamer) {
+		_assetStreamer->cleanup();
+		_assetStreamer.reset();
 	}
+	_evictionCandidates.clear();
+
+	unload_all();
 
 	if (_geometryPool) {
 		_geometryPool->cleanup();
 		_geometryPool.reset();
 	}
 
+	if (_stagingUploader) {
+		_stagingUploader->cleanup();
+		_stagingUploader.reset();
+	}
+
 	unload_all();
 	if (_vulkanCore) {
 		_vulkanCore->get_deletion_queue().flush_all();
 	}
+
 	clean_bindless();
 	_layoutCache.cleanup();
 }
@@ -78,6 +98,27 @@ void ResourceManager::free_bindless_slot(uint32_t slot)
 		return;
 
 	std::lock_guard<std::mutex> lock(_bindlessMutex); // ensure thread safety to free slot
+
+	// override freed descriptor slot with white image so stale indices never sample garbage
+	const auto& defaults = DefaultResources::get();
+	if (defaults.whiteImage.is_valid() && _vulkanCore && _bindlessSet != VK_NULL_HANDLE) {
+		VkDescriptorImageInfo fallbackInfo{
+			.sampler = defaults.whiteImage->get_sampler(),
+			.imageView = defaults.whiteImage->get_image_view(),
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		};
+		VkWriteDescriptorSet write{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = _bindlessSet,
+			.dstBinding = 0,
+			.dstArrayElement = slot,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &fallbackInfo
+		};
+		vkUpdateDescriptorSets(_vulkanCore->get_device(), 1, &write, 0, nullptr);
+	}
+
 	_freeBindlessSlots.push_back(slot); // mark slot as free for reuse
 }
 
@@ -149,6 +190,55 @@ void ResourceManager::process_main_thread_tasks()
 		if (task) {
 			task();
 		}
+	}
+}
+
+void ResourceManager::process_evictions(uint64_t currentFrame)
+{
+	_currentFrame = currentFrame;
+	if (_evictionCandidates.empty())
+		return;
+
+	// compute current tracked vram usage against r.vramBudgetMB
+	uint64_t totalGpuBytes = 0;
+	for (const auto& meta : AssetRegistry::get().get_all_assets()) {
+		totalGpuBytes += meta.gpuSizeBytes;
+	}
+	const uint64_t budgetBytes = static_cast<uint64_t>(std::max(128, cvVramBudgetMB.Get())) * 1024ULL * 1024ULL;
+	const bool overBudget = (totalGpuBytes > budgetBytes);
+
+	for (auto it = _evictionCandidates.begin(); it != _evictionCandidates.end();) {
+		auto typeIt = _refCounts.find(it->typeKey);
+		if (typeIt == _refCounts.end()) {
+			it = _evictionCandidates.erase(it);
+			continue;
+		}
+
+		auto resIt = typeIt->second.find(it->uuid);
+		if (resIt == typeIt->second.end() || resIt->second.refCount > 0) {
+			it = _evictionCandidates.erase(it);
+			continue;
+		}
+
+		const bool graceExpired = (currentFrame >= it->zeroRefFrame + EVICTION_FRAME_THRESHOLD);
+
+		// unload resource if grace period expired or over vram budget
+		if (graceExpired || overBudget) {
+			queue_unload(_resources[it->typeKey][it->uuid]);
+			_resources[it->typeKey].erase(it->uuid); // remove from resource map
+			typeIt->second.erase(resIt); // remove from ref count map
+			it = _evictionCandidates.erase(it);
+		}
+		else {
+			it++;
+		}
+	}
+}
+
+void ResourceManager::request_async_load(const UUID& uuid)
+{
+	if (_assetStreamer) {
+		_assetStreamer->request_load(uuid);
 	}
 }
 

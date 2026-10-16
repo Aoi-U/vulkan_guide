@@ -179,7 +179,7 @@ void HierarchyPanel::on_draw(EditorContext & ctx)
       std::string draggedId = (const char*)payload->Data;
       auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
       if (assetRec) {
-        ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, draggedId, assetRec->path);
+        ctx.selectedEntity = spawn_prefab(ctx.registry, ctx.resourceManager, assetRec->path);
         ctx.renderer.mark_scene_dirty();
       }
     }

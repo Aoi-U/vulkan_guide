@@ -80,7 +80,7 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
         if (ImGui::BeginPopupContextItem()) {
           if (assetRec->type == AssetType::Model) {
             if (ImGui::MenuItem("Spawn Entity")) {
-              ctx.selectedEntity = spawn_model(ctx.registry, ctx.resourceManager, assetRec->id, assetRec->path);
+              ctx.selectedEntity = spawn_prefab(ctx.registry, ctx.resourceManager, assetRec->path);
               ctx.renderer.mark_scene_dirty();
             }
           }

@@ -1,119 +1,179 @@
 #include "resources/ModelSpawner.h"
-
+#include <resources/AssetImporter.h>
+#include <resources/AssetSerializer.h>
+#include <resources/AssetRegistry.h>
+#include <resources/DefaultResources.h>
 #include <core/Components.h>
-#include <resources/Model.h>
-#include <glm/gtx/matrix_decompose.hpp>
-#include <glm/gtc/quaternion.hpp>
 
-static entt::entity spawn_node(entt::registry& registry, const std::shared_ptr<ModelNode>& node, entt::entity parentEntity) {
-	entt::entity nodeEntity = registry.create();
-	registry.emplace<TagComponent>(nodeEntity, "Node");
 
-	glm::vec3 scale;
-	glm::quat rotation;
-	glm::vec3 translation;
-	glm::vec3 skew;
-	glm::vec4 perspective;
-	glm::decompose(node->localTransform, scale, rotation, translation, skew, perspective);
+entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceManager, const std::filesystem::path& prefabOrModelPath, const glm::vec3& position)
+{
+	std::filesystem::path prefabPath = prefabOrModelPath;
+	const AssetMetadata* sourceModelMeta = nullptr;
 
-	auto& tc = registry.emplace<TransformComponent>(nodeEntity);
-	tc.position = translation;
-	tc.rotation = glm::degrees(glm::eulerAngles(rotation));
-	tc.scale = scale;
-	tc.isDirty = true;
-
-	auto& hc = registry.emplace<HierarchyComponent>(nodeEntity, parentEntity);
-	if (parentEntity != entt::null) {
-		if (auto* parentHc = registry.try_get<HierarchyComponent>(parentEntity)) {
-			parentHc->children.push_back(nodeEntity);
+	if (prefabPath.extension() == ".gltf" || prefabPath.extension() == ".glb") {
+		sourceModelMeta = AssetRegistry::get().find_asset_by_path(prefabPath);
+		if (sourceModelMeta) {
+			std::filesystem::path candidate = prefabPath;
+			candidate.replace_extension(".prefab");
+			if (!std::filesystem::exists(candidate) || sourceModelMeta->subAssets.empty()) {
+				AssetImporter::import_model(*sourceModelMeta);
+			}
+			prefabPath = candidate;
 		}
 	}
 
-	if (!node->submeshes.empty()) {
-		if (node->submeshes.size() == 1) { // only one submesh, attach it to the node directly
-			const auto& sm = node->submeshes[0];
-			registry.emplace<MeshComponent>(nodeEntity, MeshComponent{
-					.mesh = sm.mesh,
-					.bounds = sm.bounds,
-					.startIndex = sm.startIndex,
-					.count = sm.count,
-					.visible = true
-				});
-			if (sm.material) {
-				MaterialComponent mat{};
-				mat.material = sm.material;
-				mat.alphaMode = sm.material->get_alpha_mode();
-				mat.doubleSided = sm.material->is_double_sided();
-				mat.isDirty = true;
-				registry.emplace<MaterialComponent>(nodeEntity, mat);
+	PrefabAssetData prefab{};
+	if (!AssetSerializer::load_prefab_file(prefabPath, prefab) || prefab.nodes.empty()) {
+		return entt::null;
+	}
+
+	if (sourceModelMeta) {
+		bool cacheMissing = false;
+
+		// check if any subasset texture (.gtex) or mesh (.gmesh) is missing on disk
+		for (const auto& sub : sourceModelMeta->subAssets) {
+			if (sub.type == AssetType::Texture) {
+				std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (sub.uuid.to_string() + ".gtex");
+				if (!std::filesystem::exists(gtex)) {
+					cacheMissing = true;
+					break;
+				}
 			}
-		}
-		else { // multiple submeshes, create child entities for each submesh
-			for (size_t i = 0; i < node->submeshes.size(); ++i) {
-				const auto& sm = node->submeshes[i];
-				entt::entity smEntity = registry.create();
-				registry.emplace<TagComponent>(smEntity, "Submesh " + std::to_string(i));
-
-				auto& smTc = registry.emplace<TransformComponent>(smEntity);
-				smTc.isDirty = true;
-
-				auto& smHc = registry.emplace<HierarchyComponent>(smEntity, nodeEntity);
-				hc.children.push_back(smEntity);
-
-				registry.emplace<MeshComponent>(smEntity, MeshComponent{
-					.mesh = sm.mesh,
-					.bounds = sm.bounds,
-					.startIndex = sm.startIndex,
-					.count = sm.count,
-					.visible = true
-					});
-				if (sm.material) {
-					MaterialComponent mat{};
-					mat.material = sm.material;
-					mat.alphaMode = sm.material->get_alpha_mode();
-					mat.doubleSided = sm.material->is_double_sided();
-					mat.isDirty = true;
-					registry.emplace<MaterialComponent>(smEntity, mat);
+			else if (sub.type == AssetType::Mesh) {
+				std::filesystem::path gmesh = std::filesystem::path(".cache/meshes") / (sub.uuid.to_string() + ".gmesh");
+				if (!std::filesystem::exists(gmesh)) {
+					cacheMissing = true;
+					break;
 				}
 			}
 		}
-	}
 
-	for (const auto& childNode : node->children) {
-		if (auto childModelNode = std::dynamic_pointer_cast<ModelNode>(childNode)) {
-			spawn_node(registry, childModelNode, nodeEntity);
+		// verify prefab submesh bindings
+		for (const auto& node : prefab.nodes) {
+			for (const auto& sm : node.submeshes) {
+				if (sm.meshAssetUUID.is_valid()) {
+					std::filesystem::path gmesh = std::filesystem::path(".cache/meshes") / (sm.meshAssetUUID.to_string() + ".gmesh");
+					if (!std::filesystem::exists(gmesh)) {
+						cacheMissing = true;
+						break;
+					}
+				}
+			}
+			if (cacheMissing) 
+				break;
+		}
+
+		if (cacheMissing) {
+			AssetImporter::import_model(*sourceModelMeta);
+			AssetSerializer::load_prefab_file(prefabPath, prefab);
 		}
 	}
 
-	return nodeEntity;
-}
-
-entt::entity spawn_model(entt::registry& registry, ResourceManager& resourceManager, const std::string& modelId, const std::filesystem::path& path, const glm::vec3& position) {
-	auto modelHandle = resourceManager.load<Model>(modelId, path);
-	if (!modelHandle.is_valid())
-		return entt::null;
-	
-	// wait for the model to be fully loaded before spawning
-	modelHandle->wait_until_ready();
-
-	//entt::entity firstRootEntity = registry.create();
+	std::vector<entt::entity> nodeEntities(prefab.nodes.size(), entt::null);
 	entt::entity firstRootEntity = entt::null;
-	for (const auto& rootNode : modelHandle->rootNodes) {
-		if (auto childModelNode = std::dynamic_pointer_cast<ModelNode>(rootNode)) {
-			entt::entity rootNodeEntity = spawn_node(registry, childModelNode, entt::null);
 
-			// apply spawn position to the roots
-			if (auto* tc = registry.try_get<TransformComponent>(rootNodeEntity)) {
-				tc->position += position;
-				tc->isDirty = true;
-			}
-			// use the model name to identify the roots in hierarchy
-			if (auto* tag = registry.try_get<TagComponent>(rootNodeEntity)) {
-				tag->tag = modelId;
-			}
-			
+	// create entities and transforms for each node in the prefab
+	for (size_t i = 0; i < prefab.nodes.size(); i++) {
+		const PrefabNodeData node = prefab.nodes[i];
+		entt::entity e = registry.create();
+		nodeEntities[i] = e;
+
+		registry.emplace<IDComponent>(e, UUID::generate());
+		registry.emplace<TagComponent>(e, node.name);
+
+		auto& tc = registry.emplace<TransformComponent>(e);
+		tc.position = node.position;
+		tc.rotation = node.rotation;
+		tc.scale = node.scale;
+		tc.isDirty = true;
+
+		registry.emplace<HierarchyComponent>(e);
+
+		if (node.parentIndex < 0) {
+			tc.position += position;
+			registry.emplace<PrefabInstanceComponent>(e, prefab.uuid);
 			if (firstRootEntity == entt::null) {
-				firstRootEntity = rootNodeEntity;
+				firstRootEntity = e;
+			}
+		}
+	}
+
+	// create parent-child relationships and attach mesh and material components
+	auto resolve_submesh_components = [&](entt::entity targetEntity, const PrefabSubmeshBinding& sm) {
+		ResourceHandle<Mesh> meshHandle;
+		if (sm.meshAssetUUID.is_valid()) {
+			std::filesystem::path cookedPath = std::filesystem::path(".cache/meshes") / (sm.meshAssetUUID.to_string() + ".gmesh");
+			if (const auto* meshMeta = AssetRegistry::get().get_metadata(sm.meshAssetUUID)) {
+				if (!meshMeta->cookedPath.empty())
+					cookedPath = meshMeta->cookedPath;
+			}
+			meshHandle = resourceManager.load_by_uuid<Mesh>(sm.meshAssetUUID, sm.meshAssetUUID.to_string(), cookedPath);
+		}
+
+		registry.emplace<MeshComponent>(targetEntity, MeshComponent{
+			.meshAssetUUID = sm.meshAssetUUID,
+			.mesh = meshHandle,
+			.bounds = meshHandle.is_valid() ? meshHandle->get_bounds() : sm.bounds,
+			.startIndex = 0,
+			.count = meshHandle.is_valid() ? meshHandle->get_index_count(0) : sm.indexCount,
+			.visible = true
+			});
+
+		MaterialComponent matComp{};
+		matComp.materialAssetUUID = sm.materialAssetUUID;
+		if (sm.materialAssetUUID.is_valid()) {
+			if (const auto* matMeta = AssetRegistry::get().get_metadata(sm.materialAssetUUID)) {
+				std::filesystem::path matPath = matMeta->virtualPath;
+				if (matPath.extension() != ".mat") {
+					matPath = prefabPath.parent_path() / "materials" / (matMeta->name + ".mat");
+				}
+				MaterialAssetData matData{};
+				if (AssetSerializer::load_material_file(matPath, matData)) {
+					matComp.material = AssetSerializer::build_material_instance(matData, resourceManager);
+					matComp.alphaMode = matData.alphaMode;
+					matComp.doubleSided = matData.doubleSided;
+				}
+			}
+		}
+
+		if (!matComp.material) {
+			matComp.material = std::make_shared<MaterialInstance>(DefaultResources::get().defaultPBRTemplate);
+		}
+		matComp.isDirty = true;
+		registry.emplace<MaterialComponent>(targetEntity, std::move(matComp));
+	};
+
+	for (size_t i = 0; i < prefab.nodes.size(); i++) {
+		const PrefabNodeData& node = prefab.nodes[i];
+		entt::entity nodeEntity = nodeEntities[i];
+		auto& hc = registry.get<HierarchyComponent>(nodeEntity);
+
+		if (node.parentIndex >= 0 && static_cast<size_t>(node.parentIndex) < nodeEntities.size()) {
+			hc.parent = nodeEntities[node.parentIndex];
+		}
+
+		for (uint32_t childIdx : node.childrenIndices) {
+			if (childIdx < nodeEntities.size()) {
+				hc.children.push_back(nodeEntities[childIdx]);
+			}
+		}
+
+		if (node.submeshes.size() == 1) {
+			resolve_submesh_components(nodeEntity, node.submeshes[0]);
+		}
+		else if (node.submeshes.size() > 1) {
+			for (size_t s = 0; s < node.submeshes.size(); s++) {
+				entt::entity smEntity = registry.create();
+				registry.emplace<IDComponent>(smEntity, UUID::generate());
+				registry.emplace<TagComponent>(smEntity, fmt::format("{} submesh {}", node.name, s));
+
+				auto& smTc = registry.emplace<TransformComponent>(smEntity);
+				smTc.isDirty = true;
+				registry.emplace<HierarchyComponent>(smEntity, nodeEntity);
+				hc.children.push_back(smEntity);
+
+				resolve_submesh_components(smEntity, node.submeshes[s]);
 			}
 		}
 	}

@@ -35,6 +35,8 @@ target_include_directories(glm INTERFACE glm)
 
 #target_link_libraries(sdl2 INTERFACE SDL2 SDL2main)
 
+add_subdirectory(meshoptimizer)
+
 add_library(offsetallocator STATIC)
 
 target_sources(offsetallocator PRIVATE

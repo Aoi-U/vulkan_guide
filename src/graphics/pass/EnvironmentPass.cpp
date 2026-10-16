@@ -170,14 +170,29 @@ void EnvironmentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 
 bool EnvironmentPass::request_hdr_load(const std::filesystem::path& hdrPath)
 {
+	std::filesystem::path actualPath = hdrPath;
+	if (actualPath.extension() == ".meta") {
+		actualPath.replace_extension("");
+	}
+	if (actualPath.extension() != ".hdr") {
+		fmt::println("EnvironmentPass: unsupported environment file extension: {}", actualPath.string());
+		return false;
+	}
+
 	int width, height, channels;
-	float* data = stbi_loadf(hdrPath.string().c_str(), &width, &height, &channels, 4);
+	float* data = stbi_loadf(actualPath.string().c_str(), &width, &height, &channels, 4);
 	if (!data) {
-		fmt::println("EnvironmentPass: failed to load HDR image: {}", hdrPath.string());
+		fmt::println("EnvironmentPass: failed to load HDR image: {}", actualPath.string());
 		return false;
 	}
 
 	// release old textures
+	if (_rm) {
+		_rm->force_unload<Texture>("ibl_hdr_source");
+		_rm->force_unload<Texture>("ibl_envCubemap");
+		_rm->force_unload<Texture>("ibl_irradianceCubemap");
+		_rm->force_unload<Texture>("ibl_prefilterCubemap");
+	}
 	_hdrSourceTex = {};
 	_envCubemap = {};
 	_irradianceCubemap = {};
@@ -264,14 +279,12 @@ void EnvironmentPass::allocate_persistent_targets()
 void EnvironmentPass::upload_procedural_cubemap()
 {
 	if (_rm) {
-		_rm->force_unload<Texture>("envCubemap");
-		_rm->force_unload<Texture>("irradianceCubemap");
-		_rm->force_unload<Texture>("prefilterCubemap");
-		_rm->force_unload<Texture>("hdr_img");
-		_rm->force_unload<Buffer>("hdr_staging");
+		_rm->force_unload<Texture>("ibl_hdr_source");
+		_rm->force_unload<Texture>("ibl_envCubemap");
+		_rm->force_unload<Texture>("ibl_irradianceCubemap");
+		_rm->force_unload<Texture>("ibl_prefilterCubemap");
 		_rm->force_unload<Buffer>("procedural_staging");
 	}
-
 	_envCubemap = {};
 	_irradianceCubemap = {};
 	_prefilterCubemap = {};

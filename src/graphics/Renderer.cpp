@@ -339,6 +339,9 @@ VkCommandBuffer Renderer::begin_frame()
 		_resourceManager->get_staging_uploader().reclaim_completed_frames(completedFrame);
 	}
 	_resourceManager->get_geometry_pool().process_deferred_frees(_frameNumber);
+	_resourceManager->process_main_thread_tasks();
+	_resourceManager->process_evictions(_frameNumber);
+
 	currentFrame._frameDescriptors.clear_pools(_vulkanCore->get_device());
 
 	// request image from swapchain

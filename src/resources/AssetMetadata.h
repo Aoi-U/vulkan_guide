@@ -7,6 +7,8 @@
 #include <vector>
 #include <cstdint>
 
+// asset related types and metadata
+
 enum class AssetType : uint8_t
 {
 	Texture,

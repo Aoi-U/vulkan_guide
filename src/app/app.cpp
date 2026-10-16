@@ -9,9 +9,10 @@
 #include <core/cvars.h>
 #include <resources/Material.h>
 #include <resources/Model.h>
-#include <resources/AssetRegistry.h>
-#include <resources/DefaultResources.h>
 
+#include <resources/AssetRegistry.h>
+#include <resources/AssetImporter.h>
+#include <resources/DefaultResources.h>
 #include <resources/GlobalGeometryPool.h>
 
 static void update_transform_hierarchy(entt::registry& registry, entt::entity entity, const glm::mat4& parentMatrix, bool parentDirty) {
@@ -66,6 +67,8 @@ void App::init()
 
 	AssetRegistry::get().scan_directory("../../assets");	
 	//AssetRegistry::get().print_manifest();
+	AssetImporter::cook_missing_assets();
+	
 
 	_camera.position = glm::vec3(0.0f, 0.0f, 0.0f);
 	_camera.pitch = 0.0f;

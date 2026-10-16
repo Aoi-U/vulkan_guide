@@ -26,6 +26,7 @@
 class VulkanCore;
 class ResourceManager;
 class GlobalGeometryPool;
+class AssetStreamer;
 
 // handle to a resource, managed by resource manager
 template<typename T>
@@ -154,6 +155,7 @@ private:
 class ResourceManager
 {
 public:
+	static constexpr uint64_t EVICTION_FRAME_THRESHOLD = 60; // number of frames after which unused resources can be evicted
 	// two level ref count for automatic resource lifecycle management
 	// maps resource type first, then resource id to their data
 	struct ResourceData
@@ -162,6 +164,9 @@ public:
 		int refCount; // reference count for this resource
 		uint64_t lastAccessedFrame{ 0 }; // frame index when this resource was last accessed
 	};
+
+	ResourceManager();
+	~ResourceManager();
 	
 	void init(VulkanCore* core);
 
@@ -177,11 +182,16 @@ public:
 	void queue_main_thread_task(std::function<void()> task);
 	void process_main_thread_tasks();
 
+	// unloads zero-ref resources past EVICTION_FRAME_THRESHOLD or over vram limit
+	void process_evictions(uint64_t currentFrame);
+	void request_async_load(const UUID& uuid);
+
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }
 	VkDescriptorSet get_bindless_set() const { return _bindlessSet; }
 	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }
 	PipelineLayoutCache& get_pipeline_layout_cache() { return _layoutCache; }
 	StagingUploader& get_staging_uploader() { return *_stagingUploader; }
+	AssetStreamer& get_asset_streamer() { return *_assetStreamer; }
 
 	template<typename T, typename... Args>
 	ResourceHandle<T> load_by_uuid(const UUID& uuid, const std::string& debugName, Args&&... args)
@@ -215,18 +225,18 @@ public:
 	}
 
 	template<typename T>
-	T* get_or_request(const UUID& uuid)
+	T* get_or_request(const UUID& uuid, T* fallback = nullptr)
 	{
 		if (!uuid.is_valid()) 
-			return nullptr;
+			return fallback;
 		if (T* res = get_resource<T>(uuid)) 
 			return res;
 		
 		ResourceState currentState = AssetRegistry::get().get_resource_state(uuid);
-		if (currentState == ResourceState::Unloaded) 
-			AssetRegistry::get().set_resource_state(uuid, ResourceState::Queued);
+		if (currentState == ResourceState::Unloaded)
+			request_async_load(uuid);
 		
-		return nullptr;
+		return fallback;
 	}
 
 	template<typename T>
@@ -325,6 +335,10 @@ public:
 			if (it != typeIt->second.end()) { // increment ref count and update last accessed frame
 				it->second.refCount++;
 				it->second.lastAccessedFrame = _currentFrame;
+
+				std::erase_if(_evictionCandidates, [&](const EvictionCandidate& candidate) {
+					return candidate.typeKey == typeKey && candidate.uuid == uuid;
+					});
 			}
 		}
 	}
@@ -343,9 +357,8 @@ public:
 
 		it->second.refCount--;
 		if (it->second.refCount <= 0) { // no more references, unload resource
-			queue_unload(_resources[typeKey][uuid]);
-			_resources[typeKey].erase(uuid);
-			typeIt->second.erase(it);
+			it->second.refCount = 0;
+			_evictionCandidates.emplace_back(typeKey, uuid, _currentFrame);
 		}
 	}
 
@@ -369,6 +382,12 @@ public:
 	void unload_all();
 
 private:
+	struct EvictionCandidate
+	{
+		std::type_index typeKey;
+		UUID uuid;
+		uint64_t zeroRefFrame{ 0 };
+	};
 	static constexpr uint32_t MAX_BINDLESS_TEXTURES = 10000;
 
 	VulkanCore* _vulkanCore{ nullptr };
@@ -389,6 +408,9 @@ private:
 	uint64_t _currentFrame{ 0 };
 
 	std::unique_ptr<StagingUploader> _stagingUploader;
+
+	std::unique_ptr<AssetStreamer> _assetStreamer;
+	std::vector<EvictionCandidate> _evictionCandidates;
 
 	// two level storage system
 	// organize by type first, then by unique id

@@ -21,4 +21,5 @@ target_link_libraries(resources PUBLIC
     fastgltf::fastgltf
     stb_image
 	offsetallocator
+	meshoptimizer
 )

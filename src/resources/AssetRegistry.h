@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+// singleton registry for all assets in the project
 class AssetRegistry
 {
 public:
