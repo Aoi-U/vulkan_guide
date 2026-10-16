@@ -1,5 +1,6 @@
 #pragma once
 
+#include <core/UUID.h>
 #include <glm/glm.hpp>
 #include <glm/gtx/transform.hpp>
 #include <core/UUID.h>
@@ -11,6 +12,15 @@
 struct IDComponent
 {
 	UUID id{ UUID::generate() };
+
+	IDComponent() = default;
+	explicit IDComponent(const UUID& uuid)
+		: id(uuid) {}
+};
+
+struct PrefabInstanceComponent
+{
+	UUID prefabAssetUUID{};
 };
 
 struct TagComponent
@@ -50,6 +60,7 @@ struct HierarchyComponent
 
 struct MeshComponent
 {
+	UUID meshAssetUUID{};
 	ResourceHandle<Mesh> mesh;
 	Bounds bounds{};
 	uint32_t startIndex{ 0 };
@@ -59,6 +70,7 @@ struct MeshComponent
 	void set_mesh(ResourceHandle<Mesh> newMesh)
 	{
 		mesh = std::move(newMesh);
+		meshAssetUUID = mesh.is_valid() ? mesh.get_uuid() : UUID::null();
 		startIndex = 0;
 		if (mesh.is_valid()) {
 			count = mesh->get_index_count();
@@ -71,6 +83,7 @@ struct MeshComponent
 };
 
 struct MaterialComponent {
+	UUID materialAssetUUID{};
 	std::shared_ptr<MaterialInstance> material;
 	bool doubleSided{ false };
 	AlphaMode alphaMode{ AlphaMode::Opaque };

@@ -1,5 +1,8 @@
 #include "AssetSerializer.h"
 
+#include <resources/DefaultResources.h>
+#include <resources/ResourceManager.h>
+#include <core/YamlConverters.h>
 #include <yaml-cpp/yaml.h>
 #include <fmt/color.h>
 #include <fstream>
@@ -50,6 +53,33 @@ namespace
 		if (str == "MIRRORED_REPEAT")
 			return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
 		return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+	}
+
+	std::string_view pass_type_to_string(MaterialPassType pass)
+	{
+		return (pass == MaterialPassType::Transparent) ? "Transparent" : "Opaque";
+	}
+
+	MaterialPassType pass_type_from_string(std::string_view str)
+	{
+		if (str == "Transparent") return MaterialPassType::Transparent;
+		return MaterialPassType::Opaque;
+	}
+
+	std::string_view alpha_mode_to_string(AlphaMode mode)
+	{
+		switch (mode) {
+		case AlphaMode::Mask:  return "Mask";
+		case AlphaMode::Blend: return "Blend";
+		default:               return "Opaque";
+		}
+	}
+
+	AlphaMode alpha_mode_from_string(std::string_view str)
+	{
+		if (str == "Mask")  return AlphaMode::Mask;
+		if (str == "Blend") return AlphaMode::Blend;
+		return AlphaMode::Opaque;
 	}
 }
 
@@ -306,3 +336,280 @@ bool AssetSerializer::load_meta_file(const std::filesystem::path& metaFilePath, 
 		return false;
 	}
 }
+
+bool AssetSerializer::save_material_file(const std::filesystem::path& matFilePath, const MaterialAssetData& matData)
+{
+	if (matFilePath.has_parent_path()) {
+		std::filesystem::create_directories(matFilePath.parent_path());
+	}
+
+	// write material data to YAML
+	YAML::Emitter out;
+	out << YAML::BeginMap;
+	out << YAML::Key << "uuid" << YAML::Value << (matData.uuid.is_valid() ? matData.uuid : UUID::generate());
+	out << YAML::Key << "type" << YAML::Value << "Material";
+	out << YAML::Key << "name" << YAML::Value << matData.name;
+	out << YAML::Key << "templateId" << YAML::Value << matData.templateId;
+	out << YAML::Key << "passType" << YAML::Value << std::string(pass_type_to_string(matData.passType));
+	out << YAML::Key << "alphaMode" << YAML::Value << std::string(alpha_mode_to_string(matData.alphaMode));
+	out << YAML::Key << "doubleSided" << YAML::Value << matData.doubleSided;
+
+	out << YAML::Key << "constants" << YAML::Value << YAML::BeginMap;
+	out << YAML::Key << "colorFactors" << YAML::Value << matData.colorFactors;
+	out << YAML::Key << "metalRoughFactors" << YAML::Value << matData.metalRoughFactors;
+	out << YAML::Key << "occlusionStrength" << YAML::Value << matData.occlusionStrength;
+	out << YAML::Key << "normalScale" << YAML::Value << matData.normalScale;
+	out << YAML::Key << "transmissionFactor" << YAML::Value << matData.transmissionFactor;
+	out << YAML::Key << "emissiveFactor" << YAML::Value << matData.emissiveFactor;
+	out << YAML::Key << "emissiveStrength" << YAML::Value << matData.emissiveStrength;
+	out << YAML::EndMap;
+
+	auto emit_tex_uuid = [&](const char* slotName, const UUID& texUuid) {
+		out << YAML::Key << slotName;
+		if (texUuid.is_valid()) {
+			out << YAML::Value << texUuid;
+		}
+		else {
+			out << YAML::Value << "0";
+		}
+		};
+
+	out << YAML::Key << "textures" << YAML::Value << YAML::BeginMap;
+	emit_tex_uuid("Albedo", matData.albedoTextureUUID);
+	emit_tex_uuid("Normal", matData.normalTextureUUID);
+	emit_tex_uuid("MetalRough", matData.metalRoughTextureUUID);
+	emit_tex_uuid("Occlusion", matData.occlusionTextureUUID);
+	emit_tex_uuid("Emissive", matData.emissiveTextureUUID);
+	out << YAML::EndMap;
+
+	out << YAML::EndMap;
+
+	// write to file
+	std::ofstream fout(matFilePath);
+	if (!fout.is_open()) {
+		fmt::println("AssetSerializer: Failed to write material file: {}", matFilePath.string());
+		return false;
+	}
+	fout << out.c_str();
+
+	return true;
+}
+
+bool AssetSerializer::load_material_file(const std::filesystem::path& matFilePath, MaterialAssetData& outMatData)
+{
+	if (!std::filesystem::exists(matFilePath)) {
+		fmt::println("AssetSerializer: Material file does not exist: {}", matFilePath.string());
+		return false;
+	}
+
+	try { // parse YAML
+		YAML::Node root = YAML::LoadFile(matFilePath.string());
+		if (root["uuid"])        outMatData.uuid = root["uuid"].as<UUID>();
+		if (root["name"])        outMatData.name = root["name"].as<std::string>();
+		if (root["templateId"])  outMatData.templateId = root["templateId"].as<std::string>();
+		if (root["passType"])    outMatData.passType = pass_type_from_string(root["passType"].as<std::string>());
+		if (root["alphaMode"])   outMatData.alphaMode = alpha_mode_from_string(root["alphaMode"].as<std::string>());
+		if (root["doubleSided"]) outMatData.doubleSided = root["doubleSided"].as<bool>();
+
+		if (YAML::Node constants = root["constants"]) {
+			if (constants["colorFactors"])       outMatData.colorFactors = constants["colorFactors"].as<glm::vec4>();
+			if (constants["metalRoughFactors"])  outMatData.metalRoughFactors = constants["metalRoughFactors"].as<glm::vec4>();
+			if (constants["occlusionStrength"])  outMatData.occlusionStrength = constants["occlusionStrength"].as<float>();
+			if (constants["normalScale"])        outMatData.normalScale = constants["normalScale"].as<float>();
+			if (constants["transmissionFactor"]) outMatData.transmissionFactor = constants["transmissionFactor"].as<float>();
+			if (constants["emissiveFactor"])     outMatData.emissiveFactor = constants["emissiveFactor"].as<glm::vec3>();
+			if (constants["emissiveStrength"])   outMatData.emissiveStrength = constants["emissiveStrength"].as<float>();
+		}
+
+		if (YAML::Node textures = root["textures"]) {
+			if (textures["Albedo"])     outMatData.albedoTextureUUID = textures["Albedo"].as<UUID>();
+			if (textures["Normal"])     outMatData.normalTextureUUID = textures["Normal"].as<UUID>();
+			if (textures["MetalRough"]) outMatData.metalRoughTextureUUID = textures["MetalRough"].as<UUID>();
+			if (textures["Occlusion"])  outMatData.occlusionTextureUUID = textures["Occlusion"].as<UUID>();
+			if (textures["Emissive"])   outMatData.emissiveTextureUUID = textures["Emissive"].as<UUID>();
+		}
+
+		return true;
+	}
+	catch (const YAML::Exception& e) {
+		fmt::println("AssetSerializer: YAML error reading material '{}': {}", matFilePath.string(), e.what());
+		return false;
+	}
+}
+
+std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const MaterialAssetData& matData, ResourceManager& rm)
+{
+	auto& defaults = DefaultResources::get();
+	ResourceHandle<MaterialTemplate> matTemplate = rm.get_handle<MaterialTemplate>(matData.templateId);
+	if (!matTemplate.is_valid())
+		matTemplate = defaults.defaultPBRTemplate;
+
+	// create material instance and set parameters
+	auto instance = std::make_shared<MaterialInstance>(matTemplate);
+	instance->set_alpha_mode(matData.alphaMode);
+	instance->set_double_sided(matData.doubleSided);
+
+	// set constants
+	instance->set_parameter("colorFactors", matData.colorFactors);
+	instance->set_parameter("metalRoughFactors", matData.metalRoughFactors);
+	glm::vec4 extraFactors(
+		matData.occlusionStrength,
+		matData.normalScale,
+		matData.doubleSided ? 1.0f : 0.0f,
+		matData.transmissionFactor
+	);
+	instance->set_parameter("extraFactors", extraFactors);
+	instance->set_parameter("emissiveFactor", glm::vec4(matData.emissiveFactor, matData.emissiveStrength));
+
+	// helper to resolve texture uuid to  gpu handle
+	auto resolve_slot_texture = [&](const UUID& texUuid, ResourceHandle<Texture> fallback, VkFormat defaultFormat) -> ResourceHandle<Texture> {
+		if (!texUuid.is_valid()) {
+			return fallback;
+		}
+		if (rm.has_resource<Texture>(texUuid)) {
+			return rm.get_handle<Texture>(texUuid);
+		}
+		if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid)) {
+			VkFormat fmt = meta->textureSettings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : defaultFormat;
+			auto loaded = rm.load_by_uuid<Texture>(
+				texUuid,
+				meta->name,
+				meta->virtualPath,
+				fmt,
+				VK_IMAGE_USAGE_SAMPLED_BIT,
+				meta->textureSettings.generateMips
+			);
+			if (loaded.is_valid()) return loaded;
+		}
+		return fallback;
+		};
+
+	instance->set_texture("albedo", resolve_slot_texture(matData.albedoTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_SRGB));
+	instance->set_texture("normal", resolve_slot_texture(matData.normalTextureUUID, defaults.defaultNormalImage, VK_FORMAT_R8G8B8A8_UNORM));
+	instance->set_texture("metalRough", resolve_slot_texture(matData.metalRoughTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_UNORM));
+	instance->set_texture("occlusion", resolve_slot_texture(matData.occlusionTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_UNORM));
+	instance->set_texture("emissive", resolve_slot_texture(matData.emissiveTextureUUID, defaults.blackImage, VK_FORMAT_R8G8B8A8_SRGB));
+
+	return instance;
+}
+
+bool AssetSerializer::save_prefab_file(const std::filesystem::path& prefabFilePath, const PrefabAssetData& prefabData)
+{
+	if (prefabFilePath.has_parent_path()) {
+		std::filesystem::create_directories(prefabFilePath.parent_path());
+	}
+
+	// write prefab data to YAML
+	YAML::Emitter out;
+	out << YAML::BeginMap;
+	out << YAML::Key << "uuid" << YAML::Value << (prefabData.uuid.is_valid() ? prefabData.uuid : UUID::generate());
+	out << YAML::Key << "type" << YAML::Value << "Prefab";
+	out << YAML::Key << "name" << YAML::Value << prefabData.name;
+	out << YAML::Key << "version" << YAML::Value << 1;
+	out << YAML::Key << "sourceModelUUID" << YAML::Value << prefabData.sourceModelUUID;
+
+	out << YAML::Key << "nodes" << YAML::Value << YAML::BeginSeq;
+	for (const auto& node : prefabData.nodes) {
+		out << YAML::BeginMap;
+		out << YAML::Key << "name" << YAML::Value << node.name;
+		out << YAML::Key << "parentIndex" << YAML::Value << node.parentIndex;
+		out << YAML::Key << "position" << YAML::Value << node.position;
+		out << YAML::Key << "rotation" << YAML::Value << node.rotation;
+		out << YAML::Key << "scale" << YAML::Value << node.scale;
+
+		out << YAML::Key << "childrenIndices" << YAML::Value << YAML::Flow << node.childrenIndices;
+
+		if (!node.submeshes.empty()) {
+			out << YAML::Key << "submeshes" << YAML::Value << YAML::BeginSeq;
+			for (const auto& sm : node.submeshes) {
+				out << YAML::BeginMap;
+				out << YAML::Key << "meshAssetUUID" << YAML::Value << sm.meshAssetUUID;
+				out << YAML::Key << "materialAssetUUID" << YAML::Value << sm.materialAssetUUID;
+				out << YAML::Key << "startIndex" << YAML::Value << sm.startIndex;
+				out << YAML::Key << "indexCount" << YAML::Value << sm.indexCount;
+				out << YAML::Key << "bounds" << YAML::Value << YAML::BeginMap;
+				out << YAML::Key << "origin" << YAML::Value << sm.bounds.origin;
+				out << YAML::Key << "sphereRadius" << YAML::Value << sm.bounds.sphereRadius;
+				out << YAML::Key << "extents" << YAML::Value << sm.bounds.extents;
+				out << YAML::EndMap;
+				out << YAML::EndMap;
+			}
+			out << YAML::EndSeq;
+		}
+		out << YAML::EndMap;
+	}
+	out << YAML::EndSeq;
+	out << YAML::EndMap;
+
+	// write to file
+	std::ofstream fout(prefabFilePath);
+	if (!fout.is_open()) {
+		fmt::println("AssetSerializer: Failed to write prefab file: {}", prefabFilePath.string());
+		return false;
+	}
+	fout << out.c_str();
+
+	return true;
+}
+
+bool AssetSerializer::load_prefab_file(const std::filesystem::path& prefabFilePath, PrefabAssetData& outPrefabData)
+{
+	if (!std::filesystem::exists(prefabFilePath)) return false;
+
+	try { // parse YAML
+		YAML::Node root = YAML::LoadFile(prefabFilePath.string());
+		if (root["uuid"])            
+			outPrefabData.uuid = root["uuid"].as<UUID>();
+		if (root["name"])            
+			outPrefabData.name = root["name"].as<std::string>();
+		if (root["sourceModelUUID"]) 
+			outPrefabData.sourceModelUUID = root["sourceModelUUID"].as<UUID>();
+
+		outPrefabData.nodes.clear();
+		if (YAML::Node nodes = root["nodes"]; nodes && nodes.IsSequence()) {
+			for (const auto& n : nodes) {
+				PrefabNodeData nodeData{};
+				nodeData.name = n["name"].as<std::string>("Node");
+				nodeData.parentIndex = n["parentIndex"].as<int32_t>(-1);
+
+				if (n["position"]) 
+					nodeData.position = n["position"].as<glm::vec3>();
+				if (n["rotation"]) 
+					nodeData.rotation = n["rotation"].as<glm::vec3>();
+				if (n["scale"])    
+					nodeData.scale = n["scale"].as<glm::vec3>();
+
+				if (YAML::Node children = n["childrenIndices"]; children && children.IsSequence()) {
+					for (const auto& cIdx : children) {
+						nodeData.childrenIndices.push_back(cIdx.as<uint32_t>());
+					}
+				}
+
+				if (YAML::Node submeshes = n["submeshes"]; submeshes && submeshes.IsSequence()) {
+					for (const auto& smNode : submeshes) {
+						PrefabSubmeshBinding sm{};
+						if (smNode["meshAssetUUID"])     
+							sm.meshAssetUUID = smNode["meshAssetUUID"].as<UUID>();
+						if (smNode["materialAssetUUID"]) 
+							sm.materialAssetUUID = smNode["materialAssetUUID"].as<UUID>();
+						if (smNode["startIndex"])        
+							sm.startIndex = smNode["startIndex"].as<uint32_t>();
+						if (smNode["indexCount"])        
+							sm.indexCount = smNode["indexCount"].as<uint32_t>();
+						if (smNode["bounds"]) 
+							sm.bounds = smNode["bounds"].as<Bounds>();
+						nodeData.submeshes.push_back(sm);
+					}
+				}
+				outPrefabData.nodes.push_back(std::move(nodeData));
+			}
+		}
+		return true;
+	}
+	catch (const YAML::Exception& e) {
+		fmt::println("AssetSerializer: YAML error reading prefab '{}': {}", prefabFilePath.string(), e.what());
+		return false;
+	}
+}
+
+
