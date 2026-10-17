@@ -108,11 +108,46 @@ void AssetImporter::cook_missing_assets()
 			// check if .prefab or subassets need cooking
 			std::filesystem::path prefabPath = meta.virtualPath;
 			prefabPath.replace_extension(".prefab");
-			bool needsImport = !std::filesystem::exists(prefabPath);
+			bool needsImport = !std::filesystem::exists(prefabPath) || meta.subAssets.empty();
 
 			if (!needsImport) {
 				for (const SubAssetEntry& sub : meta.subAssets) {
-					if (const AssetMetadata* subMeta = AssetRegistry::get().get_metadata(sub.uuid)) {
+					if (sub.type == AssetType::Texture) {
+						std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (sub.uuid.to_string() + ".gtex");
+						if (!std::filesystem::exists(gtex)) {
+							needsImport = true;
+							break;
+						}
+					}
+					else if (sub.type == AssetType::Mesh) {
+						std::filesystem::path gmesh = std::filesystem::path(".cache/meshes") / (sub.uuid.to_string() + ".gmesh");
+						if (!std::filesystem::exists(gmesh)) {
+							needsImport = true;
+							break;
+						}
+					}
+					else if (sub.type == AssetType::Material) {
+						std::filesystem::path matPath = meta.virtualPath.parent_path() / "materials" / (sub.name + ".mat");
+						MaterialAssetData matData{};
+						if (!std::filesystem::exists(matPath) || !AssetSerializer::load_material_file(matPath, matData) || matData.uuid != sub.uuid) {
+							needsImport = true;
+							break;
+						}
+						auto tex_missing = [](const UUID& texUuid) {
+							if (!texUuid.is_valid()) return false;
+							std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
+							return !std::filesystem::exists(gtex);
+						};
+						if (tex_missing(matData.albedoTextureUUID) ||
+							tex_missing(matData.normalTextureUUID) ||
+							tex_missing(matData.metalRoughTextureUUID) ||
+							tex_missing(matData.occlusionTextureUUID) ||
+							tex_missing(matData.emissiveTextureUUID)) {
+							needsImport = true;
+							break;
+						}
+					}
+					else if (const AssetMetadata* subMeta = AssetRegistry::get().get_metadata(sub.uuid)) {
 						if (!subMeta->cookedPath.empty() && !std::filesystem::exists(subMeta->cookedPath)) {
 							needsImport = true;
 							break;
@@ -338,7 +373,10 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 	// parse gltf/glb container 
 	fastgltf::Parser parser{
 		fastgltf::Extensions::KHR_materials_transmission |
-		fastgltf::Extensions::KHR_materials_ior
+		fastgltf::Extensions::KHR_materials_ior |
+		fastgltf::Extensions::KHR_materials_emissive_strength |
+		fastgltf::Extensions::KHR_materials_unlit |
+		fastgltf::Extensions::KHR_texture_transform
 	};
 	constexpr auto gltfOptions =
 		fastgltf::Options::DontRequireValidAssetMember |
@@ -414,6 +452,14 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 		}
 
 		UUID texUUID = AssetRegistry::get().register_sub_asset(modelMeta.uuid, subTexName, AssetType::Texture);
+		if (AssetMetadata* subMeta = AssetRegistry::get().get_metadata_mutable(texUUID)) {
+			subMeta->textureSettings.sRGB = (format == VK_FORMAT_R8G8B8A8_SRGB);
+			subMeta->textureSettings.magFilter = magFilter;
+			subMeta->textureSettings.minFilter = minFilter;
+			subMeta->textureSettings.mipmapMode = mipmapMode;
+			subMeta->textureSettings.addressModeU = addressU;
+			subMeta->textureSettings.addressModeV = addressV;
+		}
 		imageUUIDs[i] = texUUID;
 		std::filesystem::path cookedTexPath = std::filesystem::path(".cache/textures") / (texUUID.to_string() + ".gtex");
 
@@ -423,7 +469,7 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 			stbi_uc* pixels = nullptr;
 
 			std::visit(fastgltf::visitor{
-				[](auto&) {},
+				[](const auto&) {},
 				[&](const fastgltf::sources::URI& uri) {
 					std::filesystem::path p = filePath.parent_path() / std::string(uri.uri.path().begin(), uri.uri.path().end());
 					pixels = stbi_load(p.string().c_str(), &w, &h, &ch, STBI_rgb_alpha);
@@ -431,11 +477,14 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 				[&](const fastgltf::sources::Vector& vec) {
 					pixels = stbi_load_from_memory(vec.bytes.data(), static_cast<int>(vec.bytes.size()), &w, &h, &ch, STBI_rgb_alpha);
 				},
+				[&](const fastgltf::sources::ByteView& bvBytes) {
+					pixels = stbi_load_from_memory(reinterpret_cast<const uint8_t*>(bvBytes.bytes.data()), static_cast<int>(bvBytes.bytes.size()), &w, &h, &ch, STBI_rgb_alpha);
+				},
 				[&](const fastgltf::sources::BufferView& view) {
-					auto& bv = gltf.bufferViews[view.bufferViewIndex];
-					auto& buf = gltf.buffers[bv.bufferIndex];
+					const auto& bv = gltf.bufferViews[view.bufferViewIndex];
+					const auto& buf = gltf.buffers[bv.bufferIndex];
 					std::visit(fastgltf::visitor{
-						[](auto&) {},
+						[](const auto&) {},
 						[&](const fastgltf::sources::Vector& vec) {
 							pixels = stbi_load_from_memory(vec.bytes.data() + bv.byteOffset, static_cast<int>(bv.byteLength), &w, &h, &ch, STBI_rgb_alpha);
 						},
@@ -466,6 +515,9 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 				};
 				write_gtex_file(cookedTexPath, texHeader, std::span<const uint8_t>(pixels, byteSize));
 				stbi_image_free(pixels);
+			}
+			else {
+				fmt::println("AssetImporter: failed to decode image {} for model '{}'", i, modelMeta.name);
 			}
 		}
 	}
@@ -545,14 +597,37 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 		if (gltfMat.emissiveTexture.has_value())
 			matData.emissiveTextureUUID = resolve_gltf_tex_uuid(gltfMat.emissiveTexture->textureIndex);
 
-		// save to .mat file
+		// save to .mat file (overwrite if missing or if existing .mat has stale model/texture UUIDs)
 		std::filesystem::path matFilePath = materialsDir / (matName + ".mat");
-		if (!std::filesystem::exists(matFilePath)) {
+		bool shouldSaveMat = !std::filesystem::exists(matFilePath);
+		if (!shouldSaveMat) {
+			MaterialAssetData existingMat{};
+			if (!AssetSerializer::load_material_file(matFilePath, existingMat) || existingMat.uuid != matUUID) {
+				shouldSaveMat = true;
+			}
+			else {
+				auto is_slot_stale = [](const UUID& existingUuid, const UUID& expectedUuid) {
+					if (!expectedUuid.is_valid()) return false;
+					if (!existingUuid.is_valid()) return true;
+					std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (existingUuid.to_string() + ".gtex");
+					return !std::filesystem::exists(gtex) && !AssetRegistry::get().contains(existingUuid);
+				};
+				if (is_slot_stale(existingMat.albedoTextureUUID, matData.albedoTextureUUID) ||
+					is_slot_stale(existingMat.normalTextureUUID, matData.normalTextureUUID) ||
+					is_slot_stale(existingMat.metalRoughTextureUUID, matData.metalRoughTextureUUID) ||
+					is_slot_stale(existingMat.occlusionTextureUUID, matData.occlusionTextureUUID) ||
+					is_slot_stale(existingMat.emissiveTextureUUID, matData.emissiveTextureUUID)) {
+					shouldSaveMat = true;
+				}
+			}
+		}
+		if (shouldSaveMat) {
 			AssetSerializer::save_material_file(matFilePath, matData);
 		}
 		if (AssetMetadata* subMeta = AssetRegistry::get().get_metadata_mutable(matUUID)) {
 			subMeta->virtualPath = matFilePath;
 			subMeta->path = matFilePath;
+			subMeta->cookedPath = matFilePath;
 		}
 	}
 

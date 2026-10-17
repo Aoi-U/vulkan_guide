@@ -53,7 +53,10 @@ void ViewportPanel::on_draw(EditorContext& ctx)
   if (ImGui::BeginDragDropTarget()) {
     if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MODEL_ID")) {
       std::string draggedId = (const char*)payload->Data;
-      auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
+      auto assetRec = AssetRegistry::get().find_asset_by_path(draggedId);
+      if (!assetRec) {
+        assetRec = AssetRegistry::get().find_asset_by_id(draggedId);
+      }
       if (assetRec) {
         // spawn model at local origin when dropped into viewport
         ctx.selectedEntity = spawn_prefab(ctx.registry, ctx.resourceManager, assetRec->path, glm::vec3(0.0f)); 

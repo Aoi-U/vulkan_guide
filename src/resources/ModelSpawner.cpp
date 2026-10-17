@@ -28,8 +28,12 @@ entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceMan
 		return entt::null;
 	}
 
+	if (!sourceModelMeta && prefab.sourceModelUUID.is_valid()) {
+		sourceModelMeta = AssetRegistry::get().get_metadata(prefab.sourceModelUUID);
+	}
+
 	if (sourceModelMeta) {
-		bool cacheMissing = false;
+		bool cacheMissing = sourceModelMeta->subAssets.empty();
 
 		// check if any subasset texture (.gtex) or mesh (.gmesh) is missing on disk
 		for (const auto& sub : sourceModelMeta->subAssets) {
@@ -49,12 +53,41 @@ entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceMan
 			}
 		}
 
-		// verify prefab submesh bindings
+		auto check_tex_uuid = [](UUID texUUID) -> bool {
+			if (!texUUID.is_valid())
+				return true;
+			std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (texUUID.to_string() + ".gtex");
+			return std::filesystem::exists(gtex);
+		};
+
+		// verify prefab submesh bindings and referenced materials/textures
 		for (const auto& node : prefab.nodes) {
 			for (const auto& sm : node.submeshes) {
 				if (sm.meshAssetUUID.is_valid()) {
 					std::filesystem::path gmesh = std::filesystem::path(".cache/meshes") / (sm.meshAssetUUID.to_string() + ".gmesh");
 					if (!std::filesystem::exists(gmesh)) {
+						cacheMissing = true;
+						break;
+					}
+				}
+				if (sm.materialAssetUUID.is_valid()) {
+					const auto* matMeta = AssetRegistry::get().get_metadata(sm.materialAssetUUID);
+					if (!matMeta) {
+						cacheMissing = true;
+						break;
+					}
+					std::filesystem::path matPath = matMeta->virtualPath;
+					if (matPath.extension() != ".mat") {
+						matPath = prefabPath.parent_path() / "materials" / (matMeta->name + ".mat");
+					}
+					MaterialAssetData matData{};
+					if (!AssetSerializer::load_material_file(matPath, matData) ||
+						matData.uuid != sm.materialAssetUUID ||
+						!check_tex_uuid(matData.albedoTextureUUID) ||
+						!check_tex_uuid(matData.metalRoughTextureUUID) ||
+						!check_tex_uuid(matData.normalTextureUUID) ||
+						!check_tex_uuid(matData.occlusionTextureUUID) ||
+						!check_tex_uuid(matData.emissiveTextureUUID)) {
 						cacheMissing = true;
 						break;
 					}
@@ -99,6 +132,8 @@ entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceMan
 		}
 	}
 
+	std::unordered_map<UUID, MaterialComponent> resolvedMaterials;
+
 	// create parent-child relationships and attach mesh and material components
 	auto resolve_submesh_components = [&](entt::entity targetEntity, const PrefabSubmeshBinding& sm) {
 		ResourceHandle<Mesh> meshHandle;
@@ -123,7 +158,11 @@ entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceMan
 		MaterialComponent matComp{};
 		matComp.materialAssetUUID = sm.materialAssetUUID;
 		if (sm.materialAssetUUID.is_valid()) {
-			if (const auto* matMeta = AssetRegistry::get().get_metadata(sm.materialAssetUUID)) {
+			auto cachedIt = resolvedMaterials.find(sm.materialAssetUUID);
+			if (cachedIt != resolvedMaterials.end()) {
+				matComp = cachedIt->second;
+			}
+			else if (const auto* matMeta = AssetRegistry::get().get_metadata(sm.materialAssetUUID)) {
 				std::filesystem::path matPath = matMeta->virtualPath;
 				if (matPath.extension() != ".mat") {
 					matPath = prefabPath.parent_path() / "materials" / (matMeta->name + ".mat");
@@ -133,6 +172,7 @@ entt::entity spawn_prefab(entt::registry& registry, ResourceManager& resourceMan
 					matComp.material = AssetSerializer::build_material_instance(matData, resourceManager);
 					matComp.alphaMode = matData.alphaMode;
 					matComp.doubleSided = matData.doubleSided;
+					resolvedMaterials[sm.materialAssetUUID] = matComp;
 				}
 			}
 		}

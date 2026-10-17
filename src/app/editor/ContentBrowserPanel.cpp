@@ -65,8 +65,9 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
         ImGui::PopStyleColor();
 
         // drag and drop source
-        if (assetRec->type == AssetType::Model && ImGui::BeginDragDropSource()) {
-          ImGui::SetDragDropPayload("ASSET_MODEL_ID", assetRec->id.c_str(), assetRec->id.size() + 1);
+        if ((assetRec->type == AssetType::Model || assetRec->type == AssetType::Prefab) && ImGui::BeginDragDropSource()) {
+          std::string pathStr = assetRec->path.string();
+          ImGui::SetDragDropPayload("ASSET_MODEL_ID", pathStr.c_str(), pathStr.size() + 1);
           ImGui::Text("Spawning %s", assetRec->id.c_str());
           ImGui::EndDragDropSource();
         }
@@ -78,7 +79,7 @@ void ContentBrowserPanel::on_draw(EditorContext & ctx)
 
         // context menu
         if (ImGui::BeginPopupContextItem()) {
-          if (assetRec->type == AssetType::Model) {
+          if (assetRec->type == AssetType::Model || assetRec->type == AssetType::Prefab) {
             if (ImGui::MenuItem("Spawn Entity")) {
               ctx.selectedEntity = spawn_prefab(ctx.registry, ctx.resourceManager, assetRec->path);
               ctx.renderer.mark_scene_dirty();

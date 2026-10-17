@@ -89,8 +89,18 @@ void ComponentRegistry::init_default_components()
 			if (node["bounds"])        
 				mc.bounds = node["bounds"].as<Bounds>();
 
-			if (rm && mc.meshAssetUUID.is_valid() && rm->has_resource<Mesh>(mc.meshAssetUUID)) {
-				mc.mesh = rm->get_handle<Mesh>(mc.meshAssetUUID);
+			if (rm && mc.meshAssetUUID.is_valid()) {
+				if (rm->has_resource<Mesh>(mc.meshAssetUUID)) {
+					mc.mesh = rm->get_handle<Mesh>(mc.meshAssetUUID);
+				}
+				else {
+					std::filesystem::path cookedPath = std::filesystem::path(".cache/meshes") / (mc.meshAssetUUID.to_string() + ".gmesh");
+					if (const auto* meshMeta = AssetRegistry::get().get_metadata(mc.meshAssetUUID)) {
+						if (!meshMeta->cookedPath.empty())
+							cookedPath = meshMeta->cookedPath;
+					}
+					mc.mesh = rm->load_by_uuid<Mesh>(mc.meshAssetUUID, mc.meshAssetUUID.to_string(), cookedPath);
+				}
 			}
 		}
 		});
@@ -121,8 +131,12 @@ void ComponentRegistry::init_default_components()
 
 			if (rm && matc.materialAssetUUID.is_valid()) {
 				if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(matc.materialAssetUUID)) {
+					std::filesystem::path matPath = meta->virtualPath;
+					if (matPath.extension() != ".mat") {
+						matPath = meta->virtualPath.parent_path() / "materials" / (meta->name + ".mat");
+					}
 					MaterialAssetData matData{};
-					if (AssetSerializer::load_material_file(meta->virtualPath, matData)) {
+					if (AssetSerializer::load_material_file(matPath, matData)) {
 						matc.material = AssetSerializer::build_material_instance(matData, *rm);
 						matc.alphaMode = matData.alphaMode;
 						matc.doubleSided = matData.doubleSided;
