@@ -55,13 +55,13 @@ public:
 	virtual void on_attach(EngineContext& ctx) { _ctx = &ctx; } // called when the layer is pushed onto the layerstack
 	virtual void on_detach() { _ctx = nullptr; } // called when the layer is removed or layerstack is destroyed
 
-	virtual void on_begin_frame(uint64_t frameNumber) {} // called at the start of each frame
-	virtual void on_fixed_update(float fixedDeltaTime) {} // caled in a fixed timestep
-	virtual void on_update(float deltaTime) {} // called once per frame
-	virtual void on_imgui_render() {} // optional hook for layers to draw debug imgui
-	virtual void on_end_frame() {} // called at the end of each frame
+	virtual void on_begin_frame(uint64_t frameNumber) { /* called at the start of each frame */ } 
+	virtual void on_fixed_update(float fixedDeltaTime) {/* caled in a fixed timestep */ } 
+	virtual void on_update(float deltaTime) { /* called once per frame */ } 
+	virtual void on_imgui_render() { /* optional hook for layers to draw debug imgui */ } 
+	virtual void on_end_frame() {/* called at the end of each frame */ } 
 
-	virtual void on_event(EngineEvent& event) {} // called for every polled os/input event
+	virtual void on_event(EngineEvent& event) { /* called for every polled os/input event */ } 
 
 	const std::string& get_name() const noexcept { return _name; }
 	bool is_enabled() const noexcept { return _enabled; }

@@ -18,8 +18,8 @@ struct EditorContext
 	entt::entity selectedEntity;
 	UUID selectedAssetUUID{};
 
-	bool isViewportHovered{ false };
-	bool isViewportFocused{ false };
+	bool viewportHovered{ false };
+	bool viewportFocused{ false };
 	VkExtent2D viewportExtent{ 1280, 720 };
 
 	void select_entity(entt::entity e) noexcept

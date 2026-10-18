@@ -34,11 +34,14 @@ void Swapchain::destroy_swapchain()
 	_renderSemaphores.clear();
 
 	vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+	_swapchain = VK_NULL_HANDLE;
 
 	// destroy swapchain resources
 	for (VkImageView imageView : _swapchainImageViews) {
 		vkDestroyImageView(_device, imageView, nullptr);
 	}
+	_swapchainImageViews.clear();
+	_swapchainImages.clear();
 }
 
 void Swapchain::create_swapchain(uint32_t width, uint32_t height)

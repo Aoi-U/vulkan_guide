@@ -20,6 +20,7 @@ target_link_libraries(app PRIVATE
     resources
     SDL2::SDL2
     imgui
+	scene
 )
 
 set_target_properties(app PROPERTIES

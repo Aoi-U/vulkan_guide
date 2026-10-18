@@ -23,7 +23,7 @@ public:
 	T* push_layer(EngineContext& ctx, Args&&... args)
 	{
 		static_assert(std::is_base_of_v<ILayer, T>, "T must derive from ILayer");
-		auto Layer = std::make_unique<T>(std::forward<Args>(args)...);
+		auto layer = std::make_unique<T>(std::forward<Args>(args)...);
 		T* ptr = layer.get();
 		_layers.emplace(_layers.begin() + static_cast<std::ptrdiff_t>(_layerInsertIndex), std::move(layer));
 		_layerInsertIndex++;

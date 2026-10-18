@@ -176,6 +176,7 @@ public:
 	std::vector<std::unique_ptr<RenderFeature>>& get_features() { return _features; }
 	const std::vector<std::unique_ptr<RenderFeature>>& get_features() const { return _features; }
 
+	uint32_t get_frame_number() const { return _frameNumber; }
 	VkExtent2D get_swapchain_extent() const { return _swapchain.get_extent(); }
 	VkExtent2D get_draw_extent() const { return _drawExtent; }
 	VkImageView get_current_swapchain_image_view() const { return _swapchain.get_image_views()[_swapchainImageIndex]; }

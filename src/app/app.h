@@ -1,45 +1,40 @@
 #pragma once
+
 #include <window/window.h>
-//#include <graphics/vk_engine.h>
 #include <graphics/VulkanCore.h>
 #include <graphics/Renderer.h>
 #include <resources/ResourceManager.h>
-#include <app/camera.h>
-#include <memory>
+#include <core/layer/EngineContext.h>
+#include <core/layer/LayerStack.h>
 #include <entt.hpp>
-#include <core/Components.h>
-#include <app/Editor.h>
-#include <app/editor/GuiRenderer.h>
-#include <core/Events.h>
+#include <cstdint>
+
+class EditorLayer;
 
 class App
 {
 public:
-	App();
+	App() = default;
+	~App() = default;
 
-	void init();
+	void init(EngineRuntimeMode runtimeMode = EngineRuntimeMode::Editor);
 	void run(); // main loop
 	void cleanup();
-	
-	void on_window_close(const Events::WindowCloseEvent& event);
-	void on_load_environment(const Events::LoadEnvironmentEvent& event);
-	void on_reset_environment(const Events::ResetEnvironmentEvent& event);
+
+	EngineContext& get_engine_context() noexcept { return _engineCtx; }
+	LayerStack& get_layer_stack() noexcept { return _layerStack; }
 
 private:
-	void update_scene(float deltaTime);
+  Window _window;
+  VulkanCore _vulkanCore;
+  ResourceManager _resourceManager;
+  Renderer _renderer;
 
-	std::unique_ptr<Window> _window;
-	std::unique_ptr<ResourceManager> _resourceManager;
-	std::unique_ptr<VulkanCore> _vulkanCore;
-	std::unique_ptr<Renderer> _renderer;
-	std::unique_ptr<Editor> _editor;
-	std::unique_ptr<GuiRenderer> _guiRenderer;
+  entt::registry _registry;
+  entt::dispatcher _dispatcher;
+  GPUSceneData _sceneData{};
 
-	entt::registry _registry;
-
-	Camera _camera;
-	GPUSceneData _sceneData;
-
-	float _deltaTime{ 0.f };
-	float _frameTime{ 0.f };
+  EngineContext _engineCtx{};
+  LayerStack _layerStack;
+  EditorLayer* _editorLayer{ nullptr };
 };

@@ -22,16 +22,16 @@ public:
 
 private:
 	// vulkan handles
-	VkPhysicalDevice _chosenGPU;
-	VkDevice _device;
-	VkSurfaceKHR _surface;
+	VkPhysicalDevice _chosenGPU{ VK_NULL_HANDLE };
+	VkDevice _device{ VK_NULL_HANDLE };
+	VkSurfaceKHR _surface{ VK_NULL_HANDLE };
 
 	// swapchain handles
-	VkSwapchainKHR _swapchain;
-	VkFormat _swapchainImageFormat;
+	VkSwapchainKHR _swapchain{ VK_NULL_HANDLE };
+	VkFormat _swapchainImageFormat{ VK_FORMAT_UNDEFINED };
 	std::vector<VkImage> _swapchainImages;
 	std::vector<VkImageView> _swapchainImageViews;
 	std::vector<VkSemaphore> _renderSemaphores;
-	VkExtent2D _swapchainExtent;
+	VkExtent2D _swapchainExtent{ 0, 0 };
 
 };

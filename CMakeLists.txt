@@ -20,8 +20,8 @@ add_subdirectory(src/core)
 add_subdirectory(src/window)
 add_subdirectory(src/resources)
 add_subdirectory(src/graphics)
-add_subdirectory(src/app)
 add_subdirectory(src/scene)
+add_subdirectory(src/app)
 
 # Shader Compilation Target
 find_program(GLSL_VALIDATOR glslangValidator HINTS /usr/bin /usr/local/bin $ENV{VULKAN_SDK}/Bin/ $ENV{VULKAN_SDK}/Bin32/ $ENV{VULKAN_SDK}/bin/)

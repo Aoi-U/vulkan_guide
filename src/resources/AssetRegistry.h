@@ -43,7 +43,8 @@ public:
 	void set_gpu_size(const UUID& uuid, uint64_t gpuBytes);
 	ResourceState get_resource_state(const UUID& uuid) const;
 
-	std::vector<AssetMetadata> get_assets_by_type(AssetType type) const;
+	std::vector<AssetMetadata> get_assets_by_type(AssetType type, bool includeSubAssets = true) const;
+	std::vector<AssetMetadata> get_all_assets_combined(bool includeSubAssets = false) const;
 	const std::vector<AssetMetadata>& get_all_assets() const { return _assetListCache; }
 
 	void print_manifest() const;

@@ -2,6 +2,7 @@
 
 #include <graphics/Renderer.h>
 #include <window/window.h>
+#include <core/Profiler.h>
 
 void RenderLayer::on_attach(EngineContext& ctx)
 {

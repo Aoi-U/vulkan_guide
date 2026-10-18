@@ -2,7 +2,10 @@
 
 #include <core/layer/ILayer.h>
 #include <app/editor/EditorContext.h>
+#include <app/editor/ContentBrowserPanel.h>
+#include <app/editor/InspectorPanel.h>
 #include <app/editor/GuiRenderer.h>
+#include <scene/SceneSerializer.h>
 #include <functional>
 #include <vector>
 
@@ -28,16 +31,22 @@ public:
 	GuiRenderer& get_gui_renderer() noexcept { return _guiRenderer; }
 	EditorContext& get_editor_context() noexcept { return _editorCtx; }
 	const EditorContext& get_editor_context() const noexcept { return _editorCtx; }
-
 	VkDescriptorSet get_scene_color_descriptor() const noexcept { return _sceneColorDescriptor; }
-	VkDescriptorSet get_image_descriptor(VkImageView view, VkSampler sampler = VK_NULL_HANDLE, VkImageLayout layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-	{
-		return _guiRenderer.get_image_descriptor(view, sampler, layout);
-	}
+	
 
 private:
+	void draw_dockspace_and_menubar();
+	void draw_viewport_panel();
+	void draw_hierarchy_panel();
+	void draw_entity_node(entt::entity entity);
+	void draw_renderer_and_metrics_panel();
+
 	GuiRenderer _guiRenderer;
 	EditorContext _editorCtx;
+	ContentBrowserPanel _contentBrowserPanel;
+	InspectorPanel _inspectorPanel;
+	SceneEnvironmentSettings _sceneEnvSettings{};
+
 	VkDescriptorSet _sceneColorDescriptor{ VK_NULL_HANDLE };
 	bool _imguiFrameActive{ false };
 	std::vector<ImguiDrawCallback> _panelCallbacks;

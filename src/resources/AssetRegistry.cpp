@@ -388,17 +388,48 @@ ResourceState AssetRegistry::get_resource_state(const UUID & uuid) const
   return (it != _assetsByUUID.end()) ? it->second.state : ResourceState::Unloaded;
 }
 
-std::vector<AssetMetadata> AssetRegistry::get_assets_by_type(AssetType type) const
+std::vector<AssetMetadata> AssetRegistry::get_assets_by_type(AssetType type, bool includeSubAssets) const
 {
   std::shared_lock lock(_mutex);
   std::vector<AssetMetadata> filtered;
-  for (const AssetMetadata& asset : _assetListCache) {
-    if (asset.type == type) {
-			filtered.push_back(asset);
+  
+  if (!includeSubAssets) {
+    for (const AssetMetadata& asset : _assetListCache) {
+      if (asset.type == type) {
+        filtered.push_back(asset);
+      }
     }
+  }
+  else {
+    for (const auto& [_, asset] : _assetsByUUID) {
+      if (asset.type == type) {
+        filtered.push_back(asset);
+      }
+    }
+    std::sort(filtered.begin(), filtered.end(), [](const AssetMetadata& a, const AssetMetadata& b) {
+      return a.name < b.name;
+      });
   }
   
   return filtered;
+}
+
+std::vector<AssetMetadata> AssetRegistry::get_all_assets_combined(bool includeSubAssets) const
+{
+  std::shared_lock lock(_mutex);
+  if (!includeSubAssets) {
+    return _assetListCache;
+  }
+
+  std::vector<AssetMetadata> result;
+  result.reserve(_assetsByUUID.size());
+  for (const auto& [_, meta] : _assetsByUUID) {
+    result.push_back(meta);
+  }
+  std::sort(result.begin(), result.end(), [](const AssetMetadata& a, const AssetMetadata& b) {
+    return a.name < b.name;
+    });
+  return result;
 }
 
 void AssetRegistry::print_manifest() const

@@ -1,341 +1,432 @@
 #include "app/editor/InspectorPanel.h"
-#include "app/editor/ComponentRegistry.h"
-#include <resources/AssetRegistry.h>
 #include <core/Components.h>
-#include <resources/Model.h>
-#include <graphics/utils/UIWidgets.h>
+#include <scene/ComponentRegistry.h>
 #include <graphics/Renderer.h>
+#include <app/editor/UIWidgets.h>
+#include <resources/AssetRegistry.h>
+#include <resources/AssetImporter.h>
+#include <resources/DefaultResources.h>
+#include <imgui.h>
 #include <glm/gtc/type_ptr.hpp>
-#include <array>
+#include <fmt/core.h>
+#include <fstream>
 
-InspectorPanel::InspectorPanel()
+void InspectorPanel::on_imgui_render(EngineContext& ctx, EditorContext& editorCtx)
 {
-  register_engine_components();
+	if (!ImGui::Begin("Inspector")) {
+		ImGui::End();
+		return;
+	}
+
+	if (editorCtx.inspectorMode == InspectorMode::Entity) {
+		draw_entity_inspector(ctx, editorCtx);
+	}
+	else if (editorCtx.inspectorMode == InspectorMode::DiskAsset) {
+		draw_disk_asset_inspector(ctx, editorCtx);
+	}
+	else {
+		ImGui::TextDisabled("Nothing Selected");
+	}
+
+	ImGui::End();
 }
 
-void InspectorPanel::on_draw(EditorContext& ctx)
+void InspectorPanel::draw_entity_inspector(EngineContext & ctx, EditorContext & editorCtx)
 {
-  if (!is_open) return;
+  if (!ctx.activeRegistry) return;
+  entt::registry& registry = *ctx.activeRegistry;
+  entt::entity entity = editorCtx.selectedEntity;
 
-  ImGui::Begin(get_name(), &is_open);
-  if (ctx.selectedEntity == entt::null || !ctx.registry.valid(ctx.selectedEntity)) {
-    ImGui::TextDisabled("No entity selected.");
-    ImGui::End();
+  if (entity == entt::null || !registry.valid(entity)) {
+    editorCtx.clear_selection();
     return;
   }
 
-  const auto& entries = ComponentRegistry::get().get_entries();
+  // TagComponent and IDComponent
+  if (auto* tagComp = registry.try_get<TagComponent>(entity)) {
+    char tagBuf[256]{};
+    std::snprintf(tagBuf, sizeof(tagBuf), "%s", tagComp->tag.c_str());
+    if (ImGui::InputText("Tag", tagBuf, sizeof(tagBuf))) {
+      tagComp->tag = tagBuf;
+    }
+  }
 
-  // add component dropdown
-  if (ImGui::Button("Add Component")) {
+  if (const auto* idComp = registry.try_get<IDComponent>(entity)) {
+    ImGui::TextDisabled("Entity UUID: %s", idComp->id.to_string().c_str());
+  }
+
+  ImGui::Separator();
+
+  // TransformComponent
+  if (auto* tc = registry.try_get<TransformComponent>(entity)) {
+    if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+      bool changed = false;
+      changed |= UIWidgets::draw_vec3_control("Position", tc->position, glm::vec3(0.0f));
+      changed |= UIWidgets::draw_vec3_control("Rotation", tc->rotation, glm::vec3(0.0f), 0.5f);
+      changed |= UIWidgets::draw_vec3_control("Scale", tc->scale, glm::vec3(1.0f), 0.05f, &_uniformScaleLocked);
+      if (changed) {
+        tc->isDirty = true;
+        if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+      }
+    }
+  }
+
+  // MeshComponent
+  if (auto* mc = registry.try_get<MeshComponent>(entity)) {
+    if (ImGui::CollapsingHeader("Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (ImGui::Checkbox("Visible", &mc->visible)) {
+        if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+      }
+
+      UUID meshUUID = mc->meshAssetUUID.is_valid()
+        ? mc->meshAssetUUID
+        : (mc->mesh.is_valid() ? mc->mesh.get_uuid() : UUID::null());
+
+      if (UIWidgets::draw_asset_slot("Mesh Asset (.gmesh)", meshUUID, AssetType::Mesh, true)) {
+        mc->meshAssetUUID = meshUUID;
+        if (meshUUID.is_valid() && ctx.resourceManager) {
+          std::filesystem::path cookedPath = std::filesystem::path(".cache/meshes") / (meshUUID.to_string() + ".gmesh");
+          if (const auto* meta = AssetRegistry::get().get_metadata(meshUUID)) {
+            if (!meta->cookedPath.empty()) cookedPath = meta->cookedPath;
+          }
+          auto newMesh = ctx.resourceManager->load_by_uuid<Mesh>(meshUUID, meshUUID.to_string(), cookedPath);
+          mc->set_mesh(newMesh);
+          if (newMesh.is_valid()) {
+            mc->bounds = newMesh->get_bounds();
+          }
+        }
+        else {
+          mc->set_mesh({});
+        }
+        if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+      }
+
+      if (mc->mesh.is_valid()) {
+        ImGui::TextDisabled("Vertices: %u | Indices (LOD 0): %u | LODs: %u",
+          mc->mesh->get_vertex_count(),
+          mc->mesh->get_index_count(0),
+          mc->mesh->get_lod_count());
+      }
+    }
+  }
+
+  // MaterialComponent 
+  if (auto* matc = registry.try_get<MaterialComponent>(entity)) {
+    if (ImGui::CollapsingHeader("Material", ImGuiTreeNodeFlags_DefaultOpen)) {
+      if (UIWidgets::draw_asset_slot("Material Asset (.mat)", matc->materialAssetUUID, AssetType::Material, true)) {
+        if (matc->materialAssetUUID.is_valid() && ctx.resourceManager) {
+          if (const auto* meta = AssetRegistry::get().get_metadata(matc->materialAssetUUID)) {
+            MaterialAssetData matData{};
+            if (AssetSerializer::load_material_file(meta->virtualPath, matData)) {
+              matc->material = AssetSerializer::build_material_instance(matData, *ctx.resourceManager);
+              matc->alphaMode = matData.alphaMode;
+              matc->doubleSided = matData.doubleSided;
+              matc->isDirty = true;
+            }
+          }
+        }
+        else {
+          matc->material = std::make_shared<MaterialInstance>(DefaultResources::get().defaultPBRTemplate);
+          matc->isDirty = true;
+        }
+        if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+      }
+
+      if (ImGui::Checkbox("Double Sided", &matc->doubleSided)) {
+        if (matc->material) matc->material->set_double_sided(matc->doubleSided);
+        matc->isDirty = true;
+        if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+      }
+
+      const char* alphaModes[] = { "Opaque", "Mask", "Blend" };
+      int currentAlpha = static_cast<int>(matc->alphaMode);
+      if (ImGui::Combo("Alpha Mode", &currentAlpha, alphaModes, IM_ARRAYSIZE(alphaModes))) {
+        matc->alphaMode = static_cast<AlphaMode>(currentAlpha);
+        if (matc->material) matc->material->set_alpha_mode(matc->alphaMode);
+        matc->isDirty = true;
+        if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+      }
+
+      if (matc->materialAssetUUID.is_valid()) {
+        if (ImGui::Button("Edit .mat Asset in Inspector")) {
+          editorCtx.select_disk_asset(matc->materialAssetUUID);
+        }
+      }
+    }
+  }
+
+  // PointLightComponent
+  if (auto* pl = registry.try_get<PointLightComponent>(entity)) {
+    if (ImGui::CollapsingHeader("Point Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::Checkbox("Visible##PL", &pl->visible);
+      ImGui::ColorEdit3("Color##PL", glm::value_ptr(pl->color));
+      ImGui::DragFloat("Intensity##PL", &pl->intensity, 1.0f, 0.0f, 10000.0f);
+      ImGui::DragFloat("Radius##PL", &pl->radius, 0.2f, 0.1f, 500.0f);
+      ImGui::Checkbox("Cast Shadow##PL", &pl->castShadow);
+    }
+  }
+
+  // DirectionalLightComponent
+  if (auto* dl = registry.try_get<DirectionalLightComponent>(entity)) {
+    if (ImGui::CollapsingHeader("Directional Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+      ImGui::Checkbox("Visible##DL", &dl->visible);
+      ImGui::ColorEdit3("Color##DL", glm::value_ptr(dl->color));
+      ImGui::DragFloat("Intensity##DL", &dl->intensity, 0.1f, 0.0f, 100.0f);
+      UIWidgets::draw_vec3_control("Direction", dl->direction, glm::vec3(0.4f, 1.0f, 0.3f), 0.02f);
+      ImGui::DragFloat("Shadow Extent", &dl->shadowExtent, 0.5f, 5.0f, 250.0f);
+    }
+  }
+
+  ImGui::Separator();
+
+  // Add Component button
+  ComponentRegistry::get().init_default_components();
+  if (ImGui::Button("+ Add Component", ImVec2(-1.0f, 0.0f))) {
     ImGui::OpenPopup("AddComponentPopup");
   }
 
   if (ImGui::BeginPopup("AddComponentPopup")) {
-    for (const auto& entry : entries) {
-      if (!entry.has(ctx.registry, ctx.selectedEntity)) {
+    for (const auto& entry : ComponentRegistry::get().get_entries()) {
+      if (!entry.hasComponent(registry, entity)) {
         if (ImGui::MenuItem(entry.name.c_str())) {
-          entry.add(ctx.registry, ctx.selectedEntity);
+          entry.addComponent(registry, entity);
+          if (ctx.renderer) ctx.renderer->mark_scene_dirty();
           ImGui::CloseCurrentPopup();
         }
       }
     }
     ImGui::EndPopup();
   }
-  ImGui::Separator();
+}
 
-  // component UI loop with collapsing headers and context removal
-  for (const auto& entry : entries) {
-    if (!entry.has(ctx.registry, ctx.selectedEntity)) continue;
+void InspectorPanel::draw_disk_asset_inspector(EngineContext & ctx, EditorContext & editorCtx)
+{
+  const AssetMetadata* meta = AssetRegistry::get().get_metadata(editorCtx.selectedAssetUUID);
+  if (!meta) {
+    editorCtx.clear_selection();
+    return;
+  }
 
-    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_Framed | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
+  // reload cached editor structs when selection changes
+  if (_loadedDiskAssetUUID != meta->uuid) {
+    _loadedDiskAssetUUID = meta->uuid;
+    _hasValidMeshHeader = false;
 
-    bool headerOpen = ImGui::TreeNodeEx(entry.name.c_str(), flags);
-    bool shouldRemove = false;
-
-    if (entry.removable && ImGui::BeginPopupContextItem()) {
-      if (ImGui::MenuItem("Remove Component")) {
-        shouldRemove = true;
+    if (meta->type == AssetType::Material) {
+      _editingMaterialData = MaterialAssetData{};
+      _editingMaterialData.uuid = meta->uuid;
+      _editingMaterialData.name = meta->name;
+      AssetSerializer::load_material_file(meta->virtualPath, _editingMaterialData);
+    }
+    else if (meta->type == AssetType::Texture || meta->type == AssetType::EnvironmentHDR) {
+      _editingTextureSettings = meta->textureSettings;
+    }
+    else if (meta->type == AssetType::Mesh || meta->type == AssetType::Model) {
+      _editingMeshSettings = meta->meshSettings;
+      if (!meta->cookedPath.empty() && std::filesystem::exists(meta->cookedPath)) {
+        std::ifstream in(meta->cookedPath, std::ios::binary);
+        if (in.is_open()) {
+          in.read(reinterpret_cast<char*>(&_inspectedMeshHeader), sizeof(CookedMeshHeader));
+          _hasValidMeshHeader = (in.good() && _inspectedMeshHeader.magic == GMESH_MAGIC);
+        }
       }
-      ImGui::EndPopup();
-    }
-
-    if (headerOpen) {
-      entry.draw(ctx.registry, ctx.selectedEntity, ctx);
-      ImGui::TreePop();
-      ImGui::Spacing();
-    }
-
-    if (shouldRemove) {
-      entry.remove(ctx.registry, ctx.selectedEntity);
     }
   }
 
-  ImGui::End();
+  // header Info
+  ImGui::Text("Asset: %s", meta->name.c_str());
+  ImGui::SameLine();
+  UIWidgets::draw_residency_badge(meta->state, meta->gpuSizeBytes);
+  ImGui::TextDisabled("Type: %s", AssetUtils::asset_type_to_string(meta->type).data());
+  ImGui::TextDisabled("UUID: %s", meta->uuid.to_string().c_str());
+  ImGui::TextDisabled("Disk Path: %s", meta->virtualPath.generic_string().c_str());
+  if (!meta->cookedPath.empty()) {
+    ImGui::TextDisabled("Cooked Path: %s", meta->cookedPath.generic_string().c_str());
+  }
+  ImGui::Separator();
+
+  if (meta->type == AssetType::Material) {
+    draw_material_asset_inspector(*meta, ctx);
+  }
+  else if (meta->type == AssetType::Texture || meta->type == AssetType::EnvironmentHDR) {
+    draw_texture_asset_inspector(*meta, ctx);
+  }
+  else if (meta->type == AssetType::Mesh || meta->type == AssetType::Model) {
+    draw_mesh_asset_inspector(*meta, ctx);
+  }
+  else {
+    ImGui::TextDisabled("Disk size: %.2f KB", static_cast<double>(meta->diskSizeBytes) / 1024.0);
+  }
 }
 
-void InspectorPanel::register_engine_components()
+void InspectorPanel::draw_material_asset_inspector(const AssetMetadata & meta, EngineContext & ctx)
 {
-  auto& reg = ComponentRegistry::get();
+  ImGui::TextUnformatted("PBR Material Properties (.mat)");
+  ImGui::Spacing();
 
-  // Tag Component
-  reg.register_component<TagComponent>("Tag", [](TagComponent& tagComp, EditorContext&) {
-    std::array<char, 256> buffer{};
-    strncpy(buffer.data(), tagComp.tag.c_str(), sizeof(buffer) - 1);
-    if (ImGui::InputText("##TagInput", buffer.data(), sizeof(buffer))) {
-      tagComp.tag = std::string(buffer.data());
-    }
-    }, /* removable = */ false);
+  const char* alphaModes[] = { "Opaque", "Mask", "Blend" };
+  int currentAlpha = static_cast<int>(_editingMaterialData.alphaMode);
+  if (ImGui::Combo("Alpha Mode", &currentAlpha, alphaModes, IM_ARRAYSIZE(alphaModes))) {
+    _editingMaterialData.alphaMode = static_cast<AlphaMode>(currentAlpha);
+    _editingMaterialData.passType = (_editingMaterialData.alphaMode == AlphaMode::Blend)
+      ? MaterialPassType::Transparent
+      : MaterialPassType::Opaque;
+  }
 
-  // Transform Component
-  reg.register_component<TransformComponent>("Transform", [this](TransformComponent& tc, EditorContext&) {
-    if (UIWidgets::DrawVec3Control("Position", tc.position, glm::vec3(0.0f), 0.1f))
-      tc.isDirty = true;
-    if (UIWidgets::DrawVec3Control("Rotation", tc.rotation, glm::vec3(0.0f), 0.5f))
-      tc.isDirty = true;
-    if (UIWidgets::DrawVec3Control("Scale", tc.scale, glm::vec3(1.0f), 0.05f, &_lockScale))
-      tc.isDirty = true;
-    });
+  ImGui::Checkbox("Double Sided", &_editingMaterialData.doubleSided);
+  ImGui::ColorEdit4("Base Color Factor", glm::value_ptr(_editingMaterialData.colorFactors));
+  ImGui::SliderFloat("Metallic Factor", &_editingMaterialData.metalRoughFactors.x, 0.0f, 1.0f);
+  ImGui::SliderFloat("Roughness Factor", &_editingMaterialData.metalRoughFactors.y, 0.04f, 1.0f);
+  ImGui::SliderFloat("Occlusion Strength", &_editingMaterialData.occlusionStrength, 0.0f, 1.0f);
+  ImGui::SliderFloat("Normal Scale", &_editingMaterialData.normalScale, 0.0f, 3.0f);
+  ImGui::SliderFloat("Transmission Factor", &_editingMaterialData.transmissionFactor, 0.0f, 1.0f);
+  ImGui::ColorEdit3("Emissive Color", glm::value_ptr(_editingMaterialData.emissiveFactor));
+  ImGui::DragFloat("Emissive Strength", &_editingMaterialData.emissiveStrength, 0.1f, 0.0f, 50.0f);
 
-  // mesh component
-  reg.register_component<MeshComponent>("Mesh", [](MeshComponent& mc, EditorContext& ctx) {
-    if (ImGui::Checkbox("Visible", &mc.visible)) {
-      ctx.renderer.mark_scene_dirty();
-    }
+  ImGui::Separator();
+  ImGui::TextUnformatted("Texture Slots (UUID 0 = Default Fallback)");
+  UIWidgets::draw_asset_slot("Albedo Texture", _editingMaterialData.albedoTextureUUID, AssetType::Texture, true);
+  UIWidgets::draw_asset_slot("Normal Texture", _editingMaterialData.normalTextureUUID, AssetType::Texture, true);
+  UIWidgets::draw_asset_slot("MetallicRoughness Texture", _editingMaterialData.metalRoughTextureUUID, AssetType::Texture, true);
+  UIWidgets::draw_asset_slot("Occlusion Texture", _editingMaterialData.occlusionTextureUUID, AssetType::Texture, true);
+  UIWidgets::draw_asset_slot("Emissive Texture", _editingMaterialData.emissiveTextureUUID, AssetType::Texture, true);
 
-    std::vector<std::string> loadedMeshes = ctx.resourceManager.get_loaded_resources<Mesh>();
-    std::string currentMeshId = mc.mesh.is_valid() ? mc.mesh.get_id() : "None";
-
-    if (ImGui::BeginCombo("Mesh Asset", currentMeshId.c_str())) {
-      if (ImGui::Selectable("None", !mc.mesh.is_valid())) {
-        mc.mesh = ResourceHandle<Mesh>();
-        mc.startIndex = 0;
-        mc.count = 0;
-      }
-      for (const auto& meshId : loadedMeshes) {
-        bool isSelected = (currentMeshId == meshId);
-        if (ImGui::Selectable(meshId.c_str(), isSelected)) {
-          mc.mesh = ResourceHandle<Mesh>(meshId, &ctx.resourceManager);
-          if (mc.mesh.is_valid()) {
-            mc.startIndex = 0;
-            mc.count = mc.mesh->get_index_count();
+  ImGui::Spacing();
+  if (ImGui::Button("Save Material (.mat) & Hot-Update Scene", ImVec2(-1.0f, 32.0f))) {
+    if (AssetSerializer::save_material_file(meta.virtualPath, _editingMaterialData)) {
+      // hot uupdate any active entity in the scene referencing this material UUID
+      if (ctx.activeRegistry && ctx.resourceManager) {
+        auto newInstance = AssetSerializer::build_material_instance(_editingMaterialData, *ctx.resourceManager);
+        auto view = ctx.activeRegistry->view<MaterialComponent>();
+        for (auto [entity, matComp] : view.each()) {
+          if (matComp.materialAssetUUID == meta.uuid) {
+            matComp.material = newInstance;
+            matComp.alphaMode = _editingMaterialData.alphaMode;
+            matComp.doubleSided = _editingMaterialData.doubleSided;
+            matComp.isDirty = true;
           }
-          ctx.renderer.mark_scene_dirty();
         }
-        if (isSelected) ImGui::SetItemDefaultFocus();
-      }
-      ImGui::EndCombo();
-    }
-
-    if (ImGui::BeginDragDropTarget()) {
-      if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_MESH_ID")) {
-        std::string draggedId = (const char*)payload->Data;
-        mc.mesh = ResourceHandle<Mesh>(draggedId, &ctx.resourceManager);
-        if (mc.mesh.is_valid()) {
-          mc.startIndex = 0;
-          mc.count = mc.mesh->get_index_count();
-        }
-        ctx.renderer.mark_scene_dirty();
-      }
-      ImGui::EndDragDropTarget();
-    }
-
-    if (mc.mesh.is_valid()) {
-      ImGui::Separator();
-      ImGui::Text("Vertices: %u", mc.mesh->get_vertex_count());
-      ImGui::Text("Device Address: 0x%llx", (unsigned long long)mc.mesh->get_vertex_buffer_address());
-
-      int startIdx = static_cast<int>(mc.startIndex);
-      int count = static_cast<int>(mc.count);
-
-      if (ImGui::DragInt("Start Index", &startIdx, 1, 0, mc.mesh->get_index_count())) {
-        mc.startIndex = static_cast<uint32_t>(std::max(0, startIdx));
-        ctx.renderer.mark_scene_dirty();
-      }
-      if (ImGui::DragInt("Count", &count, 1, 0, mc.mesh->get_index_count() - mc.startIndex)) {
-        mc.count = static_cast<uint32_t>(std::max(0, count));
-        ctx.renderer.mark_scene_dirty();
-      }
-
-      if (ImGui::Button("Reset to Full Mesh")) {
-        mc.startIndex = 0;
-        mc.count = mc.mesh->get_index_count();
-        ctx.renderer.mark_scene_dirty();
-      }
-
-      ImGui::Spacing();
-      ImGui::Text("Bounds:");
-      ImGui::DragFloat3("Origin", &mc.bounds.origin.x, 0.1f);
-      ImGui::DragFloat("Radius", &mc.bounds.sphereRadius, 0.1f);
-      ImGui::DragFloat3("Extents", &mc.bounds.extents.x, 0.1f);
-    }
-    else {
-      ImGui::TextDisabled("No geometry attached.");
-    }
-    });
-
-  // material component 
-  reg.register_component<MaterialComponent>("Material", [](MaterialComponent& mat, EditorContext& ctx) {
-    bool dirty = false;
-
-    const char* alphaModes[] = { "Opaque", "Mask", "Blend" };
-    int currentAlpha = static_cast<int>(mat.alphaMode);
-    if (ImGui::Combo("Alpha Mode", &currentAlpha, alphaModes, 3)) {
-      mat.alphaMode = static_cast<AlphaMode>(currentAlpha);
-      dirty = true;
-    }
-
-    if (ImGui::Checkbox("Double Sided", &mat.doubleSided)) dirty = true;
-
-    if (mat.material) {
-      ImGui::Separator();
-      const auto& reflection = mat.material->get_template()->get_reflection();
-      auto paramData = mat.material->get_parameter_data();
-
-      // reflection lookup helper 
-      auto get_var = [&](const std::string& name) -> const ReflectedVariable* {
-        auto it = reflection.materialVariablesByName.find(name);
-        if (it != reflection.materialVariablesByName.end()) return &it->second;
-        it = reflection.materialVariablesByName.find("materials." + name);
-        if (it != reflection.materialVariablesByName.end()) return &it->second;
-        return nullptr;
-        };
-
-      //  parse and manipulate reflected blocks into standard UI controls
-      if (auto* var = get_var("colorFactors")) {
-        glm::vec4 color;
-        std::memcpy(&color, paramData.data() + var->offset, 16);
-        if (ImGui::ColorEdit4("Albedo Color", glm::value_ptr(color))) {
-          mat.material->set_parameter("colorFactors", color);
-          dirty = true;
+        if (ctx.renderer) {
+          ctx.renderer->mark_scene_dirty();
         }
       }
-
-      if (auto* var = get_var("metalRoughFactors")) {
-        glm::vec4 mr;
-        std::memcpy(&mr, paramData.data() + var->offset, 16);
-        bool mrDirty = false;
-        if (ImGui::SliderFloat("Metallic", &mr.x, 0.0f, 1.0f)) mrDirty = true;
-        if (ImGui::SliderFloat("Roughness", &mr.y, 0.0f, 1.0f)) mrDirty = true;
-        if (mrDirty) {
-          mat.material->set_parameter("metalRoughFactors", mr);
-          dirty = true;
-        }
-      }
-
-      if (auto* var = get_var("emissiveFactor")) {
-        glm::vec4 emissive;
-        std::memcpy(&emissive, paramData.data() + var->offset, 16);
-        bool emDirty = false;
-        if (ImGui::ColorEdit3("Emissive Color", glm::value_ptr(emissive))) emDirty = true;
-        if (ImGui::DragFloat("Emissive Intensity", &emissive.w, 0.1f, 0.0f, 100.0f, "%.1f")) emDirty = true;
-        if (emDirty) {
-          mat.material->set_parameter("emissiveFactor", emissive);
-          dirty = true;
-        }
-      }
-
-      if (auto* var = get_var("extraFactors")) {
-        glm::vec4 extra;
-        std::memcpy(&extra, paramData.data() + var->offset, 16);
-        bool exDirty = false;
-        if (ImGui::SliderFloat("Occlusion Strength", &extra.x, 0.0f, 1.0f)) exDirty = true;
-        if (ImGui::SliderFloat("Normal Strength", &extra.y, 0.0f, 2.0f)) exDirty = true;
-        if (exDirty) {
-          mat.material->set_parameter("extraFactors", extra);
-          dirty = true;
-        }
-      }
-
-      ImGui::Separator();
-      ImGui::Text("Textures");
-
-      auto draw_tex_selector = [&](const char* label, const std::string& slotName) {
-        ImGui::PushID(label);
-        ResourceHandle<Texture> tex = mat.material->get_texture(slotName);
-        std::string current = tex.is_valid() ? tex.get_id() : "None";
-
-        if (ImGui::BeginCombo(label, current.c_str())) {
-          if (ImGui::Selectable("None", !tex.is_valid())) {
-            mat.material->set_texture(slotName, ResourceHandle<Texture>());
-            dirty = true;
-          }
-
-          // show dynamically loaded textures
-          std::vector<std::string> loadedTextures = ctx.resourceManager.get_loaded_resources<Texture>();
-          for (const auto& texName : loadedTextures) {
-            if (ImGui::Selectable(texName.c_str(), current == texName)) {
-              mat.material->set_texture(slotName, ctx.resourceManager.get_handle<Texture>(texName));
-              dirty = true;
-            }
-          }
-
-          // Show unloaded textures directly from disk via AssetRegistry
-          for (const auto& asset : AssetRegistry::get().get_assets_by_type(AssetType::Texture)) {
-            if (std::find(loadedTextures.begin(), loadedTextures.end(), asset.id) == loadedTextures.end()) {
-              if (ImGui::Selectable(asset.id.c_str(), current == asset.id)) {
-                mat.material->set_texture(slotName, ctx.resourceManager.load<Texture>(asset.id, asset.path, VK_FORMAT_R8G8B8A8_UNORM));
-                dirty = true;
-              }
-            }
-          }
-          ImGui::EndCombo();
-        }
-
-        // support drag and drop from content browser
-        if (ImGui::BeginDragDropTarget()) {
-          if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_TEXTURE_ID")) {
-            std::string draggedId = (const char*)payload->Data;
-            if (auto assetRec = AssetRegistry::get().find_asset_by_id(draggedId)) {
-              mat.material->set_texture(slotName, ctx.resourceManager.load<Texture>(draggedId, assetRec->path, VK_FORMAT_R8G8B8A8_UNORM));
-              dirty = true;
-            }
-          }
-          ImGui::EndDragDropTarget();
-        }
-        ImGui::PopID();
-        };
-
-      draw_tex_selector("Albedo Texture", "albedo");
-      draw_tex_selector("Metallic-Roughness", "metalRough");
-      draw_tex_selector("Normal Map", "normal");
-      draw_tex_selector("Emissive Texture", "emissive");
-      draw_tex_selector("Occlusion Texture", "occlusion");
-
     }
-    else {
-      ImGui::TextDisabled("No Material Instance Bound");
+  }
+}
+
+void InspectorPanel::draw_texture_asset_inspector(const AssetMetadata & meta, EngineContext & ctx)
+{
+  ImGui::TextUnformatted("Texture Import Settings (.meta)");
+  ImGui::Spacing();
+
+  ImGui::Checkbox("sRGB Color Space", &_editingTextureSettings.sRGB);
+  ImGui::Checkbox("Generate Mipmaps", &_editingTextureSettings.generateMips);
+  ImGui::Checkbox("BC7 Compression", &_editingTextureSettings.compress);
+
+  const char* filters[] = { "NEAREST", "LINEAR" };
+  int magIdx = (_editingTextureSettings.magFilter == VK_FILTER_NEAREST) ? 0 : 1;
+  if (ImGui::Combo("Mag Filter", &magIdx, filters, IM_ARRAYSIZE(filters))) {
+    _editingTextureSettings.magFilter = (magIdx == 0) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+  }
+
+  int minIdx = (_editingTextureSettings.minFilter == VK_FILTER_NEAREST) ? 0 : 1;
+  if (ImGui::Combo("Min Filter", &minIdx, filters, IM_ARRAYSIZE(filters))) {
+    _editingTextureSettings.minFilter = (minIdx == 0) ? VK_FILTER_NEAREST : VK_FILTER_LINEAR;
+  }
+
+  const char* wrapModes[] = { "REPEAT", "MIRRORED_REPEAT", "CLAMP_TO_EDGE", "CLAMP_TO_BORDER" };
+  auto wrap_to_idx = [](VkSamplerAddressMode m) -> int {
+    switch (m) {
+    case VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT: return 1;
+    case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE:   return 2;
+    case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER: return 3;
+    default:                                      return 0;
     }
+    };
+  auto idx_to_wrap = [](int idx) -> VkSamplerAddressMode {
+    switch (idx) {
+    case 1:  return VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT;
+    case 2:  return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+    case 3:  return VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+    default: return VK_SAMPLER_ADDRESS_MODE_REPEAT;
+    }
+    };
 
-    if (dirty) mat.isDirty = true;
-    });
+  int wrapU = wrap_to_idx(_editingTextureSettings.addressModeU);
+  if (ImGui::Combo("Address Mode U", &wrapU, wrapModes, IM_ARRAYSIZE(wrapModes))) {
+    _editingTextureSettings.addressModeU = idx_to_wrap(wrapU);
+  }
 
-  // hierarchy component
-  reg.register_component<HierarchyComponent>("Hierarchy", [](HierarchyComponent& hc, EditorContext& ctx) {
-    ImGui::Text("Parent Entity ID: %d", hc.parent != entt::null ? static_cast<int32_t>(hc.parent) : -1);
-    if (ImGui::TreeNode("Children", "Children Count: %zu", hc.children.size())) {
-      for (auto child : hc.children) {
-        ImGui::BulletText("Entity ID: %d", static_cast<int32_t>(child));
+  int wrapV = wrap_to_idx(_editingTextureSettings.addressModeV);
+  if (ImGui::Combo("Address Mode V", &wrapV, wrapModes, IM_ARRAYSIZE(wrapModes))) {
+    _editingTextureSettings.addressModeV = idx_to_wrap(wrapV);
+  }
+
+  ImGui::SliderFloat("Max Anisotropy", &_editingTextureSettings.anisotropy, 1.0f, 16.0f);
+
+  ImGui::Spacing();
+  if (!meta.is_sub_asset() && ImGui::Button("Apply Settings & Recook .gtex", ImVec2(-1.0f, 32.0f))) {
+    if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid)) {
+      mutableMeta->textureSettings = _editingTextureSettings;
+      std::filesystem::path metaPath = mutableMeta->virtualPath;
+      metaPath += ".meta";
+      AssetSerializer::save_meta_file(metaPath, *mutableMeta);
+      AssetImporter::cook_texture(*mutableMeta);
+
+      // if currently loaded on GPU, hot reload texture
+      if (ctx.resourceManager && ctx.resourceManager->has_resource<Texture>(meta.uuid)) {
+        ctx.resourceManager->force_unload<Texture>(meta.uuid);
+        VkFormat fmt = _editingTextureSettings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+        ctx.resourceManager->load_by_uuid<Texture>(
+          meta.uuid,
+          mutableMeta->name,
+          mutableMeta->virtualPath,
+          fmt,
+          VK_IMAGE_USAGE_SAMPLED_BIT,
+          _editingTextureSettings.generateMips
+        );
+        if (ctx.renderer) 
+          ctx.renderer->mark_scene_dirty();
       }
-      ImGui::TreePop();
     }
-    });
+  }
+}
 
-  // directional light component
-  reg.register_component<DirectionalLightComponent>("Directional Light", [](DirectionalLightComponent& dl, EditorContext&) {
-    ImGui::Checkbox("Visible##DirLight", &dl.visible);
-    ImGui::ColorEdit3("Color##DirLight", &dl.color.x);
-    ImGui::DragFloat("Intensity##DirLight", &dl.intensity, 0.1f, 0.0f, 100.0f, "%.2f");
-    UIWidgets::DrawVec3Control("Direction", dl.direction, glm::vec3(0.4f, 1.0f, 0.3f), 0.05f);
-    ImGui::DragFloat("Shadow Extent", &dl.shadowExtent, 0.5f, 1.0f, 200.0f, "%.1f");
-    });
+void InspectorPanel::draw_mesh_asset_inspector(const AssetMetadata & meta, EngineContext & ctx)
+{
+  if (_hasValidMeshHeader) {
+    ImGui::TextUnformatted("Cooked .gmesh Binary Telemetry");
+    ImGui::BulletText("Unique Vertices: %u", _inspectedMeshHeader.vertexCount);
+    ImGui::BulletText("Total Indices (All LODs): %u", _inspectedMeshHeader.totalIndexCount);
+    ImGui::BulletText("Bounding Sphere Radius: %.3f m", _inspectedMeshHeader.bounds.sphereRadius);
+    ImGui::BulletText("Active Discrete LODs: %u", _inspectedMeshHeader.lodCount);
 
-  // point light component
-  reg.register_component<PointLightComponent>("Point Light", [](PointLightComponent& pl, EditorContext&) {
-    ImGui::Checkbox("Visible##PtLight", &pl.visible);
-    ImGui::Checkbox("Cast Shadow", &pl.castShadow);
-    ImGui::ColorEdit3("Color##PtLight", &pl.color.x);
-    ImGui::DragFloat("Intensity##PtLight", &pl.intensity, 5.0f, 0.0f, 10000.0f, "%.1f");
-    ImGui::DragFloat("Radius", &pl.radius, 0.1f, 0.01f, 100.0f, "%.2f");
-    });
+    for (uint32_t i = 0; i < _inspectedMeshHeader.lodCount; ++i) {
+      const auto& lod = _inspectedMeshHeader.lods[i];
+      ImGui::Text("  LOD %u: %u triangles (%u indices) | Screen Threshold: %.2f",
+        i, lod.indexCount / 3, lod.indexCount, lod.screenSizeThreshold);
+    }
+    ImGui::Separator();
+  }
+
+  ImGui::TextUnformatted("Mesh Import & Optimization Settings");
+  ImGui::Checkbox("Generate Discrete LODs", &_editingMeshSettings.generateLODs);
+  int maxLods = static_cast<int>(_editingMeshSettings.maxLODCount);
+  if (ImGui::SliderInt("Max LOD Count", &maxLods, 1, 4)) {
+    _editingMeshSettings.maxLODCount = static_cast<uint32_t>(maxLods);
+  }
+  ImGui::Checkbox("Keep CPU Ray-Picking Data", &_editingMeshSettings.keepCpuPickingData);
+  ImGui::Checkbox("Optimize Vertex Cache (ACMR)", &_editingMeshSettings.optimizeVertexCache);
+  ImGui::Checkbox("Optimize Overdraw", &_editingMeshSettings.optimizeOverdraw);
+
+  if (meta.type == AssetType::Model && ImGui::Button("Apply & Re-Import Model", ImVec2(-1.0f, 32.0f))) {
+    if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid)) {
+      mutableMeta->meshSettings = _editingMeshSettings;
+      std::filesystem::path metaPath = mutableMeta->virtualPath;
+      metaPath += ".meta";
+      AssetSerializer::save_meta_file(metaPath, *mutableMeta);
+      AssetImporter::import_model(*mutableMeta);
+      if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+    }
+  }
 }
