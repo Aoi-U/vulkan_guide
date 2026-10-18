@@ -566,31 +566,6 @@ void Renderer::extract_scene_data(const entt::registry& registry, DrawContext& c
 	}
 	else
 	{
-		//for (auto& obj : _drawCache.opaqueObjects) {
-		//	entt::entity e = static_cast<entt::entity>(obj.entityId);
-		//	if (!registry.valid(e))
-		//		continue;
-
-		//	const auto& tc = registry.get<TransformComponent>(e);
-		//	obj.transform = tc.worldTransform;
-
-		//	auto* matComp = registry.try_get<MaterialComponent>(e);
-		//	if (matComp && matComp->material) {
-		//		auto paramData = matComp->material->get_parameter_data();
-		//		size_t offset = obj.materialIndex * paramData.size();
-
-		//		size_t requiredSize = (obj.materialIndex + 1) * paramData.size();
-		//		if (currentFrame._materialDataBuffer->get_size() < requiredSize) {
-		//			currentFrame._materialDataBuffer->resize(requiredSize * 1.5, true);
-		//		}
-
-		//		std::memcpy(static_cast<uint8_t*>(currentFrame._materialDataBuffer->get_mapped_data()) + offset, paramData.data(), paramData.size());
-
-		//		//matComp->material->clear_dirty();
-		//		//matComp->isDirty = false;
-		//	}
-		//}
-
 		auto update_cached_objects = [&](std::vector<RenderObject>& objects) {
 			for (RenderObject& obj : objects) {
 				entt::entity e = static_cast<entt::entity>(obj.entityId);

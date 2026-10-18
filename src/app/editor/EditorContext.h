@@ -22,6 +22,16 @@ struct EditorContext
 	bool viewportFocused{ false };
 	VkExtent2D viewportExtent{ 1280, 720 };
 
+	int gizmoOperation{ 7 }; // ImGuizmo state (7 = translate, 120 = rotate, 896 = scale; 0 = local, 1 = world)
+	int gizmoMode{ 1 };
+	bool useSnap{ false };
+	float snapTranslation{ 0.5f };
+	float snapRotation{ 15.0f };
+	float snapScale{ 0.1f };
+
+	std::string selectedDebugTarget{ "FinalColor" };
+	int selectedTargetLayer{ 0 };
+
 	void select_entity(entt::entity e) noexcept
 	{
 		selectedEntity = e;

@@ -55,7 +55,8 @@ void FrustumCullPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard,
 			frameData._gpuCountBuffer->resize(sizeof(uint32_t) * batchCount);
 			frameData._gpuShadowIndirectBuffer->resize(sizeof(VkDrawIndexedIndirectCommand) * opaqueCount);
 			frameData._gpuShadowInstanceBuffer->resize(sizeof(uint32_t) * opaqueCount);
-			std::memset(frameData._gpuCountBuffer->get_mapped_data(), 0, sizeof(uint32_t) * batchCount);
+			memset(frameData._gpuCountBuffer->get_mapped_data(), 0, sizeof(uint32_t) * batchCount);
+			memset(frameData._cullStatsBuffer->get_mapped_data(), 0, sizeof(CullStatsData));
 
 			// get mapped pointers to the buffers
 			auto* mappedObjects = static_cast<GPUObjectData*>(frameData._gpuObjectBuffer->get_mapped_data());

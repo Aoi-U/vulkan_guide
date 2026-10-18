@@ -25,6 +25,15 @@ namespace
 			entt::registry& reg = *_ctx->activeRegistry;
 			GPUSceneData& sceneData = *_ctx->activeSceneData;
 
+			VkExtent2D viewportExtent = _ctx->renderer->get_viewport_extent();
+			float aspect = (viewportExtent.height > 0)
+				? static_cast<float>(viewportExtent.width) / static_cast<float>(viewportExtent.height)
+				: (16.0f / 9.0f);
+
+			sceneData.proj = glm::perspective(glm::radians(60.0f), aspect, 1000.0f, 0.1f); // reverse z [1, 0]
+			sceneData.proj[1][1] *= -1.0f; // vulkan y axis flip
+			sceneData.viewproj = sceneData.proj * sceneData.view;
+
 			// propagate dirty transform component hierarchies
 			bool anyTransformUpdated = false;
 			auto transformView = reg.view<TransformComponent>();

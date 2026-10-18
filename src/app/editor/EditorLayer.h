@@ -8,6 +8,7 @@
 #include <scene/SceneSerializer.h>
 #include <functional>
 #include <vector>
+#include <deque>
 
 class EditorLayer : public ILayer
 {
@@ -37,9 +38,15 @@ public:
 private:
 	void draw_dockspace_and_menubar();
 	void draw_viewport_panel();
+	void draw_gizmos(const glm::vec2& viewportPos, const glm::vec2& viewportSize);
 	void draw_hierarchy_panel();
 	void draw_entity_node(entt::entity entity);
-	void draw_renderer_and_metrics_panel();
+	void draw_render_target_viewer_panel();
+	void draw_performance_panel();
+	void draw_renderer_settings_panel();
+
+	void delete_entity_recursive(entt::entity entity, bool detachFromParent = true);
+	entt::entity pick_entity_at_mouse(const glm::vec2& mousePos, const glm::vec2& viewportPos, const glm::vec2& viewportSize);
 
 	GuiRenderer _guiRenderer;
 	EditorContext _editorCtx;
@@ -50,4 +57,7 @@ private:
 	VkDescriptorSet _sceneColorDescriptor{ VK_NULL_HANDLE };
 	bool _imguiFrameActive{ false };
 	std::vector<ImguiDrawCallback> _panelCallbacks;
+
+	std::deque<float> _frameTimeHistory;
+	static constexpr size_t MAX_FRAME_HISTORY = 120;
 };
