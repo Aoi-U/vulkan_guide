@@ -9,7 +9,7 @@
 #include <entt.hpp>
 #include <core/Components.h>
 #include <app/Editor.h>
-#include <graphics/GuiRenderer.h>
+#include <app/editor/GuiRenderer.h>
 #include <core/Events.h>
 
 class App

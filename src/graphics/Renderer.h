@@ -98,14 +98,26 @@ class Renderer
 public:
 	static constexpr unsigned int FRAME_OVERLAP = 2;
 
+	using OverlayRenderCallback = std::function<void(
+		VkCommandBuffer cmd,
+		VkImageView swapchainView,
+		VkExtent2D swapchainExtent,
+		VkImageView finalSceneColorView)>;
+
+	using SwapchainRecreateCallback = std::function<void()>;
+
 	void init(Window* window, VulkanCore* vulkanCore, entt::dispatcher& dispatcher, ResourceManager* resourceManager);
 
 	void cleanup(entt::dispatcher& dispatcher);
 
 	void on_window_resize(const Events::WindowResizeEvent& event);
-	void set_gui_renderer(GuiRenderer* guiRenderer) { _guiRenderer = guiRenderer; }
-	void set_viewport_extent(VkExtent2D extent);
 
+	void set_overlay_render_callback(OverlayRenderCallback callback) { _overlayRenderCallback = std::move(callback); }
+	void set_swapchain_recreate_callback(SwapchainRecreateCallback callback) { _swapchainRecreateCallback = std::move(callback); }
+
+	void wait_for_current_frame_fence();
+
+	void set_viewport_extent(VkExtent2D extent);
 	void render_frame(const entt::registry& registry, const GPUSceneData& sceneData);
 	void recreate_swapchain();
 
@@ -169,9 +181,7 @@ public:
 	VkImageView get_current_swapchain_image_view() const { return _swapchain.get_image_views()[_swapchainImageIndex]; }
 	VkFormat get_swapchain_format() const { return _swapchain.get_image_format(); }
 	FrameData& get_current_frame() { return _frames[_frameNumber % FRAME_OVERLAP]; }
-	GuiRenderer* get_gui_renderer() const { return _guiRenderer; }
 	VkExtent2D get_viewport_extent() const { return _viewportExtent; }
-	VkDescriptorSet get_scene_color_descriptor() const { return _sceneColorDescriptor; };
 	const std::unordered_map<std::string, TargetInfo>& get_debug_targets() const { return _debugTargets; }
 
 private:
@@ -186,9 +196,14 @@ private:
 	uint32_t _frameNumber{ 0 };
 	uint32_t _swapchainImageIndex{ 0 };
 	bool _isFrameStarted{ false };
+	bool _frameFenceWaited{ false };
 	bool _resizeRequested{ false };
 	VkExtent2D _pendingResizeExtent{ 0, 0 };
-	GuiRenderer* _guiRenderer{ nullptr };
+	VkImageLayout _swapchainLayoutBeforePresent{ VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+
+	OverlayRenderCallback _overlayRenderCallback{ nullptr };
+	SwapchainRecreateCallback _swapchainRecreateCallback{ nullptr };
+
 	float _currentRenderScale{ 1.0f };
 
 	std::vector<std::unique_ptr<RenderFeature>> _features;
@@ -197,8 +212,6 @@ private:
 	std::unordered_map<std::string, TargetInfo> _debugTargets;	
 	RenderGraph _renderGraph{};
 	RenderTargetPool _renderTargetPool;
-	VkDescriptorSet _sceneColorDescriptor{ VK_NULL_HANDLE };
-
 	DrawCommandCache _drawCache;
 
 	// frame rendering functions

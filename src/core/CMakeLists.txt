@@ -27,6 +27,7 @@ target_link_libraries(core PUBLIC
 	stduuid
 	yamlcpp
 	offsetallocator
+	SDL2::SDL2
 )
 
 # Optional IDE target to view headers cleanly in Visual Studio / Xcode

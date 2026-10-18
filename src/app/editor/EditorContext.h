@@ -1,23 +1,45 @@
 #pragma once
 
+#include <core/UUID.h>
 #include <entt.hpp>
-#include <imgui.h>
-#include <resources/ResourceManager.h>
-#include <graphics/utils/vk_types.h>
+#include <vulkan/vulkan.h>
+#include <cstdint>
 
-class Renderer; 
+enum class InspectorMode : uint8_t
+{
+	None, 
+	Entity,
+	DiskAsset
+};
 
 struct EditorContext
 {
-	entt::registry& registry;
-	ResourceManager& resourceManager;
-	entt::entity& selectedEntity;
-	const GPUSceneData& sceneData;
-	Renderer& renderer;
+	InspectorMode inspectorMode{ InspectorMode::None };
+	entt::entity selectedEntity;
+	UUID selectedAssetUUID{};
 
-	ImVec2 viewportPos{ 0.0f, 0.0f };
-	ImVec2 viewportSize{ 0.0f, 0.0f };
 	bool isViewportHovered{ false };
 	bool isViewportFocused{ false };
-	bool isGizmoControlsHovered{ false };
+	VkExtent2D viewportExtent{ 1280, 720 };
+
+	void select_entity(entt::entity e) noexcept
+	{
+		selectedEntity = e;
+		selectedAssetUUID = UUID::null();
+		inspectorMode = (e != entt::null) ? InspectorMode::Entity : InspectorMode::None;
+	}
+
+	void select_disk_asset(const UUID& uuid) noexcept
+	{
+		selectedAssetUUID = uuid;
+		selectedEntity = entt::null;
+		inspectorMode = uuid.is_valid() ? InspectorMode::DiskAsset : InspectorMode::None;
+	}
+
+	void clear_selection() noexcept
+	{
+		selectedEntity = entt::null;
+		selectedAssetUUID = UUID::null();
+		inspectorMode = InspectorMode::None;
+	}
 };

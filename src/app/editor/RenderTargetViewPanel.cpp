@@ -5,7 +5,7 @@
 #include <vulkan/vk_enum_string_helper.h>
 #include <algorithm>
 #include <resources/DefaultResources.h>
-#include <graphics/GuiRenderer.h>
+#include <app/editor/GuiRenderer.h>
 
 void RenderTargetViewPanel::on_draw(EditorContext& ctx)
 {

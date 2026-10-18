@@ -9,7 +9,6 @@
 #include <resources/DefaultResources.h>
 #include <resources/GlobalGeometryPool.h>
 #include <graphics/utils/StagingUploader.h>
-#include "graphics/GuiRenderer.h"
 
 #include <graphics/pass/FrustumCullpass.h>
 #include <graphics/pass/ShadowPass.h>
@@ -114,6 +113,16 @@ void Renderer::on_window_resize(const Events::WindowResizeEvent& event)
 	_pendingResizeExtent = { event.width, event.height };
 }
 
+void Renderer::wait_for_current_frame_fence()
+{
+	if (_frameFenceWaited)
+		return;
+
+	FrameData& currentFrame = get_current_frame();
+	VK_CHECK(vkWaitForFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence, true, 1000000000));
+	_frameFenceWaited = true;
+}
+
 void Renderer::set_viewport_extent(VkExtent2D extent)
 {
 	if (extent.width == 0 || extent.height == 0)
@@ -129,6 +138,9 @@ void Renderer::set_viewport_extent(VkExtent2D extent)
 
 	// wait for GPU to finish before destroying images and freeing descriptor sets
 	vkDeviceWaitIdle(_vulkanCore->get_device());
+	if (_swapchainRecreateCallback) {
+		_swapchainRecreateCallback();
+	}
 
 	_viewportExtent = extent;
 	update_render_extent();
@@ -267,17 +279,40 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			VkImage swapchainImage = _swapchain.get_images()[_swapchainImageIndex];
 			VkImageView swapchainView = _swapchain.get_image_views()[_swapchainImageIndex];
 
-			// imgui requires shader read layout
-			vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			if (_overlayRenderCallback) {
+				// imgui requires shader read layout
+				vkutil::image_mem_barrier2(graphCmd, swapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+				_swapchainLayoutBeforePresent = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 
-			for (const auto& [name, handle] : namedDebugTargets) {
-				if (handle.is_valid()) {
-					_renderGraph.transition_texture(graphCmd, handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+				for (const auto& [name, handle] : namedDebugTargets) {
+					if (handle.is_valid()) {
+						_renderGraph.transition_texture(graphCmd, handle, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+					}
 				}
+
+				VkImageView finalColorView = _renderGraph.get_image_view(params.finalColor);
+				_overlayRenderCallback(graphCmd, swapchainView, _swapchain.get_extent(), finalColorView);
 			}
-			if (_guiRenderer) {
-				_sceneColorDescriptor = _guiRenderer->get_image_descriptor(_renderGraph.get_image_view(params.finalColor), DefaultResources::get().defaultSamplerLinear->get_sampler());
-				_guiRenderer->render(graphCmd, swapchainView, _swapchain.get_extent());
+			else {
+				// blit finalColor directly onto the swapchain image
+				_renderGraph.transition_texture(graphCmd, params.finalColor, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+				vkutil::image_mem_barrier2(
+					graphCmd,
+					swapchainImage,
+					_swapchain.get_image_format(),
+					VK_IMAGE_LAYOUT_UNDEFINED,
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+				);
+				_swapchainLayoutBeforePresent = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+
+				VkImage finalColorImage = _renderGraph.get_image(params.finalColor);
+				vkutil::copy_image_to_image(
+					graphCmd,
+					finalColorImage,
+					swapchainImage,
+					_drawExtent,
+					_swapchain.get_extent()
+				);
 			}
 		}
 	);
@@ -331,16 +366,19 @@ VkCommandBuffer Renderer::begin_frame()
 	// wait until the gpu has finished rendering the last frame
 	// timeout of 1 second
 	FrameData& currentFrame = get_current_frame();
-	VK_CHECK(vkWaitForFences(_vulkanCore->get_device(), 1, &currentFrame._renderFence, true, 1000000000));
 
-	if (_frameNumber >= FRAME_OVERLAP) {
-		uint64_t completedFrame = _frameNumber - FRAME_OVERLAP;
-		_vulkanCore->get_deletion_queue().flush_retired(completedFrame);
-		_resourceManager->get_staging_uploader().reclaim_completed_frames(completedFrame);
+	if (!_frameFenceWaited) {
+		wait_for_current_frame_fence();
+		
+		if (_frameNumber >= FRAME_OVERLAP) {
+			uint64_t completedFrame = _frameNumber - FRAME_OVERLAP;
+			_vulkanCore->get_deletion_queue().flush_retired(completedFrame);
+			_resourceManager->get_staging_uploader().reclaim_completed_frames(completedFrame);
+		}
+		_resourceManager->get_geometry_pool().process_deferred_frees(_frameNumber);
+		_resourceManager->process_main_thread_tasks();
+		_resourceManager->process_evictions(_frameNumber);
 	}
-	_resourceManager->get_geometry_pool().process_deferred_frees(_frameNumber);
-	_resourceManager->process_main_thread_tasks();
-	_resourceManager->process_evictions(_frameNumber);
 
 	currentFrame._frameDescriptors.clear_pools(_vulkanCore->get_device());
 
@@ -378,7 +416,7 @@ void Renderer::end_frame()
 
 	// set swapchain image layout to present so we can draw it
 	VkImage currentSwapchainImage = _swapchain.get_images()[_swapchainImageIndex];
-	vkutil::image_mem_barrier2(cmd, currentSwapchainImage, _swapchain.get_image_format(), VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, 1, 0);
+	vkutil::image_mem_barrier2(cmd, currentSwapchainImage, _swapchain.get_image_format(), _swapchainLayoutBeforePresent, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, 1, 0);
 	VK_CHECK(vkEndCommandBuffer(cmd));	// finalize command buffer for execution
 
 	VkSwapchainKHR swapchainHandle = _swapchain.get();
@@ -411,7 +449,7 @@ void Renderer::end_frame()
 	};
 
 	_vulkanCore->get_deletion_queue().next_frame(_frameNumber); // mark this frames resources as pending for deletion
-
+	_frameFenceWaited = false;
 	_isFrameStarted = false;
 	_frameNumber++;
 
@@ -590,11 +628,9 @@ void Renderer::recreate_swapchain()
 {
 	vkDeviceWaitIdle(_vulkanCore->get_device());
 
-	// clear cached image descriptors in gui renderer so they will be recreated with new viewport extent
-	if (_guiRenderer) {
-		_guiRenderer->clear_image_descriptors();
+	if (_swapchainRecreateCallback) {
+		_swapchainRecreateCallback();
 	}
-	_sceneColorDescriptor = VK_NULL_HANDLE;
 
 	VkExtent2D actualExtent = _pendingResizeExtent;
 	if (actualExtent.width == 0 || actualExtent.height == 0) {
