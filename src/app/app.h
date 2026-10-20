@@ -6,6 +6,8 @@
 #include <resources/ResourceManager.h>
 #include <core/layer/EngineContext.h>
 #include <core/layer/LayerStack.h>
+#include <scene/SceneLayer.h>
+#include <app/camera.h>
 #include <entt.hpp>
 #include <cstdint>
 
@@ -29,12 +31,12 @@ private:
   VulkanCore _vulkanCore;
   ResourceManager _resourceManager;
   Renderer _renderer;
+  Camera _camera;
 
-  entt::registry _registry;
   entt::dispatcher _dispatcher;
-  GPUSceneData _sceneData{};
-
   EngineContext _engineCtx{};
   LayerStack _layerStack;
+
+  SceneLayer* _sceneLayer{ nullptr };
   EditorLayer* _editorLayer{ nullptr };
 };

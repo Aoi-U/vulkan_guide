@@ -235,6 +235,29 @@ void ResourceManager::process_evictions(uint64_t currentFrame)
 	}
 }
 
+void ResourceManager::process_evictions_immediate()
+{
+	for (auto it = _evictionCandidates.begin(); it != _evictionCandidates.end();) {
+		auto typeIt = _refCounts.find(it->typeKey);
+		if (typeIt == _refCounts.end()) {
+			it = _evictionCandidates.erase(it);
+			continue;
+		}
+
+		auto resIt = typeIt->second.find(it->uuid);
+		if (resIt == typeIt->second.end() || resIt->second.refCount > 0) {
+			it = _evictionCandidates.erase(it);
+			continue;
+		}
+		
+		// unload zero ref resource immediately
+		queue_unload(_resources[it->typeKey][it->uuid]);
+		_resources[it->typeKey].erase(it->uuid);
+		typeIt->second.erase(resIt);
+		it = _evictionCandidates.erase(it);
+	}
+}
+
 void ResourceManager::request_async_load(const UUID& uuid)
 {
 	if (_assetStreamer) {

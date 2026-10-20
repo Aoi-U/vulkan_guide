@@ -31,7 +31,7 @@ public:
 	{
 		auto cvar = GetCVar(name);
 		if (cvar && cvar->type == CVarType::FLOAT) {
-			floatCVars[cvar->arrayIndex].current;
+			return floatCVars[cvar->arrayIndex].current;
 		}
 		return 0.0;
 	}

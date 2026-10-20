@@ -269,7 +269,7 @@ void ContentBrowserPanel::draw_asset_grid(EngineContext & ctx, EditorContext & e
       ImGui::EndDragDropSource();
     }
 
-    // double lick action: spawn Prefab/Model or Load Scene/HDR
+    // double click action: spawn Prefab/Model or Load Scene/HDR
     if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
       if ((meta.type == AssetType::Model || meta.type == AssetType::Prefab) && ctx.activeRegistry && ctx.resourceManager) {
         entt::entity root = spawn_prefab(*ctx.activeRegistry, *ctx.resourceManager, meta.virtualPath);

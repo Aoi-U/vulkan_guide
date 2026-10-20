@@ -7,6 +7,7 @@
 #include <resources/Mesh.h>
 #include <resources/Texture.h>
 #include <resources/MaterialInstance.h>
+#include <entt.hpp>
 #include <string>
 
 struct IDComponent

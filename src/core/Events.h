@@ -1,10 +1,8 @@
 #pragma once
 
+#include <core/UUID.h>
 #include <vulkan/vulkan.h>
 #include <SDL_events.h>
-#include <entt.hpp>
-#include <memory>
-#include <string>
 #include <filesystem>
 
 namespace Events
@@ -27,22 +25,21 @@ namespace Events
 		SDL_Event raw;
 	};
 
-	// entity / asset events
-	struct EntitySelectedEvent {
-		entt::entity entity{ entt::null };
+	struct SceneSaveEvent
+	{
+		std::filesystem::path filePath;
 	};
 
-	struct EntityDestroyedEvent {
-		entt::entity entity{ entt::null };
+	struct SceneLoadEvent {
+		std::filesystem::path filePath;
 	};
 
-	struct SceneLoadedEvent {
-		std::string name;
-	};
+	struct SceneNewSceneEvent {};
 
-	struct LoadEnvironmentEvent {
+	struct AssetReloadedEvent
+	{
+		UUID uuid{};
 		std::filesystem::path path;
 	};
 
-	struct ResetEnvironmentEvent {};
 }

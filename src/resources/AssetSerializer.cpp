@@ -448,7 +448,7 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 	auto instance = std::make_shared<MaterialInstance>(matTemplate);
 	instance->set_alpha_mode(matData.alphaMode);
 	instance->set_double_sided(matData.doubleSided);
-
+	
 	// set constants
 	instance->set_parameter("colorFactors", matData.colorFactors);
 	instance->set_parameter("metalRoughFactors", matData.metalRoughFactors);

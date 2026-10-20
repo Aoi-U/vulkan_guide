@@ -184,6 +184,7 @@ public:
 
 	// unloads zero-ref resources past EVICTION_FRAME_THRESHOLD or over vram limit
 	void process_evictions(uint64_t currentFrame);
+	void process_evictions_immediate();
 	void request_async_load(const UUID& uuid);
 
 	VkDescriptorSetLayout get_bindless_layout() const { return _bindlessLayout; }

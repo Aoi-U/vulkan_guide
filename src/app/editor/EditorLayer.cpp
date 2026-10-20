@@ -11,6 +11,7 @@
 #include <resources/DefaultResources.h>
 #include <resources/GlobalGeometryPool.h>
 #include <resources/ModelSpawner.h>
+#include <scene/SceneLayer.h>
 #include <window/window.h>
 #include <imgui.h>
 #include <imgui_impl_sdl2.h>
@@ -227,45 +228,41 @@ void EditorLayer::draw_dockspace_and_menubar()
 	ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
 
 	if (ImGui::BeginMainMenuBar()) {
+		SceneLayer* sceneLayer = _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
+
 		if (ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem("Save Scene (.scene)", "Ctrl+S")) {
-				if (_ctx->activeRegistry) {
-					SceneSerializer::save_scene("../../assets/scenes/default.scene", *_ctx->activeRegistry, _sceneEnvSettings);
-				}
+			if (ImGui::MenuItem("New Empty Scene", "Ctrl+N") && sceneLayer) {
+				_editorCtx.clear_selection();
+				sceneLayer->new_scene("Empty Scene");
 			}
-			if (ImGui::MenuItem("Load Scene (.scene)", "Ctrl+O")) {
-				if (_ctx->activeRegistry) {
+			if (ImGui::MenuItem("Save Scene (.scene)", "Ctrl+S") && sceneLayer) {
+				sceneLayer->save_scene();
+			}
+			if (ImGui::MenuItem("Reload Scene (.scene)", "Ctrl+O") && sceneLayer) {
+				_editorCtx.clear_selection();
+				sceneLayer->load_scene(sceneLayer->get_scene().get_file_path());
+			}
+			ImGui::EndMenu();
+		}
+
+		// Play / Stop Toolbar button right in the menu bar
+		if (sceneLayer) {
+			ImGui::Separator();
+			if (!sceneLayer->is_playing()) {
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
+				if (ImGui::SmallButton("  Play  ")) {
+					sceneLayer->begin_play();
+				}
+				ImGui::PopStyleColor();
+			}
+			else {
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.22f, 0.22f, 1.0f));
+				if (ImGui::SmallButton("  Stop  ")) {
 					_editorCtx.clear_selection();
-					SceneSerializer::load_scene(
-						"../../assets/scenes/default.scene",
-						*_ctx->activeRegistry,
-						_sceneEnvSettings,
-						_ctx->resourceManager,
-						_ctx->renderer
-					);
+					sceneLayer->end_play();
 				}
+				ImGui::PopStyleColor();
 			}
-			ImGui::EndMenu();
-		}
-
-		if (ImGui::BeginMenu("Edit")) {
-			bool hasEntity = (_editorCtx.inspectorMode == InspectorMode::Entity &&
-				_editorCtx.selectedEntity != entt::null);
-			if (ImGui::MenuItem("Delete Selected Entity", "Delete", false, hasEntity)) {
-				delete_entity_recursive(_editorCtx.selectedEntity, true);
-			}
-			ImGui::EndMenu();
-		}
-
-		if (ImGui::BeginMenu("Assets")) {
-			if (ImGui::MenuItem("Rescan & Cook Missing Assets")) {
-				AssetRegistry::get().scan_directory("../../assets");
-				AssetImporter::cook_missing_assets();
-			}
-			if (ImGui::MenuItem("Print Asset Manifest to Console")) {
-				AssetRegistry::get().print_manifest();
-			}
-			ImGui::EndMenu();
 		}
 		ImGui::EndMainMenuBar();
 	}
@@ -332,7 +329,8 @@ void EditorLayer::draw_viewport_panel()
 							if ((meta->type == AssetType::Model || meta->type == AssetType::Prefab) && _ctx->activeRegistry && _ctx->resourceManager) {
 								entt::entity root = spawn_prefab(*_ctx->activeRegistry, *_ctx->resourceManager, meta->virtualPath);
 								_editorCtx.select_entity(root);
-								if (_ctx->renderer) _ctx->renderer->mark_scene_dirty();
+								if (_ctx->renderer) 
+									_ctx->renderer->mark_scene_dirty();
 							}
 							else if (meta->type == AssetType::EnvironmentHDR && _ctx->renderer) {
 								_ctx->renderer->load_environment(meta->virtualPath);
@@ -435,32 +433,26 @@ void EditorLayer::draw_hierarchy_panel()
 		return;
 	}
 
-	if (_ctx->activeRegistry) {
-		entt::registry& registry = *_ctx->activeRegistry;
+	if (_ctx->activeScene) {
+		entt::registry& registry = _ctx->activeScene->get_registry();
 
 		if (ImGui::Button("+ Create Empty Entity", ImVec2(-1.0f, 0.0f))) {
-			entt::entity e = registry.create();
-			registry.emplace<IDComponent>(e, UUID::generate());
-			registry.emplace<TagComponent>(e, "New Entity");
-			registry.emplace<TransformComponent>(e);
-			registry.emplace<HierarchyComponent>(e);
+			entt::entity e = _ctx->activeScene->create_entity("New Entity");
 			_editorCtx.select_entity(e);
+			if (_ctx->renderer) _ctx->renderer->mark_scene_dirty();
 		}
 		ImGui::Separator();
 
-		std::vector<entt::entity> rootEntities;
 		auto view = registry.view<const TagComponent>();
 		for (auto [entity, _] : view.each()) {
 			const auto* hc = registry.try_get<HierarchyComponent>(entity);
-			if (!hc || hc->parent == entt::null) {
-				rootEntities.push_back(entity);
+			if (!hc || hc->parent == entt::null || !registry.valid(hc->parent)) {
+				draw_entity_node(entity);
 			}
 		}
 
-		for (entt::entity root : rootEntities) {
-			if (registry.valid(root)) {
-				draw_entity_node(root);
-			}
+		if (ImGui::IsMouseDown(0) && ImGui::IsWindowHovered()) {
+			_editorCtx.clear_selection();
 		}
 	}
 
@@ -469,13 +461,17 @@ void EditorLayer::draw_hierarchy_panel()
 
 void EditorLayer::draw_entity_node(entt::entity entity)
 {
-	entt::registry& registry = *_ctx->activeRegistry;
-	if (!registry.valid(entity)) return;
+	if (!_ctx->activeScene) 
+		return;
+	entt::registry& registry = _ctx->activeScene->get_registry();
+	if (!registry.valid(entity)) 
+		return;
 
 	const auto* tagComp = registry.try_get<TagComponent>(entity);
 	const auto* hc = registry.try_get<HierarchyComponent>(entity);
 	const char* name = (tagComp && !tagComp->tag.empty()) ? tagComp->tag.c_str() : "Unnamed Entity";
 
+	// setup ImGui tree node flags based on selection and children
 	ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
 	if (_editorCtx.inspectorMode == InspectorMode::Entity && _editorCtx.selectedEntity == entity) {
 		flags |= ImGuiTreeNodeFlags_Selected;
@@ -484,45 +480,41 @@ void EditorLayer::draw_entity_node(entt::entity entity)
 		flags |= ImGuiTreeNodeFlags_Leaf;
 	}
 
+	// draw tree node
 	bool opened = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<uintptr_t>(entt::to_integral(entity))), flags, "%s", name);
 
-	if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+	// left click select
+	if (ImGui::IsItemClicked()) {
 		_editorCtx.select_entity(entity);
 	}
 
-	// right click context menu for Entity actions (Delete / Add Child)
-	bool deleteRequested = false;
+	// right click context menu
+	bool entityDeleted = false;
 	if (ImGui::BeginPopupContextItem()) {
-		if (ImGui::MenuItem("Add Child Entity")) {
-			entt::entity child = registry.create();
-			registry.emplace<IDComponent>(child, UUID::generate());
-			registry.emplace<TagComponent>(child, "Child Entity");
-			registry.emplace<TransformComponent>(child);
-			registry.emplace<HierarchyComponent>(child, entity);
-			registry.get_or_emplace<HierarchyComponent>(entity).children.push_back(child);
-			_editorCtx.select_entity(child);
+		if (ImGui::MenuItem("Duplicate Entity")) {
+			entt::entity copy = _ctx->activeScene->duplicate_entity(entity);
+			_editorCtx.select_entity(copy);
+			if (_ctx->renderer) _ctx->renderer->mark_scene_dirty();
 		}
-		ImGui::Separator();
-		if (ImGui::MenuItem("Delete Entity", "Delete")) {
-			deleteRequested = true;
+		if (ImGui::MenuItem("Delete Entity")) {
+			if (_editorCtx.selectedEntity == entity) {
+				_editorCtx.clear_selection();
+			}
+			_ctx->activeScene->destroy_entity(entity);
+			if (_ctx->renderer) _ctx->renderer->mark_scene_dirty();
+			entityDeleted = true;
 		}
 		ImGui::EndPopup();
 	}
 
 	if (opened) {
-		if (!deleteRequested && hc) {
-			std::vector<entt::entity> childrenCopy = hc->children;
-			for (entt::entity child : childrenCopy) {
-				if (registry.valid(child)) {
-					draw_entity_node(child);
-				}
+		if (!entityDeleted && hc) {
+			std::vector<entt::entity> children = hc->children;
+			for (entt::entity child : children) {
+				draw_entity_node(child);
 			}
 		}
 		ImGui::TreePop();
-	}
-
-	if (deleteRequested) {
-		delete_entity_recursive(entity, true);
 	}
 }
 

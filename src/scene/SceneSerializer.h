@@ -8,6 +8,7 @@
 
 class ResourceManager;
 class Renderer;
+struct SceneAssetManifest;
 
 struct SceneEnvironmentSettings
 {
@@ -30,4 +31,12 @@ class SceneSerializer
 public:
 	static bool save_scene(const std::filesystem::path& filePath, entt::registry& registry, const SceneEnvironmentSettings& envSettings);
 	static bool load_scene(const std::filesystem::path& filePath, entt::registry& registry, SceneEnvironmentSettings& outEnvSettings, ResourceManager* resourceManager = nullptr, Renderer* renderer = nullptr);
+
+	static std::string serialize_to_string(
+		entt::registry& registry,
+		const SceneEnvironmentSettings& envSettings);
+
+	static bool deserialize_from_string(const std::string& yamlString, entt::registry& registry, SceneEnvironmentSettings& outEnvSettings, ResourceManager* resourceManager = nullptr, Renderer* renderer = nullptr);
+
+	static bool extract_referenced_assets( const std::filesystem::path& filePath, SceneAssetManifest& outManifest);
 };

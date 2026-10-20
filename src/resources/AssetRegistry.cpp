@@ -421,14 +421,24 @@ std::vector<AssetMetadata> AssetRegistry::get_all_assets_combined(bool includeSu
     return _assetListCache;
   }
 
-  std::vector<AssetMetadata> result;
-  result.reserve(_assetsByUUID.size());
+  size_t assetCount = _assetsByUUID.size();
+
+  std::vector<const AssetMetadata*> pointerVector;
+  pointerVector.reserve(assetCount);
   for (const auto& [_, meta] : _assetsByUUID) {
-    result.push_back(meta);
+    pointerVector.push_back(&meta);
   }
-  std::sort(result.begin(), result.end(), [](const AssetMetadata& a, const AssetMetadata& b) {
-    return a.name < b.name;
+
+  std::sort(pointerVector.begin(), pointerVector.end(), [](const AssetMetadata* a, const AssetMetadata* b) {
+    return a->name < b->name;
     });
+
+  std::vector<AssetMetadata> result;
+  result.reserve(assetCount);
+  for (const auto* ptr : pointerVector) {
+    result.push_back(*ptr);
+  }
+
   return result;
 }
 
