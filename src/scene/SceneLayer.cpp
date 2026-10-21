@@ -92,16 +92,31 @@ void SceneLayer::on_event(EngineEvent & event)
 	if (event.sdlEvent.type == SDL_KEYDOWN && !event.sdlEvent.key.repeat) {
 		const SDL_Keymod mods = static_cast<SDL_Keymod>(event.sdlEvent.key.keysym.mod);
 		const bool ctrlPressed = (mods & KMOD_CTRL) != 0;
+		const bool shiftPressed = (mods & KMOD_SHIFT) != 0;
 
-		if (ctrlPressed && event.sdlEvent.key.keysym.sym == SDLK_s) {
+		if (ctrlPressed && shiftPressed && event.sdlEvent.key.keysym.sym == SDLK_s) // Ctrl + Shift + S save scene as
+		{
+			if (_ctx && _ctx->eventDispatcher)
+			{
+				_ctx->eventDispatcher->trigger<Events::SceneSaveAsEvent>({});
+			}
+			event.handled = true;
+		}
+		else if (ctrlPressed && event.sdlEvent.key.keysym.sym == SDLK_s)
+		{
+			// Ctrl + S save to current scene
 			save_scene();
 			event.handled = true;
 		}
-		else if (ctrlPressed && event.sdlEvent.key.keysym.sym == SDLK_o) {
+		else if (ctrlPressed && event.sdlEvent.key.keysym.sym == SDLK_o)
+		{
+			// Ctrl + O reload current scene file path
 			load_scene(_scene.get_file_path());
 			event.handled = true;
 		}
-		else if (ctrlPressed && event.sdlEvent.key.keysym.sym == SDLK_n) {
+		else if (ctrlPressed && event.sdlEvent.key.keysym.sym == SDLK_n)
+		{
+			// Ctrl + N create new empty scene
 			new_scene();
 			event.handled = true;
 		}
@@ -143,6 +158,8 @@ bool SceneLayer::save_scene(const std::filesystem::path & filePath)
 	}
 	_scene.set_file_path(targetPath);
 
+	sync_environment_from_renderer();
+
 	auto& env = _scene.get_environment_settings();
 	env.exposure = static_cast<float>(CVarSystem::Get()->GetFloatCVar("r.exposure"));
 	env.bloomStrength = static_cast<float>(CVarSystem::Get()->GetFloatCVar("r.bloom.strength"));
@@ -153,6 +170,42 @@ bool SceneLayer::save_scene(const std::filesystem::path & filePath)
 		fmt::println("SceneLayer: Saved scene '{}' to '{}'", env.sceneName, targetPath.generic_string());
 	}
 	return ok;
+}
+
+bool SceneLayer::save_scene_as(const std::filesystem::path& newFilePath, const std::string& newSceneName)
+{
+	if (newFilePath.empty())
+		return false;
+
+	std::filesystem::path finalPath = newFilePath;
+	if (finalPath.extension() != ".scene")
+	{
+		finalPath.replace_extension(".scene");
+	}
+
+	std::error_code ec;
+	bool isDifferentFile = !std::filesystem::exists(finalPath, ec) || !std::filesystem::equivalent(
+		finalPath, _scene.get_file_path(), ec);
+	if (isDifferentFile)
+	{
+		_scene.get_environment_settings().sceneUUID = UUID::generate();
+	}
+
+	if (!newSceneName.empty())
+	{
+		_scene.get_environment_settings().sceneName = newSceneName;
+	}
+	else
+	{
+		_scene.get_environment_settings().sceneName = finalPath.stem().string();
+	}
+
+	bool saved = save_scene(finalPath);
+	if (saved)
+	{
+		AssetRegistry::get().scan_directory("../../assets");
+	}
+	return saved;
 }
 
 bool SceneLayer::load_scene(const std::filesystem::path& filePath)
@@ -205,10 +258,39 @@ bool SceneLayer::load_scene(const std::filesystem::path& filePath)
 	return loaded;
 }
 
+void SceneLayer::sync_environment_from_renderer()
+{
+	if (!_ctx || !_ctx->renderer)
+		return;
+
+	auto& env = _scene.get_environment_settings();
+	if (_ctx->renderer->is_using_hdr_environment()) {
+		std::filesystem::path hdrPath = _ctx->renderer->get_environment_path();
+		UUID hdrUuid = _ctx->renderer->get_environment_hdr_uuid();
+
+		env.useHDRSky = true;
+		env.hdrEnvironmentPath = hdrPath;
+
+		if (hdrUuid.is_valid()) {
+			env.hdrEnvironmentUUID = hdrUuid;
+		}
+		else if (!hdrPath.empty()) {
+			env.hdrEnvironmentUUID = AssetRegistry::get().resolve_or_derive_uuid(hdrPath.string());
+		}
+	}
+	else {
+		env.useHDRSky = false;
+		env.hdrEnvironmentUUID = UUID::null();
+		env.hdrEnvironmentPath.clear();
+	}
+}
+
 void SceneLayer::begin_play()
 {
 	if (_isPlayMode)
 		return;
+
+	sync_environment_from_renderer();
 
 	_playModeSnapshotYaml = SceneSerializer::serialize_to_string(_scene.get_registry(), _scene.get_environment_settings());
 	_isPlayMode = true;
@@ -301,6 +383,8 @@ void SceneLayer::resolve_streamed_component_assets(entt::registry& reg)
 
 void SceneLayer::update_camera_and_lighting(float deltaTime)
 {
+	sync_environment_from_renderer();
+	
 	entt::registry& reg = _scene.get_registry();
 	GPUSceneData& sceneData = _scene.get_scene_data();
 	SceneEnvironmentSettings& env = _scene.get_environment_settings();

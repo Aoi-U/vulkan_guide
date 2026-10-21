@@ -25,7 +25,10 @@ public:
 
 	void new_scene(const std::string& name = "Untitled Scene");
 	bool save_scene(const std::filesystem::path& filePath = "");
+	bool save_scene_as(const std::filesystem::path& newFilePath, const std::string& newSceneName = "");
 	bool load_scene(const std::filesystem::path& filePath);
+
+	void sync_environment_from_renderer();
 
 	// play/stop 
 	void begin_play();

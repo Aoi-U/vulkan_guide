@@ -1,12 +1,11 @@
-# Gather source and header files for compilation
-file(GLOB_RECURSE CORE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-file(GLOB_RECURSE CORE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
-
-# Build core as a static library
-add_library(core STATIC
-    ${CORE_SOURCES}
-    ${CORE_HEADERS}
+file(GLOB_RECURSE CORE_SOURCES 
+    "*.cpp"
+    "*.h"
 )
+
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${CORE_SOURCES})
+
+add_library(core STATIC ${CORE_SOURCES})
 
 # Keep include paths public so downstream targets (graphics, window, app) retain access
 target_include_directories(core PUBLIC

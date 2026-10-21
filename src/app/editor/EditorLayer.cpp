@@ -115,6 +115,11 @@ void EditorLayer::on_attach(EngineContext& ctx)
 			_imguiFrameActive = false;
 		}
 		});
+
+	if (_ctx->eventDispatcher)
+	{
+		_ctx->eventDispatcher->sink<Events::SceneSaveAsEvent>().connect<&EditorLayer::on_save_as>(this);
+	}
 }
 
 void EditorLayer::on_detach()
@@ -129,6 +134,11 @@ void EditorLayer::on_detach()
 	_guiRenderer.cleanup();
 	_sceneColorDescriptor = VK_NULL_HANDLE;
 	_imguiFrameActive = false;
+
+	if (_ctx && _ctx->eventDispatcher)
+	{
+		_ctx->eventDispatcher->sink<Events::SceneSaveAsEvent>().disconnect(this);
+	}
 
 	ILayer::on_detach();
 }
@@ -226,46 +236,163 @@ void EditorLayer::on_event(EngineEvent& event)
 void EditorLayer::draw_dockspace_and_menubar()
 {
 	ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
+	SceneLayer* sceneLayer = _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
 
-	if (ImGui::BeginMainMenuBar()) {
-		SceneLayer* sceneLayer = _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
-
-		if (ImGui::BeginMenu("File")) {
-			if (ImGui::MenuItem("New Empty Scene", "Ctrl+N") && sceneLayer) {
+	if (ImGui::BeginMainMenuBar())
+	{
+		if (ImGui::BeginMenu("File"))
+		{
+			if (ImGui::MenuItem("New Empty Scene", "Ctrl+N") && sceneLayer)
+			{
 				_editorCtx.clear_selection();
-				sceneLayer->new_scene("Empty Scene");
+				sceneLayer->new_scene("Untitled Scene");
 			}
-			if (ImGui::MenuItem("Save Scene (.scene)", "Ctrl+S") && sceneLayer) {
+
+			// open scene submenu 
+			if (ImGui::BeginMenu("Open Scene"))
+			{
+				auto sceneAssets = AssetRegistry::get().get_assets_by_type(AssetType::Scene, false);
+				if (sceneAssets.empty())
+				{
+					ImGui::TextDisabled("No .scene files found in assets/");
+				}
+				else
+				{
+					for (const auto& sMeta : sceneAssets)
+					{
+						bool isCurrent = sceneLayer && (sceneLayer->get_scene().get_file_path().filename() == sMeta.virtualPath.
+							filename());
+						std::string itemLabel = fmt::format("{} ({})", sMeta.name, sMeta.virtualPath.filename().string());
+						if (ImGui::MenuItem(itemLabel.c_str(), nullptr, isCurrent) && sceneLayer)
+						{
+							_editorCtx.clear_selection();
+							sceneLayer->load_scene(sMeta.virtualPath);
+						}
+					}
+				}
+				ImGui::EndMenu();
+			}
+
+			ImGui::Separator();
+
+			std::string currentFileName = (sceneLayer && !sceneLayer->get_scene().get_file_path().empty())
+				                              ? sceneLayer->get_scene().get_file_path().filename().string()
+				                              : "default.scene";
+			std::string saveLabel = fmt::format("Save '{}'", currentFileName);
+
+			if (ImGui::MenuItem(saveLabel.c_str(), "Ctrl+S") && sceneLayer)
+			{
 				sceneLayer->save_scene();
 			}
-			if (ImGui::MenuItem("Reload Scene (.scene)", "Ctrl+O") && sceneLayer) {
+
+			if (ImGui::MenuItem("Save Scene As...", "Ctrl+Shift+S"))
+			{
+				open_save_scene_as_popup();
+			}
+
+			ImGui::Separator();
+
+			if (ImGui::MenuItem("Reload Current Scene", "Ctrl+O") && sceneLayer)
+			{
 				_editorCtx.clear_selection();
 				sceneLayer->load_scene(sceneLayer->get_scene().get_file_path());
+			}
+
+			ImGui::EndMenu();
+		}
+
+		if (ImGui::BeginMenu("Assets"))
+		{
+			if (ImGui::MenuItem("Rescan & Cook Missing Assets"))
+			{
+				AssetRegistry::get().scan_directory("../../assets");
+				AssetImporter::cook_missing_assets();
+			}
+			if (ImGui::MenuItem("Print Asset Manifest to Console"))
+			{
+				AssetRegistry::get().print_manifest();
 			}
 			ImGui::EndMenu();
 		}
 
-		// Play / Stop Toolbar button right in the menu bar
-		if (sceneLayer) {
+		if (ImGui::BeginMenu("Environment"))
+		{
+			if (ImGui::MenuItem("Reset to Procedural Sky") && _ctx->renderer)
+			{
+				_ctx->renderer->remove_environment();
+				if (sceneLayer) sceneLayer->sync_environment_from_renderer();
+			}
+			if (ImGui::BeginMenu("Load HDR Environment"))
+			{
+				auto hdrAssets = AssetRegistry::get().get_assets_by_type(AssetType::EnvironmentHDR, false);
+				for (const auto& hdr : hdrAssets) {
+					if (ImGui::MenuItem(hdr.name.c_str()) && _ctx->renderer) {
+						_ctx->renderer->load_environment(hdr.virtualPath, hdr.uuid);
+						if (sceneLayer) sceneLayer->sync_environment_from_renderer();
+					}
+				}
+				ImGui::EndMenu();
+			}
+			ImGui::EndMenu();
+		}
+
+		// play/stop button
+		if (sceneLayer)
+		{
 			ImGui::Separator();
-			if (!sceneLayer->is_playing()) {
+			if (!sceneLayer->is_playing())
+			{
 				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.55f, 0.25f, 1.0f));
-				if (ImGui::SmallButton("  Play  ")) {
+				if (ImGui::SmallButton("  Play  "))
+				{
 					sceneLayer->begin_play();
 				}
 				ImGui::PopStyleColor();
 			}
-			else {
+			else
+			{
 				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.75f, 0.22f, 0.22f, 1.0f));
-				if (ImGui::SmallButton("  Stop  ")) {
+				if (ImGui::SmallButton("  Stop  "))
+				{
 					_editorCtx.clear_selection();
 					sceneLayer->end_play();
 				}
 				ImGui::PopStyleColor();
 			}
+
+			// active scene name and save destination indicator 
+			ImGui::Separator();
+			const auto& env = sceneLayer->get_scene().get_environment_settings();
+			const auto& activePath = sceneLayer->get_scene().get_file_path();
+			bool existsOnDisk = !activePath.empty() && std::filesystem::exists(activePath);
+
+			ImGui::TextColored(
+				existsOnDisk ? ImVec4(0.45f, 0.85f, 1.0f, 1.0f) : ImVec4(0.95f, 0.78f, 0.30f, 1.0f),
+				"Scene: %s [%s]",
+				env.sceneName.c_str(),
+				activePath.empty() ? "Unsaved" : activePath.filename().string().c_str()
+			);
+
+			if (ImGui::IsItemHovered())
+			{
+				ImGui::BeginTooltip();
+				ImGui::Text("Scene Name: %s", env.sceneName.c_str());
+				ImGui::Text("Scene UUID: %s", env.sceneUUID.to_string().c_str());
+				ImGui::Text("Save Target: %s", activePath.generic_string().c_str());
+				ImGui::Text("Status: %s", existsOnDisk ? "Saved on disk" : "New / Unsaved file");
+				ImGui::Text("Sky Mode: %s", (_ctx->renderer && _ctx->renderer->is_using_hdr_environment())
+					                            ? fmt::format(
+						                            "HDR ({})", _ctx->renderer->get_environment_path().filename().string()).
+					                            c_str()
+					                            : "Procedural");
+				ImGui::EndTooltip();
+			}
 		}
+
 		ImGui::EndMainMenuBar();
 	}
+
+	draw_save_scene_as_popup();
 }
 
 void EditorLayer::draw_viewport_panel()
@@ -333,11 +460,17 @@ void EditorLayer::draw_viewport_panel()
 									_ctx->renderer->mark_scene_dirty();
 							}
 							else if (meta->type == AssetType::EnvironmentHDR && _ctx->renderer) {
-								_ctx->renderer->load_environment(meta->virtualPath);
+								_ctx->renderer->load_environment(meta->virtualPath, meta->uuid);
+								SceneLayer* sceneLayer = _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
+								if (sceneLayer) 
+									sceneLayer->sync_environment_from_renderer();
 							}
-							else if (meta->type == AssetType::Scene && _ctx->activeRegistry) {
-								_editorCtx.clear_selection();
-								SceneSerializer::load_scene(meta->virtualPath, *_ctx->activeRegistry, _sceneEnvSettings, _ctx->resourceManager, _ctx->renderer);
+							else if (meta->type == AssetType::Scene) {
+								SceneLayer* sceneLayer = _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
+								if (sceneLayer) {
+									_editorCtx.clear_selection();
+									sceneLayer->load_scene(meta->virtualPath);
+								}
 							}
 						}
 					}
@@ -863,4 +996,101 @@ entt::entity EditorLayer::pick_entity_at_mouse(const glm::vec2& mousePos, const 
 	}
 
 	return closestEntity;
+}
+
+void EditorLayer::open_save_scene_as_popup()
+{
+	SceneLayer* sceneLayer = _ctx && _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
+	if (sceneLayer)
+	{
+		const auto& env = sceneLayer->get_scene().get_environment_settings();
+		const auto& curPath = sceneLayer->get_scene().get_file_path();
+
+		std::snprintf(_saveAsSceneNameBuf, sizeof(_saveAsSceneNameBuf), "%s", env.sceneName.c_str());
+		std::string stem = curPath.empty() ? "new_scene" : curPath.stem().string();
+		std::snprintf(_saveAsFileNameBuf, sizeof(_saveAsFileNameBuf), "%s_copy.scene", stem.c_str());
+	}
+	_openSaveAsPopup = true;
+}
+
+void EditorLayer::draw_save_scene_as_popup()
+{
+	if (_openSaveAsPopup)
+	{
+		ImGui::OpenPopup("Save Scene As");
+		_openSaveAsPopup = false;
+	}
+
+	ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+	ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+	ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Appearing);
+
+	if (ImGui::BeginPopupModal("Save Scene As", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		SceneLayer* sceneLayer = _ctx->layerStack ? _ctx->layerStack->get_layer<SceneLayer>() : nullptr;
+
+		ImGui::InputText("Scene Name", _saveAsSceneNameBuf, sizeof(_saveAsSceneNameBuf));
+		ImGui::InputText("File Name (.scene)", _saveAsFileNameBuf, sizeof(_saveAsFileNameBuf));
+
+		std::filesystem::path scenesDir = "../../assets/scenes";
+		std::filesystem::path candidateName = (_saveAsFileNameBuf[0] != '\0') ? _saveAsFileNameBuf : "untitled.scene";
+		if (candidateName.extension() != ".scene")
+		{
+			candidateName.replace_extension(".scene");
+		}
+		std::filesystem::path targetPath = scenesDir / candidateName.filename();
+
+		ImGui::Spacing();
+		ImGui::TextDisabled("Target Path: %s", targetPath.generic_string().c_str());
+
+		bool fileAlreadyExists = std::filesystem::exists(targetPath);
+		if (fileAlreadyExists)
+		{
+			ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f), "Warning: '%s' already exists and will be overwritten.",
+			                   candidateName.filename().string().c_str());
+		}
+
+		// Quick-select list of existing scenes in assets/scenes/
+		auto existingScenes = AssetRegistry::get().get_assets_by_type(AssetType::Scene, false);
+		if (!existingScenes.empty())
+		{
+			ImGui::Spacing();
+			ImGui::TextUnformatted("Existing Scenes in assets/scenes/:");
+			ImGui::BeginChild("ExistingScenesList", ImVec2(0.0f, 110.0f), true);
+			for (const auto& sMeta : existingScenes)
+			{
+				std::string fname = sMeta.virtualPath.filename().string();
+				if (ImGui::Selectable(fname.c_str(), fname == candidateName.filename().string()))
+				{
+					std::snprintf(_saveAsSceneNameBuf, sizeof(_saveAsSceneNameBuf), "%s", sMeta.name.c_str());
+					std::snprintf(_saveAsFileNameBuf, sizeof(_saveAsFileNameBuf), "%s", fname.c_str());
+				}
+			}
+			ImGui::EndChild();
+		}
+
+		ImGui::Spacing();
+		ImGui::Separator();
+
+		if (ImGui::Button("Save", ImVec2(140.0f, 0.0f)))
+		{
+			if (sceneLayer)
+			{
+				sceneLayer->save_scene_as(targetPath, _saveAsSceneNameBuf);
+			}
+			ImGui::CloseCurrentPopup();
+		}
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel", ImVec2(140.0f, 0.0f)))
+		{
+			ImGui::CloseCurrentPopup();
+		}
+
+		ImGui::EndPopup();
+	}
+}
+
+void EditorLayer::on_save_as(const Events::SceneSaveAsEvent&)
+{
+	open_save_scene_as_popup();
 }

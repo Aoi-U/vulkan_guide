@@ -1,7 +1,12 @@
-add_executable(app)
+file(GLOB_RECURSE APP_SOURCES 
+    "*.cpp"
+    "*.h"
+)
 
-file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-file(GLOB_RECURSE APP_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${APP_SOURCES})
+
+add_executable(app ${APP_SOURCES})
+#target_link_libraries(app PRIVATE core window resources graphics scene Vulkan::Vulkan)
 
 target_sources(app PRIVATE
     ${APP_SOURCES}

@@ -29,6 +29,8 @@ namespace Events
 	{
 		std::filesystem::path filePath;
 	};
+	
+	struct SceneSaveAsEvent{};
 
 	struct SceneLoadEvent {
 		std::filesystem::path filePath;

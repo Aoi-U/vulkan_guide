@@ -10,6 +10,8 @@
 #include <vector>
 #include <deque>
 
+#include "Events.h"
+
 class EditorLayer : public ILayer
 {
 public:
@@ -48,6 +50,10 @@ private:
 	void delete_entity_recursive(entt::entity entity, bool detachFromParent = true);
 	entt::entity pick_entity_at_mouse(const glm::vec2& mousePos, const glm::vec2& viewportPos, const glm::vec2& viewportSize);
 
+	void open_save_scene_as_popup();
+	void draw_save_scene_as_popup();
+	void on_save_as(const Events::SceneSaveAsEvent&);
+
 	GuiRenderer _guiRenderer;
 	EditorContext _editorCtx;
 	ContentBrowserPanel _contentBrowserPanel;
@@ -60,4 +66,8 @@ private:
 
 	std::deque<float> _frameTimeHistory;
 	static constexpr size_t MAX_FRAME_HISTORY = 120;
+
+	bool _openSaveAsPopup{ false };
+	char _saveAsSceneNameBuf[128]{ "New Scene" };
+	char _saveAsFileNameBuf[128]{ "new_scene.scene" };
 };

@@ -1,12 +1,11 @@
-add_library(window STATIC)
-
-file(GLOB_RECURSE WINDOW_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-file(GLOB_RECURSE WINDOW_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
-
-target_sources(window PRIVATE
-    ${WINDOW_SOURCES}
-    ${WINDOW_HEADERS}
+file(GLOB_RECURSE WINDOW_SOURCES 
+    "*.cpp"
+    "*.h"
 )
+
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${WINDOW_SOURCES})
+
+add_library(window STATIC ${WINDOW_SOURCES})
 
 target_include_directories(window PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

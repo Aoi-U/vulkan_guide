@@ -17,6 +17,7 @@ public:
 	// create a vulkan surface for the window
 	bool create_surface(VkInstance instance, VkSurfaceKHR* surface);
 
+	void set_title(const std::string& title);
 
 	void poll_events(entt::dispatcher& dispatcher);
 

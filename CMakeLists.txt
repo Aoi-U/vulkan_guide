@@ -10,7 +10,7 @@ find_package(Vulkan REQUIRED)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${PROJECT_SOURCE_DIR}/bin")
 
-set_property(GLOBAL PROPERTY USE_FOLDERS OFF)
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
 # Third party dependencies
 add_subdirectory(third_party)

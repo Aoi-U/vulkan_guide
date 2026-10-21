@@ -1,12 +1,11 @@
-add_library(graphics STATIC)
-
-file(GLOB_RECURSE GRAPHICS_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-file(GLOB_RECURSE GRAPHICS_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
-
-target_sources(graphics PRIVATE
-    ${GRAPHICS_SOURCES}
-    ${GRAPHICS_HEADERS}
+file(GLOB_RECURSE GRAPHICS_SOURCES 
+    "*.cpp"
+    "*.h"
 )
+
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${GRAPHICS_SOURCES})
+
+add_library(graphics STATIC ${GRAPHICS_SOURCES})
 
 target_include_directories(graphics PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

@@ -1,12 +1,11 @@
-add_library(scene STATIC)
-
-file(GLOB_RECURSE SCENE_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
-file(GLOB_RECURSE SCENE_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.h")
-
-target_sources(scene PRIVATE
-    ${SCENE_SOURCES}
-    ${SCENE_HEADERS}
+file(GLOB_RECURSE SCENE_SOURCES 
+    "*.cpp"
+    "*.h"
 )
+
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}" FILES ${SCENE_SOURCES})
+
+add_library(scene STATIC ${SCENE_SOURCES})
 
 target_include_directories(scene PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}

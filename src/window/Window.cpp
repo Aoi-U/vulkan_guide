@@ -68,3 +68,11 @@ void Window::poll_events(entt::dispatcher& dispatcher)
 bool Window::create_surface(VkInstance instance, VkSurfaceKHR* surface) {
 	return SDL_Vulkan_CreateSurface(_window, instance, surface) == SDL_TRUE;
 }
+
+void Window::set_title(const std::string& title)
+{
+	if (_window)
+	{
+		SDL_SetWindowTitle(_window, title.c_str());
+	}
+}

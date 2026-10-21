@@ -12,3 +12,4 @@
 /assets/cubemaps/*
 /assets/shaders/*.spv
 /assets/shaders/*.meta
+/.idea

@@ -16,6 +16,8 @@ struct SceneEnvironmentSettings
 	std::string sceneName{ "Untitled Scene" };
 	bool useHDRSky{ false };
 	UUID hdrEnvironmentUUID{};
+	std::filesystem::path hdrEnvironmentPath{};
+	
 	glm::vec4 ambientColor{ 0.2f, 0.2f, 0.2f, 1.0f };
 	glm::vec4 sunlightDirection{ -0.4f, -0.8f, -0.3f, 3.0f };
 	glm::vec4 sunlightColor{ 1.0f, 0.9f, 0.8f, 1.0f };

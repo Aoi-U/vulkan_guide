@@ -1,0 +1,90 @@
+sceneUUID: 7e25b0cb-782a-431a-bb83-42e5ef14b5a7
+name: test
+version: 1
+environment:
+  skyMode: HDR
+  hdrEnvironmentUUID: 533be2cb-95fd-4e52-b771-714e34d7584d
+  hdrEnvironmentPath: ../../assets/cubemaps/royal_esplanade_4k.hdr
+  ambientColor: [0.2, 0.2, 0.2, 1]
+  sunlightDirection: [-0.4239992, -0.8479984, -0.3179994, 3]
+  sunlightColor: [1, 0.9, 0.8, 1]
+  postProcess:
+    exposure: 1
+    bloomStrength: 0.04
+    enableSSAO: true
+entities:
+  - uuid: dff7adb6-c68a-45ff-93d5-4e64dddd778f
+    prefabAssetUUID: b0dede0b-f40d-588e-8a28-a58eb10da337
+    HierarchyComponent:
+      parentUUID: 0
+      childrenUUIDs: []
+    TagComponent:
+      tag: Suzanne
+    TransformComponent:
+      position: [0, 0, 2.0384264]
+      rotation: [0, -0, 0]
+      scale: [1, 1, 1]
+    MeshComponent:
+      meshAssetUUID: 4663d582-67cb-5fe2-89f9-80475e86e9b7
+      meshId: basicmesh_mesh_2_prim_0
+      startIndex: 0
+      count: 2904
+      visible: true
+      bounds:
+        origin: [0, 0, 0]
+        sphereRadius: 1.887685
+        extents: [1.3671875, 0.984375, 0.8515625]
+    MaterialComponent:
+      materialAssetUUID: 00000000-0000-0000-0000-000000000000
+      doubleSided: false
+      alphaMode: 0
+  - uuid: b933d272-cc37-4c0e-ac74-56d0599eaf7b
+    prefabAssetUUID: b0dede0b-f40d-588e-8a28-a58eb10da337
+    HierarchyComponent:
+      parentUUID: 0
+      childrenUUIDs: []
+    TagComponent:
+      tag: Sphere
+    TransformComponent:
+      position: [3.9471772, 0, 0]
+      rotation: [0, -0, 0]
+      scale: [1, 1, 1]
+    MeshComponent:
+      meshAssetUUID: b1f56547-7d06-5521-b7b9-c1e5e1fc2e6f
+      meshId: basicmesh_mesh_1_prim_0
+      startIndex: 0
+      count: 2880
+      visible: true
+      bounds:
+        origin: [3.2782555e-07, 0, -3.2782555e-07]
+        sphereRadius: 1.7320503
+        extents: [0.9999994, 1, 0.99999964]
+    MaterialComponent:
+      materialAssetUUID: 00000000-0000-0000-0000-000000000000
+      doubleSided: false
+      alphaMode: 0
+  - uuid: f816e5be-b27f-4f8d-8b57-3cd5ecaf56da
+    prefabAssetUUID: b0dede0b-f40d-588e-8a28-a58eb10da337
+    HierarchyComponent:
+      parentUUID: 0
+      childrenUUIDs: []
+    TagComponent:
+      tag: Cube
+    TransformComponent:
+      position: [-4.235996, 0, 0]
+      rotation: [0, -0, 0]
+      scale: [1, 1, 1]
+    MeshComponent:
+      meshAssetUUID: 84f766ad-cd70-5576-ba90-1300827e717e
+      meshId: basicmesh_mesh_0_prim_0
+      startIndex: 0
+      count: 36
+      visible: true
+      bounds:
+        origin: [0, 0, 0]
+        sphereRadius: 1.7320508
+        extents: [1, 1, 1]
+    MaterialComponent:
+      materialAssetUUID: 67a15c3b-e0b9-5b2c-aa82-6954c7684a88
+      doubleSided: true
+      alphaMode: 0
