@@ -137,7 +137,7 @@ namespace AssetUtils
 
 		if (ext == ".glb" || ext == ".gltf")
 			return AssetType::Model;
-		if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gtex")
+		if (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".tga" || ext == ".gtex" || ext == ".vtex")
 			return AssetType::Texture;
 		if (ext == ".gmesh")
 			return AssetType::Mesh;
@@ -198,6 +198,7 @@ bool AssetSerializer::save_meta_file(const std::filesystem::path& metaFilePath, 
 		out << YAML::Key << "sRGB" << YAML::Value << ts.sRGB;
 		out << YAML::Key << "generateMips" << YAML::Value << ts.generateMips;
 		out << YAML::Key << "compressBC7" << YAML::Value << ts.compress;
+		out << YAML::Key << "virtualTexture" << YAML::Value << ts.virtualTexture;
 		out << YAML::Key << "maxResolution" << YAML::Value << ts.maxResolution;
 		out << YAML::Key << "sampler" << YAML::Value << YAML::BeginMap;
 		out << YAML::Key << "magFilter" << YAML::Value << std::string(filter_to_string(ts.magFilter));
@@ -287,10 +288,11 @@ bool AssetSerializer::load_meta_file(const std::filesystem::path& metaFilePath, 
 		if (YAML::Node settings = root["importSettings"]) {
 			if (outMetadata.type == AssetType::Texture || outMetadata.type == AssetType::EnvironmentHDR) {
 				auto& ts = outMetadata.textureSettings;
-				if (settings["sRGB"])          ts.sRGB = settings["sRGB"].as<bool>();
-				if (settings["generateMips"])  ts.generateMips = settings["generateMips"].as<bool>();
-				if (settings["compressBC7"])   ts.compress = settings["compressBC7"].as<bool>();
-				if (settings["maxResolution"]) ts.maxResolution = settings["maxResolution"].as<uint32_t>();
+				if (settings["sRGB"])						ts.sRGB = settings["sRGB"].as<bool>();
+				if (settings["generateMips"])		ts.generateMips = settings["generateMips"].as<bool>();
+				if (settings["compressBC7"])		ts.compress = settings["compressBC7"].as<bool>();
+				if (settings["virtualTexture"])	ts.virtualTexture = settings["virtualTexture"].as<bool>();
+				if (settings["maxResolution"])	ts.maxResolution = settings["maxResolution"].as<uint32_t>();
 
 				if (YAML::Node sampler = settings["sampler"]) {
 					if (sampler["magFilter"])    ts.magFilter = filter_from_string(sampler["magFilter"].as<std::string>());

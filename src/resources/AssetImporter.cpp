@@ -1,5 +1,6 @@
 #include "AssetImporter.h"
 
+#include <graphics/vt/VirtualTextureTypes.h>
 #include <resources/AssetRegistry.h>
 #include <resources/AssetSerializer.h>
 #include <meshoptimizer/src/meshoptimizer.h>
@@ -89,6 +90,149 @@ namespace // helpers
 			v.tangent = glm::vec4(ortho, 1.0f);
 		}
 	}
+
+	// wrap or clamp 1d integer texel coord based on mode
+	int32_t wrap_texel_coord(const int32_t coord, const int32_t size, const VkSamplerAddressMode mode) noexcept
+	{
+		if (size <= 1)
+			return 0;
+
+		switch (mode)
+		{
+		case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE:
+		case VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER:
+			return std::clamp(coord, 0, size - 1);
+		case VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT:
+		{
+			const int32_t period = 2 * size;
+			int32_t m = coord % period;
+			if (m < 0)
+				m += period;
+			return (m < size) ? m : (period - 1 - m);
+		}
+		case VK_SAMPLER_ADDRESS_MODE_REPEAT:
+		default:
+		{
+			int32_t m = coord % size;
+			return (m < 0) ? (m + size) : m;
+		}
+		}
+	}
+
+	float srgb_to_linear(const uint8_t byteVal) noexcept
+	{
+		const float s = static_cast<float>(byteVal) * (1.0f / 255.0f);
+		return (s <= 0.04045f) ? (s / 12.92f) : std::pow((s + 0.055f) / 1.055f, 2.4f);
+	}
+
+	uint8_t linear_to_srgb(const float linearVal) noexcept
+	{
+		const float clamped = std::clamp(linearVal, 0.0f, 1.0f);
+		const float s = (clamped <= 0.0031308f) ? (clamped * 12.92f) : (1.055f * std::pow(clamped, 1.0f / 2.4f) - 0.055f);
+		return static_cast<uint8_t>(std::clamp(s * 255.0f + 0.5f, 0.0f, 255.0f));
+	}
+
+	// downsample rgba8 image by 2x using 2x2 box filter (gamma-corrected if isSRGB is true)
+	std::vector<uint8_t> downsample_mip_2x_rgba8(const uint8_t* srcPixels, const uint32_t srcWidth, const uint32_t srcHeight,
+		const uint32_t dstWidth, const uint32_t dstHeight, const bool isSRGB)
+	{
+		std::vector<uint8_t> dstPixels(static_cast<size_t>(dstWidth) * dstHeight * 4u);
+
+		for (uint32_t y = 0; y < dstHeight; y++)
+		{
+			const uint32_t sy0 = std::min(srcHeight - 1u, y * 2u);
+			const uint32_t sy1 = std::min(srcHeight - 1u, y * 2u + 1u);
+
+			for (uint32_t x = 0; x < dstWidth; x++)
+			{
+				const uint32_t sx0 = std::min(srcWidth - 1u, x * 2u);
+				const uint32_t sx1 = std::min(srcWidth - 1u, x * 2u + 1u);
+
+				const uint8_t* p00 = &srcPixels[(static_cast<size_t>(sy0) * srcWidth + sx0) * 4u];
+				const uint8_t* p10 = &srcPixels[(static_cast<size_t>(sy0) * srcWidth + sx1) * 4u];
+				const uint8_t* p01 = &srcPixels[(static_cast<size_t>(sy1) * srcWidth + sx0) * 4u];
+				const uint8_t* p11 = &srcPixels[(static_cast<size_t>(sy1) * srcWidth + sx1) * 4u];
+
+				uint8_t* outPx = &dstPixels[(static_cast<size_t>(y) * dstWidth + x) * 4u];
+
+				if (isSRGB)
+				{
+					for (int c = 0; c < 3; c++)
+					{
+						float avgLinear = 0.25f * (
+							srgb_to_linear(p00[c]) +
+							srgb_to_linear(p10[c]) +
+							srgb_to_linear(p01[c]) +
+							srgb_to_linear(p11[c])
+							);
+						outPx[c] = linear_to_srgb(avgLinear);
+					}
+					outPx[3] = static_cast<uint8_t>((uint32_t(p00[3]) + p10[3] + p01[3] + p11[3] + 2u) >> 2u);
+				}
+				else
+				{
+					for (int c = 0; c < 4; c++)
+						outPx[c] = static_cast<uint8_t>((uint32_t(p00[c]) + p10[c] + p01[c] + p11[c] + 2u) >> 2u);
+				}
+			}
+		}
+
+		return dstPixels;
+	}
+
+	// extract single 136x136 tile with 4 pixel border around all sides
+	void extract_padded_tile_rgba8(const uint8_t* mipPixels, uint32_t mipWidth, uint32_t mipHeight, uint32_t tileX, uint32_t tileY,
+		VkSamplerAddressMode addressU, VkSamplerAddressMode addressV, uint8_t* outPhysicalTilePixels)
+	{
+		const int32_t w = static_cast<int32_t>(mipWidth);
+		const int32_t h = static_cast<int32_t>(mipHeight);
+
+		// for mips smaller than VT_LOGICAL_TILE_SIZE, single tile covers entire uv space in shader
+		// scaling logical coord [0..127] onto [0..w - 1] ensures sub-128 mips map 1:1 to uv [0, 1)
+		const bool scaleSubTileX = (mipWidth < VT_LOGICAL_TILE_SIZE);
+		const bool scaleSubTileY = (mipHeight < VT_LOGICAL_TILE_SIZE);
+
+		for (uint32_t py = 0; py < VT_PHYSICAL_TILE_SIZE; py++)
+		{
+			const int32_t localY = static_cast<int32_t>(py) - static_cast<int32_t>(VT_TILE_BORDER);
+			int32_t srcY = 0;
+
+			if (scaleSubTileY)
+			{
+				// map [-4..131] onto [-border..h + border)
+				const int32_t scaledY = static_cast<int32_t>(std::floor((
+					static_cast<float>(localY) + 0.5f) * static_cast<float>(h) / static_cast<float>(VT_LOGICAL_TILE_SIZE)));
+				srcY = wrap_texel_coord(scaledY, h, addressV);
+			}
+			else
+			{
+				const int32_t globalY = static_cast<int32_t>(tileY * VT_LOGICAL_TILE_SIZE) + localY;
+				srcY = wrap_texel_coord(globalY, h, addressV);
+			}
+
+			for (uint32_t px = 0; px < VT_PHYSICAL_TILE_SIZE; px++)
+			{
+				const int32_t localX = static_cast<int32_t>(px) - static_cast<int32_t>(VT_TILE_BORDER);
+				int32_t srcX = 0;
+
+				if (scaleSubTileX)
+				{
+					const int32_t scaledX = static_cast<int32_t>(std::floor(
+						(static_cast<float>(localX) + 0.5f) * static_cast<float>(w) / static_cast<float>(VT_LOGICAL_TILE_SIZE)));
+					srcX = wrap_texel_coord(scaledX, w, addressU);
+				}
+				else
+				{
+					const int32_t globalX = static_cast<int32_t>(tileX * VT_LOGICAL_TILE_SIZE) + localX;
+					srcX = wrap_texel_coord(globalX, w, addressU);
+				}
+
+				const uint8_t* srcTexel = &mipPixels[(static_cast<size_t>(srcY) * mipWidth + static_cast<uint32_t>(srcX)) * 4u];
+				uint8_t* dstTexel = &outPhysicalTilePixels[(static_cast<size_t>(py) * VT_PHYSICAL_TILE_SIZE + px) * 4u];
+				memcpy(dstTexel, srcTexel, 4u);
+			}
+		}
+	}
 }
 
 
@@ -137,7 +281,7 @@ void AssetImporter::cook_missing_assets()
 							if (!texUuid.is_valid()) return false;
 							std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
 							return !std::filesystem::exists(gtex);
-						};
+							};
 						if (tex_missing(matData.albedoTextureUUID) ||
 							tex_missing(matData.normalTextureUUID) ||
 							tex_missing(matData.metalRoughTextureUUID) ||
@@ -165,6 +309,9 @@ void AssetImporter::cook_missing_assets()
 
 bool AssetImporter::cook_texture(const AssetMetadata& texMeta)
 {
+	if (texMeta.textureSettings.virtualTexture || texMeta.cookedPath.extension() == ".vtex")
+		return cook_virtual_texture(texMeta);
+
 	if (!std::filesystem::exists(texMeta.virtualPath)) {
 		fmt::println("AssetImporter: source texture missing: {}", texMeta.virtualPath.string());
 		return false;
@@ -228,6 +375,194 @@ bool AssetImporter::write_gtex_file(const std::filesystem::path& cookedPath, con
 	out.write(reinterpret_cast<const char*>(pixelBytes.data()), static_cast<std::streamsize>(pixelBytes.size_bytes()));
 
 	return out.good();
+}
+
+bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
+{
+	if (!std::filesystem::exists(texMeta.virtualPath))
+	{
+		fmt::println("AssetImporter: source virtual texture missing: {}", texMeta.virtualPath.string());
+		return false;
+	}
+
+	int width = 0, height = 0, channels = 0;
+	stbi_uc* pixels = stbi_load(texMeta.virtualPath.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
+	if (!pixels)
+	{
+		fmt::println("AssetImporter: failed to load pixels from file '{}'", texMeta.virtualPath.string());
+		return false;
+	}
+
+	std::filesystem::path targetPath = texMeta.cookedPath;
+	if (targetPath.empty() || targetPath.extension() != ".vtex")
+		targetPath = std::filesystem::path(".cache/textures") / (texMeta.uuid.to_string() + ".vtex");
+
+	bool ok = cook_vtex_from_rgba8(targetPath, pixels, static_cast<uint32_t>(width), static_cast<uint32_t>(height), texMeta.textureSettings);
+
+	stbi_image_free(pixels);
+
+	if (ok)
+	{
+		fmt::println("AssetImporter: cooked virtual texture '{}'", texMeta.name);
+	}
+	return ok;
+}
+
+bool AssetImporter::cook_vtex_from_rgba8(const std::filesystem::path& cookedPath, const uint8_t* mip0Pixels,
+	uint32_t width, uint32_t height, const TextureImportSettings& settings)
+{
+	if (!mip0Pixels || width == 0 || height == 0)
+		return false;
+
+	// compute number of virtual tile mip levels so tail mip is a single 1x1 tile (128x128 texel)
+	const uint32_t tilesXMip0 = std::max(1u, (width + VT_LOGICAL_TILE_SIZE - 1u) / VT_LOGICAL_TILE_SIZE);
+	const uint32_t tilesYMip0 = std::max(1u, (height + VT_LOGICAL_TILE_SIZE - 1u) / VT_LOGICAL_TILE_SIZE);
+	const uint32_t maxTileSpan = std::max(tilesXMip0, tilesYMip0);
+
+	uint32_t mipLevels = settings.generateMips ? (static_cast<uint32_t>(std::floor(std::log2(maxTileSpan))) + 1u) : 1u;
+	mipLevels = std::clamp(mipLevels, 1u, MAX_VTEX_MIPS);
+
+	// populate .vtex header and per mip layout
+	CookedVTexHeader header{};
+	header.magic = VTEX_MAGIC;
+	header.version = 1;
+	header.virtualWidth = width;
+	header.virtualHeight = height;
+	header.logicalTileSize = VT_LOGICAL_TILE_SIZE;
+	header.borderSize = VT_TILE_BORDER;
+	header.physicalTileSize = VT_PHYSICAL_TILE_SIZE;
+	header.mipLevels = mipLevels;
+	header.format = settings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : VK_FORMAT_R8G8B8A8_UNORM;
+	header.addressModeU = settings.addressModeU;
+	header.addressModeV = settings.addressModeV;
+
+	uint32_t runningTileCount = 0;
+	for (uint32_t mip = 0; mip < mipLevels; mip++)
+	{
+		const uint32_t mipW = std::max(1u, width >> mip);
+		const uint32_t mipH = std::max(1u, height >> mip);
+		const uint32_t mipTilesX = std::max(1u, tilesXMip0 >> mip);
+		const uint32_t mipTilesY = std::max(1u, tilesYMip0 >> mip);
+
+		header.mips[mip] = CookedVTexMipInfo{
+			.width = mipW,
+			.height = mipH,
+			.tilesX = mipTilesX,
+			.tilesY = mipTilesY,
+			.firstTileIndex = runningTileCount
+		};
+		runningTileCount += (mipTilesX * mipTilesY);
+	}
+	header.totalTileCount = runningTileCount;
+
+	if (cookedPath.has_parent_path())
+		std::filesystem::create_directories(cookedPath.parent_path());
+
+	std::ofstream out(cookedPath, std::ios::binary | std::ios::trunc);
+	if (!out.is_open())
+	{
+		fmt::println("AssetImporter: failed to open '{}' for writing .vtex", cookedPath.string());
+		return false;
+	}
+
+	constexpr uint32_t tileByteSize = VT_PHYSICAL_TILE_SIZE * VT_PHYSICAL_TILE_SIZE * 4u;
+	const uint64_t payloadStartOffset = sizeof(CookedVTexHeader) + static_cast<uint64_t>(header.totalTileCount) * sizeof(CookedVTexTileEntry);
+
+	// build tile offset table
+	std::vector<CookedVTexTileEntry> tileTable(header.totalTileCount);
+	for (uint32_t i = 0; i < header.totalTileCount; i++)
+	{
+		tileTable[i].byteOffset = payloadStartOffset + static_cast<uint64_t>(i) * tileByteSize;
+		tileTable[i].byteSize = tileByteSize;
+		tileTable[i].flags = 0;
+	}
+
+	// write header and tile index table
+	out.write(reinterpret_cast<const char*>(&header), sizeof(CookedVTexHeader));
+	out.write(reinterpret_cast<const char*>(tileTable.data()), static_cast<std::streamsize>(tileTable.size() * sizeof(CookedVTexTileEntry)));
+
+	// generate each mip level and stream 136x136 tiles to disk
+	std::vector<uint8_t> currentMipPixels;
+	std::vector<uint8_t> paddedTileBuffer(tileByteSize);
+
+	for (uint32_t mip = 0; mip < mipLevels; mip++)
+	{
+		const CookedVTexMipInfo& mipInfo = header.mips[mip];
+		const uint8_t* activeMipPtr = nullptr;
+
+		if (mip == 0)
+			activeMipPtr = mip0Pixels;
+		else
+		{
+			const CookedVTexMipInfo& prevMipInfo = header.mips[mip - 1];
+			const uint8_t* prevMipPtr = (mip == 1) ? mip0Pixels : currentMipPixels.data();
+			currentMipPixels = downsample_mip_2x_rgba8(prevMipPtr, prevMipInfo.width, prevMipInfo.height, mipInfo.width, mipInfo.height, settings.sRGB);
+			activeMipPtr = currentMipPixels.data();
+		}
+
+		for (uint32_t ty = 0; ty < mipInfo.tilesY; ty++)
+		{
+			for (uint32_t tx = 0; tx < mipInfo.tilesX; tx++)
+			{
+				extract_padded_tile_rgba8(activeMipPtr, mipInfo.width, mipInfo.height, tx, ty, settings.addressModeU, settings.addressModeV, paddedTileBuffer.data());
+
+				out.write(reinterpret_cast<const char*>(paddedTileBuffer.data()), static_cast<std::streamsize>(paddedTileBuffer.size()));
+			}
+		}
+	}
+
+	return out.good();
+}
+
+bool AssetImporter::read_vtex_header(const std::filesystem::path& vtexPath, CookedVTexHeader& outHeader,
+	std::vector<CookedVTexTileEntry>& outTileTable)
+{
+	std::ifstream in(vtexPath, std::ios::binary);
+	if (!in.is_open())
+		return false;
+
+	in.read(reinterpret_cast<char*>(&outHeader), sizeof(CookedVTexHeader));
+	if (!in.good() || outHeader.magic != VTEX_MAGIC || outHeader.totalTileCount == 0)
+		return false;
+
+	outTileTable.resize(outHeader.totalTileCount);
+	in.read(reinterpret_cast<char*>(outTileTable.data()), static_cast<std::streamsize>(outTileTable.size() * sizeof(CookedVTexTileEntry)));
+
+	return in.good();
+}
+
+bool AssetImporter::read_vtex_tile(const std::filesystem::path& vtexPath, const CookedVTexHeader& header,
+	std::span<const CookedVTexTileEntry> tileTable, uint32_t mipLevel, uint32_t tileX, uint32_t tileY,
+	std::vector<uint8_t>& outTilePixels)
+{
+	if (mipLevel >= header.mipLevels || mipLevel >= MAX_VTEX_MIPS)
+		return false;
+
+	const CookedVTexMipInfo& mipInfo = header.mips[mipLevel];
+	if (tileX >= mipInfo.tilesX || tileY >= mipInfo.tilesY)
+		return false;
+
+	const uint32_t flatTileIndex = mipInfo.firstTileIndex + (tileY * mipInfo.tilesX + tileX);
+	if (flatTileIndex >= tileTable.size())
+		return false;
+
+	const CookedVTexTileEntry& entry = tileTable[flatTileIndex];
+	if (entry.byteSize == 0)
+		return false;
+
+	std::ifstream in(vtexPath, std::ios::binary);
+	if (in.is_open())
+		return false;
+
+	// seek to tile offset 
+	in.seekg(static_cast<std::streamoff>(entry.byteOffset), std::ios::beg);
+	if (in.good())
+		return false;
+
+	// read 136x136 tile into output buffer
+	outTilePixels.resize(entry.byteSize);
+	in.read(reinterpret_cast<char*>(outTilePixels.data()), static_cast<std::streamsize>(entry.byteSize));
+	return in.good();
 }
 
 bool AssetImporter::cook_mesh_data(const std::filesystem::path& cookedPath, std::span<const Vertex> rawVertices, std::span<const uint32_t> rawIndices, const MeshImportSettings& settings, Bounds& outBounds)
@@ -611,7 +946,7 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 					if (!existingUuid.is_valid()) return true;
 					std::filesystem::path gtex = std::filesystem::path(".cache/textures") / (existingUuid.to_string() + ".gtex");
 					return !std::filesystem::exists(gtex) && !AssetRegistry::get().contains(existingUuid);
-				};
+					};
 				if (is_slot_stale(existingMat.albedoTextureUUID, matData.albedoTextureUUID) ||
 					is_slot_stale(existingMat.normalTextureUUID, matData.normalTextureUUID) ||
 					is_slot_stale(existingMat.metalRoughTextureUUID, matData.metalRoughTextureUUID) ||

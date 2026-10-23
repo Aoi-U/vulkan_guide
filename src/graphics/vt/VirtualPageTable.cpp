@@ -292,7 +292,7 @@ void VirtualPageTable::unmap_page(const PageTableAllocation& alloc, uint16_t loc
 	uint32_t gx = (alloc.offsetX >> mipLevel) + localTileX;
 	uint32_t gy = (alloc.offsetY >> mipLevel) + localTileY;
 	MipLevelStorage& storage = _mips[mipLevel];
-	if (gx > storage.width || gy >= storage.height)
+	if (gx >= storage.width || gy >= storage.height)
 		return;
 
 	// clear exact entry at this mip

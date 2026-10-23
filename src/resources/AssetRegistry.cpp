@@ -106,6 +106,9 @@ void AssetRegistry::scan_directory(const std::filesystem::path& rootPath)
       meta.name = canonicalId;
       meta.cookedPath = get_default_cooked_path(meta.uuid, meta.type);
 
+      if (meta.type == AssetType::Texture && meta.textureSettings.virtualTexture)
+				meta.cookedPath = std::filesystem::path(".cache/textures") / (meta.uuid.to_string() + ".vtex");
+
       // default import settings
       if (meta.type == AssetType::Texture) {
         std::string lowerName = canonicalId;

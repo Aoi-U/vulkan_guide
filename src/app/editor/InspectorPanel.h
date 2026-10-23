@@ -26,4 +26,7 @@ private:
 	MeshImportSettings _editingMeshSettings{};
 	CookedMeshHeader _inspectedMeshHeader{};
 	bool _hasValidMeshHeader{ false };
+
+	CookedVTexHeader _inspectedVTexHeader{};
+	bool _hasValidVTexHeader{ false };
 };

@@ -36,6 +36,7 @@ struct TextureImportSettings
 	bool sRGB{ false };
 	bool generateMips{ true };
 	bool compress{ false };
+	bool virtualTexture{ false };
 	uint32_t maxResolution{ 4096 };
 	VkFilter magFilter{ VK_FILTER_LINEAR };
 	VkFilter minFilter{ VK_FILTER_LINEAR };
