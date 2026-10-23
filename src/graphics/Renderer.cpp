@@ -22,6 +22,8 @@
 #include <graphics/pass/BloomPass.h>
 #include <graphics/pass/PostProcessPass.h>
 
+#include "vt/VirtualTextureSystem.h"
+
 AutoCVar_Float cvRenderScale("r.renderScale", "Scale multiplier for rendering resolution", 1.0, 0.1, 1.0,
                              CVarFlags::EditFloatSlider);
 AutoCVar_Int cvBloom("r.bloom", "Enable Bloom", 1, CVarFlags::EditCheckBox);
@@ -160,6 +162,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
   VkCommandBuffer cmd = begin_frame();
   if (!cmd)
     return;
+
+  _resourceManager->get_vtsystem().sync_gpu_updates();
 
   // record all pending resource transfers for this frame
   if (_resourceManager->get_staging_uploader().record_transfers(cmd, _frameNumber))

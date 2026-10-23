@@ -27,6 +27,7 @@ class VulkanCore;
 class ResourceManager;
 class GlobalGeometryPool;
 class AssetStreamer;
+class VirtualTextureSystem;
 
 // handle to a resource, managed by resource manager
 template<typename T>
@@ -192,6 +193,7 @@ public:
 	GlobalGeometryPool& get_geometry_pool() { return *_geometryPool; }
 	PipelineLayoutCache& get_pipeline_layout_cache() { return _layoutCache; }
 	StagingUploader& get_staging_uploader() { return *_stagingUploader; }
+	VirtualTextureSystem& get_vtsystem() { return *_vtSystem; }
 	AssetStreamer& get_asset_streamer() { return *_assetStreamer; }
 
 	template<typename T, typename... Args>
@@ -405,6 +407,7 @@ private:
 	std::deque<std::function<void()>> _mainThreadTasks;
 
 	std::unique_ptr<GlobalGeometryPool> _geometryPool;
+	std::unique_ptr<VirtualTextureSystem> _vtSystem;
 	PipelineLayoutCache _layoutCache;
 	uint64_t _currentFrame{ 0 };
 

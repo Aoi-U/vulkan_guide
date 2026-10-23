@@ -22,6 +22,24 @@ struct StagedTextureUploadDesc
 	bool generateMips{ false };
 };
 
+// subregion upload into specific mip/layer of texture
+// used by virtual texturing PhysicalTilePool and VirtualPageTable 
+struct StagedTextureRegionDesc
+{
+	VkImage dstImage{ VK_NULL_HANDLE };
+	VkFormat format{ VK_FORMAT_R8G8B8A8_UNORM };
+	VkOffset3D offset{ 0, 0, 0 };
+	VkExtent3D extent{ 1, 1,1 };
+	uint32_t mipLevel{ 0 };
+	uint32_t totalMipLevels{ 1 };
+	uint32_t baseArrayLayer{ 0 };
+	uint32_t layerCount{ 1 };
+	uint32_t totalArrayLayers{ 1 };
+	VkImageAspectFlags aspectMask{ VK_IMAGE_ASPECT_COLOR_BIT };
+	VkImageLayout oldLayout{ VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+	VkImageLayout newLayout{ VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+};
+
 class StagingUploader
 {
 public:
@@ -40,6 +58,9 @@ public:
 
 	// copies raw pixel data into staging ring buffer and queues vkCmdCopyBufferToImage and mipgen
 	bool stage_texture_upload(const StagedTextureUploadDesc& desc, const void* pixelData, size_t byteSize, Callback onComplete = nullptr);
+
+	// copies subregion texel data into staging ring buffer and queues subresource vkCmdCopyBufferToImage
+	bool stage_texture_region_upload(const StagedTextureRegionDesc& desc, const void* pixelData, size_t byteSize, Callback onComplete = nullptr);
 
 	// call at render_frame, returns true if any transfers were recorded this frame
 	bool record_transfers(VkCommandBuffer cmd, uint64_t frameNumber);
@@ -77,6 +98,13 @@ private:
 		StagedTextureUploadDesc desc{};
 	};
 
+	struct PendingTextureRegionCopy
+	{
+		VkBuffer srcBuffer{ VK_NULL_HANDLE };
+		VkDeviceSize srcOffset{ 0 };
+		StagedTextureRegionDesc desc{};
+	};
+
 	struct InFlightBatch // batch of copy operations that have been submitted to the GPU but not yet completed
 	{
 		uint64_t frameNumber{ 0 };
@@ -102,6 +130,7 @@ private:
 	mutable std::mutex _mutex;
 	std::vector<PendingBufferCopy> _pendingBufferCopies;
 	std::vector<PendingTextureCopy> _pendingTextureCopies;
+	std::vector<PendingTextureRegionCopy> _pendingTextureRegionCopies;
 	std::vector<std::pair<VkBuffer, VmaAllocation>> _pendingOverflowBuffers;
 	std::vector<Callback> _pendingCallbacks;
 	std::deque<InFlightBatch> _inFlightBatches;

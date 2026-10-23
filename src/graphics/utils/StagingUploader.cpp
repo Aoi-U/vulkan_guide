@@ -48,6 +48,7 @@ void StagingUploader::cleanup()
 	_pendingOverflowBuffers.clear();
 	_pendingBufferCopies.clear();
 	_pendingTextureCopies.clear();
+	_pendingTextureRegionCopies.clear();
 	_pendingCallbacks.clear();
 
 	if (_ringBuffer != VK_NULL_HANDLE) {
@@ -127,7 +128,7 @@ bool StagingUploader::stage_geometry_upload(VkBuffer dstVertexBuffer, VkDeviceSi
 	if (onComplete) {
 		_pendingCallbacks.push_back(std::move(onComplete));
 	}
-	
+
 	return true;
 }
 
@@ -160,10 +161,39 @@ bool StagingUploader::stage_texture_upload(const StagedTextureUploadDesc& desc, 
 	return true;
 }
 
+bool StagingUploader::stage_texture_region_upload(const StagedTextureRegionDesc& desc, const void* pixelData,
+	size_t byteSize, Callback onComplete)
+{
+	if (desc.dstImage == VK_NULL_HANDLE || !pixelData || byteSize == 0)
+		return false;
+
+	std::lock_guard<std::mutex> lock(_mutex);
+
+	StagingSlice slice = allocate_slice_locked(byteSize, 16);
+	if (!slice.mappedPtr)
+		return false;
+
+	memcpy(slice.mappedPtr, pixelData, byteSize);
+
+	_pendingTextureRegionCopies.push_back(PendingTextureRegionCopy{
+		.srcBuffer = slice.srcBuffer,
+		.srcOffset = slice.offset,
+		.desc = desc
+		});
+
+	if (onComplete)
+	{
+		_pendingCallbacks.push_back(std::move(onComplete));
+	}
+
+	return true;
+}
+
 bool StagingUploader::record_transfers(VkCommandBuffer cmd, uint64_t frameNumber)
 {
 	std::vector<PendingBufferCopy> bufCopies;
 	std::vector<PendingTextureCopy> texCopies;
+	std::vector<PendingTextureRegionCopy> texRegionCopies;
 	std::vector<std::pair<VkBuffer, VmaAllocation>> overflows;
 	std::vector<std::function<void()>> callbacks;
 	size_t ringBytesThisBatch = 0;
@@ -177,6 +207,7 @@ bool StagingUploader::record_transfers(VkCommandBuffer cmd, uint64_t frameNumber
 		}
 		bufCopies.swap(_pendingBufferCopies);
 		texCopies.swap(_pendingTextureCopies);
+		texRegionCopies.swap(_pendingTextureRegionCopies);
 		overflows.swap(_pendingOverflowBuffers);
 		callbacks.swap(_pendingCallbacks);
 
@@ -194,7 +225,7 @@ bool StagingUploader::record_transfers(VkCommandBuffer cmd, uint64_t frameNumber
 		};
 		vkCmdCopyBuffer(cmd, copy.srcBuffer, copy.dstBuffer, 1, &region);
 	}
-	
+
 	// record all pending texture uploads and mipmap gen
 	for (const PendingTextureCopy& tex : texCopies) {
 		vkutil::image_mem_barrier2(
@@ -206,7 +237,7 @@ bool StagingUploader::record_transfers(VkCommandBuffer cmd, uint64_t frameNumber
 			tex.desc.arrayLayers,
 			tex.desc.mipLevels,
 			0
-		); 
+		);
 
 		VkBufferImageCopy region{};
 		region.bufferOffset = tex.srcOffset;
@@ -233,6 +264,45 @@ bool StagingUploader::record_transfers(VkCommandBuffer cmd, uint64_t frameNumber
 				0
 			);
 		}
+	}
+
+	// record all pending subregion texture uploads
+	for (const PendingTextureRegionCopy& regionCopy : texRegionCopies)
+	{
+		vkutil::image_mem_barrier2(
+			cmd,
+			regionCopy.desc.dstImage,
+			regionCopy.desc.format,
+			regionCopy.desc.oldLayout,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			regionCopy.desc.totalArrayLayers,
+			1,
+			regionCopy.desc.mipLevel
+		);
+
+		VkBufferImageCopy region{};
+		region.bufferOffset = regionCopy.srcOffset;
+		region.bufferRowLength = 0;
+		region.bufferImageHeight = 0;
+		region.imageSubresource.aspectMask = regionCopy.desc.aspectMask;
+		region.imageSubresource.mipLevel = regionCopy.desc.mipLevel;
+		region.imageSubresource.baseArrayLayer = regionCopy.desc.baseArrayLayer;
+		region.imageSubresource.layerCount = regionCopy.desc.layerCount;
+		region.imageOffset = regionCopy.desc.offset;
+		region.imageExtent = regionCopy.desc.extent;
+
+		vkCmdCopyBufferToImage(cmd, regionCopy.srcBuffer, regionCopy.desc.dstImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+		vkutil::image_mem_barrier2(
+			cmd,
+			regionCopy.desc.dstImage,
+			regionCopy.desc.format,
+			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			regionCopy.desc.newLayout,
+			regionCopy.desc.totalArrayLayers,
+			1,
+			regionCopy.desc.mipLevel
+		);
 	}
 
 	// emit memory barrier 
@@ -278,7 +348,7 @@ void StagingUploader::reclaim_completed_frames(uint64_t completedFrameNumber)
 
 	{
 		std::lock_guard<std::mutex> lock(_mutex);
-		
+
 		while (!_inFlightBatches.empty() && _inFlightBatches.front().frameNumber <= completedFrameNumber) {
 			InFlightBatch& batch = _inFlightBatches.front();
 
@@ -321,11 +391,11 @@ StagingUploader::StagingSlice StagingUploader::allocate_slice_locked(size_t size
 {
 	size_t alignedHead = (_writeHead + alignment - 1) & ~(alignment - 1);
 	size_t padding = alignedHead - _writeHead;
-	
+
 	// if the slice wraps past end of 64mb buffer, check if we can wrap to 0
 	if (alignedHead + size > _capacity) {
 		size_t wrapWaste = _capacity - _writeHead;
-		if (_usedRingBytes + wrapWaste + size <= _capacity) { 
+		if (_usedRingBytes + wrapWaste + size <= _capacity) {
 			_usedRingBytes += wrapWaste;
 			_pendingRingBytesThisFrame += wrapWaste;
 			_writeHead = 0;
@@ -360,7 +430,7 @@ StagingUploader::StagingSlice StagingUploader::allocate_slice_locked(size_t size
 		.flags = VMA_ALLOCATION_CREATE_MAPPED_BIT,
 		.usage = VMA_MEMORY_USAGE_CPU_TO_GPU
 	};
-	
+
 	// allocate overflow buffer
 	VkBuffer overflowBuf = VK_NULL_HANDLE;
 	VmaAllocation overflowAlloc = VK_NULL_HANDLE;
@@ -379,6 +449,6 @@ StagingUploader::StagingSlice StagingUploader::allocate_slice_locked(size_t size
 	slice.size = size;
 	slice.mappedPtr = static_cast<uint8_t*>(outInfo.pMappedData);
 	slice.isOverflow = true;
-	
+
 	return slice;
 }

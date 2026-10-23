@@ -4,6 +4,7 @@
 #include "DefaultResources.h"
 #include <graphics/utils/StagingUploader.h>
 #include <graphics/VulkanCore.h>
+#include <graphics/vt/VirtualTextureSystem.h>
 #include <core/cvars.h>
 
 AutoCVar_Int cvVramBudgetMB("r.vramBudgetMB", "VRAM budget in MB for resource eviction", 2048);
@@ -25,6 +26,9 @@ void ResourceManager::init(VulkanCore* core)
 
 	_geometryPool = std::make_unique<GlobalGeometryPool>();
 	_geometryPool->init(_vulkanCore, this);
+
+	_vtSystem = std::make_unique<VirtualTextureSystem>();
+	_vtSystem->init(_vulkanCore, this);
 }
 
 void ResourceManager::cleanup()
@@ -34,6 +38,12 @@ void ResourceManager::cleanup()
 		_assetStreamer.reset();
 	}
 	_evictionCandidates.clear();
+
+	if (_vtSystem)
+	{
+		_vtSystem->cleanup();
+		_vtSystem.reset();
+	}
 
 	unload_all();
 
