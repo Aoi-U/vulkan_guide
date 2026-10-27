@@ -319,6 +319,46 @@ void InspectorPanel::draw_material_asset_inspector(const AssetMetadata& meta, En
 			}
 		}
 	}
+
+	if (ImGui::Button("Convert Material Textures to Virtual (.vtex) & Hot-Update", ImVec2(-1.0f, 32.0f))) {
+		UUID slotsToConvert[] = {
+			_editingMaterialData.albedoTextureUUID,
+			_editingMaterialData.normalTextureUUID,
+			_editingMaterialData.metalRoughTextureUUID,
+			_editingMaterialData.occlusionTextureUUID
+		};
+
+		for (const UUID& texId : slotsToConvert) {
+			if (!texId.is_valid())
+				continue;
+			if (AssetMetadata* texMeta = AssetRegistry::get().get_metadata_mutable(texId)) {
+				texMeta->textureSettings.virtualTexture = true;
+				texMeta->cookedPath = std::filesystem::path(".cache/textures") / (texId.to_string() + ".vtex");
+				if (!texMeta->is_sub_asset()) {
+					std::filesystem::path metaFile = texMeta->virtualPath;
+					metaFile += ".meta";
+					AssetSerializer::save_meta_file(metaFile, *texMeta);
+				}
+				AssetImporter::cook_virtual_texture(*texMeta);
+			}
+		}
+
+		if (AssetSerializer::save_material_file(meta.virtualPath, _editingMaterialData) && ctx.activeRegistry && ctx.resourceManager) {
+			auto newInstance = AssetSerializer::build_material_instance(_editingMaterialData, *ctx.resourceManager);
+			auto view = ctx.activeRegistry->view<MaterialComponent>();
+			for (auto [entity, matComp] : view.each()) {
+				if (matComp.materialAssetUUID == meta.uuid) {
+					matComp.material = newInstance;
+					matComp.alphaMode = _editingMaterialData.alphaMode;
+					matComp.doubleSided = _editingMaterialData.doubleSided;
+					matComp.isDirty = true;
+				}
+			}
+			if (ctx.renderer) {
+				ctx.renderer->mark_scene_dirty();
+			}
+		}
+	}
 }
 
 void InspectorPanel::draw_texture_asset_inspector(const AssetMetadata& meta, EngineContext& ctx)
@@ -389,15 +429,17 @@ void InspectorPanel::draw_texture_asset_inspector(const AssetMetadata& meta, Eng
 	ImGui::SliderFloat("Max Anisotropy", &_editingTextureSettings.anisotropy, 1.0f, 16.0f);
 
 	ImGui::Spacing();
-	if (!meta.is_sub_asset() && ImGui::Button("Apply Settings & Recook", ImVec2(-1.0f, 32.0f))) {
+	if (ImGui::Button("Apply Settings & Recook", ImVec2(-1.0f, 32.0f))) {
 		if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid)) {
 			mutableMeta->textureSettings = _editingTextureSettings;
 			mutableMeta->cookedPath = std::filesystem::path(".cache/textures") /
 				(meta.uuid.to_string() + (_editingTextureSettings.virtualTexture ? ".vtex" : ".gtex"));
 
-			std::filesystem::path metaPath = mutableMeta->virtualPath;
-			metaPath += ".meta";
-			AssetSerializer::save_meta_file(metaPath, *mutableMeta);
+			if (!mutableMeta->is_sub_asset()) {
+				std::filesystem::path metaPath = mutableMeta->virtualPath;
+				metaPath += ".meta";
+				AssetSerializer::save_meta_file(metaPath, *mutableMeta);
+			}
 			AssetImporter::cook_texture(*mutableMeta);
 
 			// refresh cached .vtex telemetry in Inspector

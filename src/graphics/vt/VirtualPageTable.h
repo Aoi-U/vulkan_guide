@@ -29,6 +29,8 @@ struct PageTableAllocation
 class VirtualPageTable
 {
 public:
+	static constexpr uint32_t DIRTY_GRID_DIM = 16;
+
 	void init(VulkanCore* core, StagingUploader* uploader, uint32_t pageTableSizeMip0 = VT_DEFAULT_PAGE_TABLE_SIZE, uint32_t maxMipLevels = VT_MAX_MIP_LEVELS);
 	void cleanup();
 
@@ -89,13 +91,16 @@ private:
 	{
 		uint32_t width{ 1 };
 		uint32_t height{ 1 };
+		uint32_t sectorSpan{ 1 };
+		uint32_t sectorsPerAxis{ 1 };
 		std::vector<PageTableEntry> entries; // exact or inherited fallback entries sent to gpu
 		std::vector<PageTableEntry> exactEntries; // only populated if this exact mip is resident
-		DirtyRect dirtyRect{};
+		std::vector<DirtyRect> sectorDirtyRects;
+		bool anyDirty{ false };
 	};
 
 	void write_entry(uint8_t mip, uint32_t x, uint32_t y, PageTableEntry entry);
-	void propagate_fallback_down(const PageTableAllocation& alloc, uint16_t localX, uint16_t localY, uint8_t sourceMip, PageTableEntry fallbackEntry);
+	void propagate_quadtree_children(const PageTableAllocation& alloc, uint16_t parentLocalX, uint16_t parentLocalY, uint8_t parentMip, PageTableEntry fallbackEntry);
 
 	VulkanCore* _core{ nullptr };
 	StagingUploader* _uploader{ nullptr };

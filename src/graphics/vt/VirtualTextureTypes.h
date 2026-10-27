@@ -25,6 +25,9 @@ static constexpr uint32_t VT_DEFAULT_ATLAS_TILES_PER_AXIS = 32;
 // default page table mip 0 dimensions in tiles
 static constexpr uint32_t VT_DEFAULT_PAGE_TABLE_SIZE = 1024;
 
+// max number of packed uint32_t tile requests written by shaders per frame
+static constexpr uint32_t VT_MAX_FEEDBACK_REQUESTS = 16384;
+
 static constexpr uint16_t VT_INVALID_TEXTURE_ID = UINT16_MAX;
 static constexpr uint32_t VT_INVALID_PHYSICAL_SLOT = UINT32_MAX;
 
@@ -198,6 +201,19 @@ struct GPUVirtualTextureDesc
 #pragma pack(pop)
 static_assert(sizeof(GPUVirtualTextureDesc) == 32, "GPUVirtualTextureDesc must be 32 bytes std430 aligned");
 
+// header at byte offset 0 of gpu feedback SSBO
+#pragma pack(push, 1)
+struct GPUVTFeedbackHeader
+{
+	uint32_t requestCount{ 0 };
+	uint32_t pad[3]{ 0, 0, 0 }; 
+};
+#pragma pack(pop)
+static_assert(sizeof(GPUVTFeedbackHeader) == 16, "GPUVTFeedbackHeader must be 16 bytes");
+
+// total byte size of per frame feedback buffer
+static constexpr size_t VT_FEEDBACK_BUFFER_SIZE_BYTES = sizeof(GPUVTFeedbackHeader) + sizeof(uint32_t) * VT_MAX_FEEDBACK_REQUESTS;
+
 // coordinates of a single allocated slot inside physical tile pool
 struct PhysicalSlotCoord
 {
@@ -209,6 +225,16 @@ struct PhysicalSlotCoord
 	{
 		return slotIndex != VT_INVALID_PHYSICAL_SLOT;
 	}
+};
+
+struct VTTileStreamRequest
+{
+	VirtualPageID pageId{};
+	UUID albedoAssetUuid{};
+	UUID normalAssetUuid{};
+	UUID metalRoughAssetUuid{};
+	UUID occlusionAssetUuid{};
+	uint32_t priorityScore{ 0 }; // higher score = higher priority (coarser mip + higher screen pixel count)
 };
 
 // metrics for imgui debugging/profiling
@@ -225,4 +251,10 @@ struct VirtualTextureMetrics
 	uint64_t totalEvictions{ 0 };
 	uint64_t physicalAtlasVramBytes{ 0 };
 	uint64_t pageTableVramBytes{ 0 };
+
+	uint32_t lastFrameRawFeedbackCount{ 0 };
+	uint32_t lastFrameUniquePagesRequested{ 0 };
+	uint32_t lastFrameTilesQueued{ 0 };
+	uint32_t inFlightTileRequests{ 0 };
+	uint64_t totalTilesStreamed{ 0 };
 };

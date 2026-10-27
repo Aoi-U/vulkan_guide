@@ -85,6 +85,7 @@ struct GPUSceneData
 	glm::vec4 sunlightColor;
 	GPUPointLight pointLights[MAX_POINT_LIGHTS];
 	glm::vec4 lightCount; // active point light count
+	glm::vec4 vtParams{ 8.0f, 0.0f, 0.0f, 0.0f }; // x: feedback subsample, y: debug mode, z: mip bias, w: frame number
 };
 
 enum class AlphaMode : uint8_t
@@ -106,8 +107,8 @@ struct MaterialConstants
 	uint32_t metalRoughIndex; // index in bindless texture array for metal/roughness texture
 	uint32_t occlusionIndex; // index in bindless texture array for occlusion texture
 	uint32_t emissiveIndex; // index in bindless texture array for emissive texture
-
-	uint32_t padding[3];
+	uint32_t virtualTextureId{ 0xFFFFu };
+	uint32_t padding[2];
 };
 
 // a single vertex 

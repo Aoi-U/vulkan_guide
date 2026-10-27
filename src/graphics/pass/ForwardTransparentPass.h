@@ -7,6 +7,8 @@ struct TransparentPassParams {
   RGBufferHandle gpuObjectBuffer;
   RGBufferHandle gpuInstanceBuffer;
   RGBufferHandle materialBuffer;
+  RGBufferHandle vtDescBuffer;
+  RGBufferHandle vtFeedbackBuffer;
   RGTextureHandle sceneColorCopy;
   RGTextureHandle irradianceMap;
   RGTextureHandle prefilterMap;

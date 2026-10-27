@@ -379,17 +379,47 @@ bool AssetImporter::write_gtex_file(const std::filesystem::path& cookedPath, con
 
 bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
 {
-	if (!std::filesystem::exists(texMeta.virtualPath))
+	int width = 0, height = 0, channels = 0;
+	stbi_uc* stbiPixels = nullptr;
+	std::vector<uint8_t> gtexPayload;
+	const uint8_t* rawMip0Ptr = nullptr;
+
+	// try loading directly from source image file if regular texture asset
+	if (!texMeta.is_sub_asset() && std::filesystem::exists(texMeta.virtualPath))
 	{
-		fmt::println("AssetImporter: source virtual texture missing: {}", texMeta.virtualPath.string());
-		return false;
+		stbiPixels = stbi_load(texMeta.virtualPath.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
+		rawMip0Ptr = stbiPixels;
 	}
 
-	int width = 0, height = 0, channels = 0;
-	stbi_uc* pixels = stbi_load(texMeta.virtualPath.string().c_str(), &width, &height, &channels, STBI_rgb_alpha);
-	if (!pixels)
+	// if this is gltf subasset read mip0 from .gtex
+	if (!rawMip0Ptr)
 	{
-		fmt::println("AssetImporter: failed to load pixels from file '{}'", texMeta.virtualPath.string());
+		std::filesystem::path gtexPath = std::filesystem::path(".cache/textures") / (texMeta.uuid.to_string() + ".gtex");
+		if (std::filesystem::exists(gtexPath))
+		{
+			std::ifstream in(gtexPath, std::ios::binary);
+			CookedTextureHeader gtexHdr{};
+			if (in.is_open())
+			{
+				in.read(reinterpret_cast<char*>(&gtexHdr), sizeof(CookedTextureHeader));
+				if (in.good() && gtexHdr.magic == GTEX_MAGIC && gtexHdr.payloadSizeBytes > 0)
+				{
+					gtexPayload.resize(gtexHdr.payloadSizeBytes);
+					in.read(reinterpret_cast<char*>(gtexPayload.data()), static_cast<std::streamsize>(gtexHdr.payloadSizeBytes));
+					if (in.good())
+					{
+						width = static_cast<int>(gtexHdr.width);
+						height = static_cast<int>(gtexHdr.height);
+						rawMip0Ptr = gtexPayload.data();
+					}
+				}
+			}
+		}
+	} 
+
+	if (!rawMip0Ptr)
+	{
+		fmt::println("AssetImporter: failed to load source pixels for virtual texture '{}'", texMeta.name);
 		return false;
 	}
 
@@ -397,14 +427,14 @@ bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
 	if (targetPath.empty() || targetPath.extension() != ".vtex")
 		targetPath = std::filesystem::path(".cache/textures") / (texMeta.uuid.to_string() + ".vtex");
 
-	bool ok = cook_vtex_from_rgba8(targetPath, pixels, static_cast<uint32_t>(width), static_cast<uint32_t>(height), texMeta.textureSettings);
+	bool ok = cook_vtex_from_rgba8(targetPath, rawMip0Ptr, static_cast<uint32_t>(width), static_cast<uint32_t>(height), texMeta.textureSettings);
 
-	stbi_image_free(pixels);
+	if (stbiPixels)
+		stbi_image_free(stbiPixels);
 
 	if (ok)
-	{
-		fmt::println("AssetImporter: cooked virtual texture '{}'", texMeta.name);
-	}
+		fmt::println("AssetImporter: cooked virtual texture {}", targetPath.generic_string());
+
 	return ok;
 }
 
@@ -551,12 +581,12 @@ bool AssetImporter::read_vtex_tile(const std::filesystem::path& vtexPath, const 
 		return false;
 
 	std::ifstream in(vtexPath, std::ios::binary);
-	if (in.is_open())
+	if (!in.is_open())
 		return false;
 
 	// seek to tile offset 
 	in.seekg(static_cast<std::streamoff>(entry.byteOffset), std::ios::beg);
-	if (in.good())
+	if (!in.good())
 		return false;
 
 	// read 136x136 tile into output buffer

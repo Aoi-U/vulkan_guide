@@ -18,6 +18,10 @@ struct SceneRenderContext
 	RGBufferHandle gpuShadowIndirectBuffer;
 	RGBufferHandle gpuShadowInstanceBuffer;
 
+	// virtual texture buffers
+	RGBufferHandle vtDescBuffer;
+	RGBufferHandle vtFeedbackBuffer;
+
 	// gbuffer
 	RGTextureHandle gPosition;
 	RGTextureHandle gNormal;

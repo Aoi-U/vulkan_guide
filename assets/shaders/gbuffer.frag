@@ -4,6 +4,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 #include "input_structures.glsl"
+#include "vt_common.glsl"
 
 layout (location = 0) in vec3 inNormal;
 layout (location = 1) in vec2 inUV;
@@ -29,7 +30,8 @@ struct MaterialConstants
 	uint metalRoughIndex;
 	uint occlusionIndex;
 	uint emissiveIndex;
-	uint padding0, padding1, padding2;
+	uint virtualTextureId;
+	uint padding0, padding1;
 };
 
 layout(std430, set = 0, binding = 3) readonly buffer MaterialBuffer {
@@ -42,36 +44,47 @@ void main()
 {
 	MaterialConstants mat = materialBuffer.materials[inMaterialIndex];
 
-	// fetch albedo
-	vec4 texColor = texture(globalTextures[nonuniformEXT(mat.albedoIndex)], inUV);
+	vec4 texColor;
+	vec3 normalSample;
+	vec4 metalRough;
+	float rawAO;
+
+	if (mat.virtualTextureId < VT_INVALID_INDEX) {
+		vec4 vtNormal;
+		vt_sample_pbr_layers(mat.virtualTextureId, inUV, texColor, vtNormal, metalRough);
+		normalSample = vtNormal.rgb * 2.0 - 1.0;
+		rawAO = metalRough.r; 
+	}
+	else {
+		texColor = texture(globalTextures[nonuniformEXT(mat.albedoIndex)], inUV);
+		normalSample = texture(globalTextures[nonuniformEXT(mat.normalIndex)], inUV).rgb * 2.0 - 1.0;
+		metalRough = texture(globalTextures[nonuniformEXT(mat.metalRoughIndex)], inUV);
+		rawAO = texture(globalTextures[nonuniformEXT(mat.occlusionIndex)], inUV).r;
+	}
+
 	if (texColor.a < 0.5) {
 		discard;
 	}
 	vec3 albedo = texColor.rgb * mat.colorFactors.rgb;
 
-	// fetch normal
+	// calculate normal
 	mat3 TBN = mat3(normalize(inTangent), normalize(inBitangent), normalize(inNormal));
-	vec3 normalSample = texture(globalTextures[nonuniformEXT(mat.normalIndex)], inUV).rgb * 2.0 - 1.0;
 	normalSample.xy *= mat.extraFactors.y;
 	vec3 finalNormal = normalize(TBN * normalSample);
 	if (mat.extraFactors.z > 0.5 && !gl_FrontFacing) {
 		finalNormal = -finalNormal;
 	}
 
-	// fetch emissive
-	//vec3 emissive = texture(globalTextures[nonuniformEXT(mat.emissiveIndex)], inUV).rgb * mat.emissiveFactor.rgb * mat.emissiveFactor.w;
-
+	// calculate emissive
 	vec3 rawEmissive = texture(globalTextures[nonuniformEXT(mat.emissiveIndex)], inUV).rgb;
     rawEmissive = max(rawEmissive - vec3(0.02), vec3(0.0));
     vec3 emissive = rawEmissive * mat.emissiveFactor.rgb * mat.emissiveFactor.w;
 
-	// fetch metalrough
-	vec4 metalRough = texture(globalTextures[nonuniformEXT(mat.metalRoughIndex)], inUV);
+	// calculate metalrough
 	float roughness = clamp(metalRough.g * mat.metalRoughFactors.y, 0.0, 1.0);
 	float metallic = clamp(metalRough.b * mat.metalRoughFactors.x, 0.0, 1.0);
 
-	// fetch occlusion
-	float rawAO = texture(globalTextures[nonuniformEXT(mat.occlusionIndex)], inUV).r;
+	// calculate occlusion
 	float occlusionStrength = mat.extraFactors.x > 0.0 ? mat.extraFactors.x : 1.0;
 	float ao = mix(1.0, rawAO, occlusionStrength);
 

@@ -12,7 +12,9 @@ enum class CVarFlags : uint32_t
 	EditReadOnly = 1 << 1,
 	Advanced = 1 << 2,
 	EditCheckBox = 1 << 3,
-	EditFloatSlider = 1 << 4
+	EditFloatSlider = 1 << 4,
+	EditInt = 1 << 5,
+	EditIntSlider = 1 << 6
 };
 
 inline CVarFlags operator|(CVarFlags a, CVarFlags b)
@@ -65,7 +67,7 @@ public:
 	virtual void SetStringCVar(std::string_view name, const char* value) = 0;
 
 	virtual CVarParameter* CreateFloatCVar(const char* name, const char* description, double defaultValue, double currentValue, CVarFlags flags = CVarFlags::None, double min = 0.0, double max = 1.0) = 0;
-	virtual CVarParameter* CreateIntCVar(const char* name, const char* description, int32_t defaultValue, int32_t currentValue, CVarFlags flags = CVarFlags::None) = 0;
+	virtual CVarParameter* CreateIntCVar(const char* name, const char* description, int32_t defaultValue, int32_t currentValue, CVarFlags flags = CVarFlags::None, int32_t min = 0, int32_t max = 0) = 0;
 	virtual CVarParameter* CreateStringCVar(const char* name, const char* description, const char* defaultValue, const char* currentValue, CVarFlags flags = CVarFlags::None) = 0;
 
 	virtual void DrawCVarEditor() = 0;
@@ -88,7 +90,8 @@ struct AutoCVar_Float : AutoCVar<double>
 };
 
 struct AutoCVar_Int : AutoCVar<int32_t> {
-	AutoCVar_Int(const char* name, const char* description, int32_t defaultValue, CVarFlags flags = CVarFlags::None);
+	AutoCVar_Int(const char* name, const char* description, int32_t defaultValue, CVarFlags flags = CVarFlags::None, int32_t min = 0, int32_t max = 0);
+	AutoCVar_Int(const char* name, const char* description, int32_t defaultValue, int32_t min, int32_t max, CVarFlags flags = CVarFlags::EditIntSlider);
 };
 
 struct AutoCVar_String : AutoCVar<std::string> {

@@ -8,6 +8,8 @@
 #include <fstream>
 #include <algorithm>
 
+#include "vt/VirtualTextureSystem.h"
+
 namespace
 {
 	std::string_view filter_to_string(VkFilter filter)
@@ -443,14 +445,15 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 {
 	auto& defaults = DefaultResources::get();
 	ResourceHandle<MaterialTemplate> matTemplate = rm.get_handle<MaterialTemplate>(matData.templateId);
-	if (!matTemplate.is_valid())
+	if (!matTemplate.is_valid()) {
 		matTemplate = defaults.defaultPBRTemplate;
+	}
 
 	// create material instance and set parameters
 	auto instance = std::make_shared<MaterialInstance>(matTemplate);
 	instance->set_alpha_mode(matData.alphaMode);
 	instance->set_double_sided(matData.doubleSided);
-	
+
 	// set constants
 	instance->set_parameter("colorFactors", matData.colorFactors);
 	instance->set_parameter("metalRoughFactors", matData.metalRoughFactors);
@@ -463,19 +466,60 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 	instance->set_parameter("extraFactors", extraFactors);
 	instance->set_parameter("emissiveFactor", glm::vec4(matData.emissiveFactor, matData.emissiveStrength));
 
-	// helper to resolve texture uuid to  gpu handle
-	auto resolve_slot_texture = [&](const UUID& texUuid, ResourceHandle<Texture> fallback, VkFormat defaultFormat) -> ResourceHandle<Texture> {
-		if (!texUuid.is_valid()) {
+	// default to invalid virtual texture ID (standard bindless sampling)
+	instance->set_virtual_texture_id(VT_INVALID_TEXTURE_ID);
+	bool isVirtualMaterial = false;
+
+	// check if the materials albedo texture is configured as virtual texture 
+	if (matData.albedoTextureUUID.is_valid()) 
+	{
+		bool shouldRegisterVT = false;
+		if (const AssetMetadata* albedoMeta = AssetRegistry::get().get_metadata(matData.albedoTextureUUID)) 
+		{
+			shouldRegisterVT = albedoMeta->textureSettings.virtualTexture ||
+				(albedoMeta->cookedPath.extension() == ".vtex");
+		}
+		else 
+		{
+			std::filesystem::path directVtexPath = std::filesystem::path(".cache/textures") / (matData.albedoTextureUUID.to_string() + ".vtex");
+			shouldRegisterVT = std::filesystem::exists(directVtexPath);
+		}
+
+		if (shouldRegisterVT) 
+		{
+			uint16_t vtId = rm.get_vtsystem().register_virtual_texture_from_asset(
+				matData.albedoTextureUUID,
+				matData.normalTextureUUID,
+				matData.metalRoughTextureUUID,
+				matData.occlusionTextureUUID
+			);
+			if (vtId != VT_INVALID_TEXTURE_ID) 
+			{
+				instance->set_virtual_texture_id(vtId);
+				isVirtualMaterial = true;
+			}
+		}
+	}
+
+	// helper to resolve standard non-virtual texture UUID to a bindless GPU Texture handle
+	auto resolve_slot_texture = [&](const UUID& texUuid, ResourceHandle<Texture> fallback, VkFormat defaultFormat) -> ResourceHandle<Texture> 
+	{
+		if (!texUuid.is_valid()) 
+		{
 			return fallback;
 		}
-		if (rm.has_resource<Texture>(texUuid)) {
+		if (rm.has_resource<Texture>(texUuid)) 
+		{
 			return rm.get_handle<Texture>(texUuid);
 		}
-		if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid)) {
+		if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid)) 
+		{
+			if (meta->textureSettings.virtualTexture || meta->cookedPath.extension() == ".vtex") {
+				return fallback;
+			}
+
 			VkFormat fmt = meta->textureSettings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : defaultFormat;
-			std::filesystem::path loadPath = (meta->is_sub_asset() && !meta->cookedPath.empty())
-				? meta->cookedPath
-				: meta->virtualPath;
+			std::filesystem::path loadPath = (meta->is_sub_asset() && !meta->cookedPath.empty()) ? meta->cookedPath : meta->virtualPath;
 
 			if (std::filesystem::exists(loadPath)) {
 				auto loaded = rm.load_by_uuid<Texture>(
@@ -486,13 +530,16 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 					VK_IMAGE_USAGE_SAMPLED_BIT,
 					meta->textureSettings.generateMips
 				);
-				if (loaded.is_valid()) return loaded;
+				if (loaded.is_valid()) 
+				{
+					return loaded;
+				}
 			}
 		}
 
-		// fallback: check directly if .cache/textures/<texUuid>.gtex exists on disk
 		std::filesystem::path directCachePath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
-		if (std::filesystem::exists(directCachePath)) {
+		if (std::filesystem::exists(directCachePath)) 
+		{
 			auto loaded = rm.load_by_uuid<Texture>(
 				texUuid,
 				texUuid.to_string(),
@@ -501,16 +548,33 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 				VK_IMAGE_USAGE_SAMPLED_BIT,
 				true
 			);
-			if (loaded.is_valid()) return loaded;
+			if (loaded.is_valid()) 
+			{
+				return loaded;
+			}
 		}
 
 		return fallback;
 		};
 
-	instance->set_texture("albedo", resolve_slot_texture(matData.albedoTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_SRGB));
-	instance->set_texture("normal", resolve_slot_texture(matData.normalTextureUUID, defaults.defaultNormalImage, VK_FORMAT_R8G8B8A8_UNORM));
-	instance->set_texture("metalRough", resolve_slot_texture(matData.metalRoughTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_UNORM));
-	instance->set_texture("occlusion", resolve_slot_texture(matData.occlusionTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_UNORM));
+	// if virtual texturing is active for this material, bind 1x1 default fallbacks to 
+	// standard bindless slots for albedo/normal/metalrough/occl
+	instance->set_texture("albedo", isVirtualMaterial
+		? defaults.whiteImage
+		: resolve_slot_texture(matData.albedoTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_SRGB));
+
+	instance->set_texture("normal", isVirtualMaterial
+		? defaults.defaultNormalImage
+		: resolve_slot_texture(matData.normalTextureUUID, defaults.defaultNormalImage, VK_FORMAT_R8G8B8A8_UNORM));
+
+	instance->set_texture("metalRough", isVirtualMaterial
+		? defaults.whiteImage
+		: resolve_slot_texture(matData.metalRoughTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_UNORM));
+
+	instance->set_texture("occlusion", isVirtualMaterial
+		? defaults.whiteImage
+		: resolve_slot_texture(matData.occlusionTextureUUID, defaults.whiteImage, VK_FORMAT_R8G8B8A8_UNORM));
+
 	instance->set_texture("emissive", resolve_slot_texture(matData.emissiveTextureUUID, defaults.blackImage, VK_FORMAT_R8G8B8A8_SRGB));
 
 	return instance;

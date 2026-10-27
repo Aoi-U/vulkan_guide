@@ -95,13 +95,15 @@ public:
 		return stored;
 	}
 
-	CVarParameter* CreateIntCVar(const char* name, const char* description, int32_t defaultValue, int32_t currentValue, CVarFlags flags = CVarFlags::None) override
+	CVarParameter* CreateIntCVar(const char* name, const char* description, int32_t defaultValue, int32_t currentValue, CVarFlags flags = CVarFlags::None, int32_t min = 0, int32_t max = 0) override
 	{
 		CVarParameter param;
 		param.name = name;
 		param.description = description;
 		param.type = CVarType::INT;
 		param.flags = flags;
+		param.min = static_cast<double>(min);
+		param.max = static_cast<double>(max);
 		param.arrayIndex = static_cast<int32_t>(intCVars.size());
 
 		cvars[name] = param;
@@ -137,11 +139,31 @@ public:
 			switch (param.type) {
 			case CVarType::INT:
 			{
+				const bool hasBounds = (param.min < param.max);
+				const int minVal = static_cast<int>(param.min);
+				const int maxVal = static_cast<int>(param.max);
+
 				if (param.HasFlag(CVarFlags::EditCheckBox)) {
 					bool enabled = intCVars[param.arrayIndex].current != 0;
 					if (ImGui::Checkbox(name.c_str(), &enabled)) {
 						if (!param.HasFlag(CVarFlags::EditReadOnly)) {
 							intCVars[param.arrayIndex].current = enabled ? 1 : 0;
+						}
+					}
+				}
+				else if (param.HasFlag(CVarFlags::EditIntSlider) && hasBounds) {
+					int val = intCVars[param.arrayIndex].current;
+					if (ImGui::SliderInt(name.c_str(), &val, minVal, maxVal)) {
+						if (!param.HasFlag(CVarFlags::EditReadOnly)) {
+							intCVars[param.arrayIndex].current = std::clamp(val, minVal, maxVal);
+						}
+					}
+				}
+				else if (param.HasFlag(CVarFlags::EditInt)) {
+					int val = intCVars[param.arrayIndex].current;
+					if (ImGui::InputInt(name.c_str(), &val, 1, 10)) {
+						if (!param.HasFlag(CVarFlags::EditReadOnly)) {
+							intCVars[param.arrayIndex].current = hasBounds ? std::clamp(val, minVal, maxVal) : val;
 						}
 					}
 				}
@@ -223,8 +245,14 @@ void AutoCVar<double>::Set(double val) {
 	CVarSystemImpl::Get()->floatCVars[parameter->arrayIndex].current = val;
 }
 
-AutoCVar_Int::AutoCVar_Int(const char* name, const char* description, int32_t defaultValue, CVarFlags flags) {
-	parameter = CVarSystem::Get()->CreateIntCVar(name, description, defaultValue, defaultValue, flags);
+AutoCVar_Int::AutoCVar_Int(const char* name, const char* description, int32_t defaultValue, CVarFlags flags, int32_t min, int32_t max)
+{
+	parameter = CVarSystem::Get()->CreateIntCVar(name, description, defaultValue, defaultValue, flags, min, max);
+}
+
+AutoCVar_Int::AutoCVar_Int(const char* name, const char* description, int32_t defaultValue, int32_t min, int32_t max, CVarFlags flags)
+{
+	parameter = CVarSystem::Get()->CreateIntCVar(name, description, defaultValue, defaultValue, flags | CVarFlags::EditIntSlider, min, max);
 }
 
 int32_t AutoCVar<int32_t>::Get() {

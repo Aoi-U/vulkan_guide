@@ -48,6 +48,7 @@ void VulkanCore::init(Window& window)
 	VkPhysicalDeviceFeatures standardFeatures{};
 	standardFeatures.multiDrawIndirect = true;
 	standardFeatures.depthClamp = true;
+	standardFeatures.fragmentStoresAndAtomics = true;
 
 	// use vkbootstrap to select a gpu
 	// choose gpu that can write to the SDL surface and supports vulkan 1.3 with correct features

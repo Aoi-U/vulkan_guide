@@ -2,6 +2,7 @@
 
 #include <graphics/reflection/DescriptorBinder.h>
 #include <graphics/Renderer.h>
+#include <graphics/vt/VirtualTextureSystem.h>
 #include <resources/GlobalGeometryPool.h>
 #include <resources/DefaultResources.h>
 
@@ -33,12 +34,6 @@ void GBufferPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, con
 	RGTextureDesc metalRoughDesc = hdrGbufferDesc;
 	metalRoughDesc.format = VK_FORMAT_R8G8B8A8_UNORM;
 
-	RGTextureDesc depthDesc{
-		.extent = extent,
-		.format = _depthFormat,
-		.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-	};
-
 	targets.gPosition = graph.create_texture("GBufferPosition", hdrGbufferDesc);
 	targets.gNormal = graph.create_texture("GBufferNormal", hdrGbufferDesc);
 	targets.gAlbedo = graph.create_texture("GBufferAlbedo", albedoDesc);
@@ -53,6 +48,15 @@ void GBufferPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, con
 			params.gpuIndirectBuffer = builder.read_buffer(targets.gpuIndirectBuffer, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
 			params.gpuCountBuffer = builder.read_buffer(targets.gpuCountBuffer, VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT, VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT);
 			params.materialBuffer = builder.read_buffer(targets.materialBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+
+			if (targets.vtDescBuffer.is_valid())
+			{
+				params.vtDescBuffer = builder.read_buffer(targets.vtDescBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+			}
+			if (targets.vtFeedbackBuffer.is_valid())
+			{
+				params.vtFeedbackBuffer = builder.write_buffer(targets.vtFeedbackBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
+			}
 
 			params.gPosition = builder.set_color_attachment(targets.gPosition, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f });
 			params.gNormal = builder.set_color_attachment(targets.gNormal, VK_ATTACHMENT_LOAD_OP_CLEAR, { 0.0f, 0.0f, 0.0f, 0.0f });
@@ -75,14 +79,24 @@ void GBufferPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, con
 			VkDescriptorSetLayout layout0 = _resourceManager->get_pipeline_layout_cache().get_descriptor_set_layout(pbrTemplate->get_reflection().sets.at(0), false);
 			VkDescriptorSet globalSet = view.frameData._frameDescriptors.allocate(_vulkanCore->get_device(), layout0);
 
+			VirtualTextureSystem& vtSys = _resourceManager->get_vtsystem();
+
 			// update global descriptor set
 			std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
 				{ "sceneData", { view.frameData.sceneDataBuffer->get_buffer(), 0, sizeof(GPUSceneData) }},
 				{"objectBuffer", { graph.get_buffer(params.gpuObjectBuffer), 0, sizeof(GPUObjectData) * drawCtx.indirectDrawCount }},
 				{"instanceBuffer", { graph.get_buffer(params.gpuInstanceBuffer), 0, sizeof(uint32_t) * drawCtx.indirectDrawCount }},
-				{"materialBuffer", { graph.get_buffer(params.materialBuffer), 0, view.frameData._materialDataBuffer->get_size() }}
+				{"materialBuffer", { graph.get_buffer(params.materialBuffer), 0, view.frameData._materialDataBuffer->get_size() }},
+				{ "vtDescBuffer", { vtSys.get_vt_desc_buffer(), 0, vtSys.get_vt_desc_buffer_size() }},
+				{ "vtFeedback", { vtSys.get_feedback_buffer(), 0, vtSys.get_gpu_feedback_buffer_size() }}
 			};
-			DescriptorBinder::update_set(_vulkanCore->get_device(), globalSet, pbrTemplate->get_reflection().sets.at(0), buffers, {});
+
+			std::unordered_map<std::string, VkDescriptorImageInfo> images = {
+				{ "vtPageTable", { vtSys.get_page_table().get_sampler(), vtSys.get_page_table().get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }},
+				{ "vtPhysicalAtlas", { vtSys.get_physical_pool().get_atlas_sampler(), vtSys.get_physical_pool().get_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
+			};
+
+			DescriptorBinder::update_set(_vulkanCore->get_device(), globalSet, pbrTemplate->get_reflection().sets.at(0), buffers, images);
 
 			ctx.bind_index_buffer(_resourceManager->get_geometry_pool().get_index_buffer(), 0, VK_INDEX_TYPE_UINT32); // bind global index buffer
 
@@ -94,12 +108,12 @@ void GBufferPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, con
 				.depthTest = true,
 				.depthWrite = true,
 				.depthComareOp = VK_COMPARE_OP_GREATER_OR_EQUAL,
-				.colorAttachmentFormats = { 
-					VK_FORMAT_R16G16B16A16_SFLOAT, 
-					VK_FORMAT_R16G16B16A16_SFLOAT, 
-					VK_FORMAT_R8G8B8A8_SRGB, 
-					VK_FORMAT_R8G8B8A8_UNORM, 
-					VK_FORMAT_R16G16B16A16_SFLOAT 
+				.colorAttachmentFormats = {
+					VK_FORMAT_R16G16B16A16_SFLOAT,
+					VK_FORMAT_R16G16B16A16_SFLOAT,
+					VK_FORMAT_R8G8B8A8_SRGB,
+					VK_FORMAT_R8G8B8A8_UNORM,
+					VK_FORMAT_R16G16B16A16_SFLOAT
 				},
 				.depthAttachmentFormat = _depthFormat
 			};

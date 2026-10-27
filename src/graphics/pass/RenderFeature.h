@@ -16,6 +16,7 @@ struct RenderViewContext
 	DrawContext& drawCtx;
 	const GPUSceneData& sceneData;
 	VkExtent2D drawExtent;
+	uint32_t frameNumber{ 0 };
 };
 
 class RenderFeature

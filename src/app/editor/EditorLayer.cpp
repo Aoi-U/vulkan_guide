@@ -6,6 +6,7 @@
 #include <core/Profiler.h>
 #include <graphics/Renderer.h>
 #include <graphics/pass/FrustumCullPass.h>
+#include <graphics/vt/VirtualTextureSystem.h>
 #include <app/editor/UIWidgets.h>
 #include <resources/AssetImporter.h>
 #include <resources/DefaultResources.h>
@@ -804,6 +805,37 @@ void EditorLayer::draw_performance_panel()
 		float stageCapMB = static_cast<float>(staging.get_capacity_bytes()) / (1024.0f * 1024.0f);
 		ImGui::ProgressBar(stageCapMB > 0.0f ? (stageUsedMB / stageCapMB) : 0.0f, ImVec2(-1.0f, 0.0f),
 			fmt::format("Staging Ring: {:.2f} / {:.1f} MB", stageUsedMB, stageCapMB).c_str());
+	}
+
+	// virtual texture metrics
+	if (_ctx->resourceManager && ImGui::CollapsingHeader("Virtual Texturing Residency & Cache", ImGuiTreeNodeFlags_DefaultOpen)) {
+		VirtualTextureMetrics vt = _ctx->resourceManager->get_vtsystem().get_metrics();
+		float atlasMB = static_cast<float>(vt.physicalAtlasVramBytes) / (1024.0f * 1024.0f);
+		float ptKB = static_cast<float>(vt.pageTableVramBytes) / 1024.0f;
+
+		float slotRatio = vt.totalPhysicalSlots > 0
+			? static_cast<float>(vt.usedPhysicalSlots) / static_cast<float>(vt.totalPhysicalSlots)
+			: 0.0f;
+		ImGui::ProgressBar(slotRatio, ImVec2(-1.0f, 0.0f),
+			fmt::format("Physical Atlas Slots: {} / {} ({} pinned | {:.1f} MB)",
+				vt.usedPhysicalSlots, vt.totalPhysicalSlots, vt.pinnedPhysicalSlots, atlasMB).c_str());
+
+		uint64_t totalLookups = vt.totalCacheHits + vt.totalCacheMisses;
+		float hitRate = totalLookups > 0
+			? (static_cast<float>(vt.totalCacheHits) / static_cast<float>(totalLookups)) * 100.0f
+			: 100.0f;
+
+		ImGui::BulletText("Registered Virtual Textures: %u (Page Table: %.1f KB)", vt.registeredVirtualTextures, ptKB);
+		ImGui::BulletText("Tile Cache Hit Rate: %.1f%% (%llu hits, %llu misses, %llu evictions)",
+			hitRate,
+			static_cast<unsigned long long>(vt.totalCacheHits),
+			static_cast<unsigned long long>(vt.totalCacheMisses),
+			static_cast<unsigned long long>(vt.totalEvictions));
+		ImGui::BulletText("Frame Feedback: %u raw -> %u unique pages | %u in-flight | %llu streamed",
+			vt.lastFrameRawFeedbackCount,
+			vt.lastFrameUniquePagesRequested,
+			vt.inFlightTileRequests,
+			static_cast<unsigned long long>(vt.totalTilesStreamed));
 	}
 
 	// profiler metrics

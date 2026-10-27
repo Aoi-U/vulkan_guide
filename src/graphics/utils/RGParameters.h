@@ -63,8 +63,10 @@ struct GeometryPassParameters
 	RGBufferHandle gpuIndirectBuffer;
 	RGBufferHandle gpuCountBuffer;
 	RGBufferHandle materialBuffer;
+	RGBufferHandle vtDescBuffer;
 
 	// outputs
+	RGBufferHandle vtFeedbackBuffer;
 	RGTextureHandle gPosition;
 	RGTextureHandle gNormal;
 	RGTextureHandle gAlbedo;

@@ -19,6 +19,7 @@ public:
 		assert(_template.is_valid() && "MaterialInstance: invalid material template recieved");
 		_materialBlockSize = _template->get_material_block_size();
 		_parameterBuffer.resize(_materialBlockSize, 0);
+		set_virtual_texture_id(UINT16_MAX);
 	}
 
 	template<typename T>
@@ -56,6 +57,20 @@ public:
 		}
 	}
 
+	void set_virtual_texture_id(uint16_t textureId)
+	{
+		_virtualTextureId = textureId;
+		_isDirty = true;
+
+		const auto& reflection = _template->get_reflection();
+		if (reflection.materialVariablesByName.contains("virtualTextureId") ||
+			reflection.materialVariablesByName.contains("materials.virtualTextureId"))
+		{
+			set_parameter<uint32_t>("virtualTextureId", static_cast<uint32_t>(textureId));
+		}
+	}
+	uint16_t get_virtual_texture_id() const noexcept { return _virtualTextureId; }
+
 	void set_alpha_mode(AlphaMode mode) { _alphaMode = mode; }
 	void set_double_sided(bool doubleSided) { _doubleSided = doubleSided; }
 
@@ -79,6 +94,7 @@ private:
 	std::vector<uint8_t> _parameterBuffer;
 	std::unordered_map<std::string, ResourceHandle<Texture>> _textures;
 	AlphaMode _alphaMode{ AlphaMode::Opaque };
+	uint16_t _virtualTextureId{ UINT16_MAX }; 
 	bool _doubleSided{ false };
 	bool _isDirty{ true };
 };

@@ -4,6 +4,7 @@
 #extension GL_EXT_nonuniform_qualifier : require
 
 #include "input_structures.glsl"
+#include "vt_common.glsl"
 
 layout (location = 0) in vec3 inNormal;
 layout (location = 1) in vec2 inUV;
@@ -24,7 +25,8 @@ struct MaterialConstants {
 	uint metalRoughIndex;
 	uint occlusionIndex;
 	uint emissiveIndex;
-	uint padding0, padding1, padding2;
+    uint virtualTextureId;
+	uint padding0, padding1;
 };
 
 layout(std430, set = 0, binding = 3) readonly buffer MaterialBuffer {
@@ -49,7 +51,22 @@ vec3 fresnelSchlickRoughness(float cosTheta, vec3 F0, float roughness) {
 void main() {
     MaterialConstants mat = materialBuffer.materials[inMaterialIndex];
 
-    vec4 baseSample = texture(globalTextures[nonuniformEXT(mat.albedoIndex)], inUV) * mat.colorFactors;
+    vec4 rawAlbedo;
+    vec3 normalSample;
+    vec4 metalRough;
+
+    if (mat.virtualTextureId < VT_INVALID_INDEX) {
+        vec4 vtNormal;
+        vt_sample_pbr_layers(mat.virtualTextureId, inUV, rawAlbedo, vtNormal, metalRough);
+        normalSample = vtNormal.rgb * 2.0 - 1.0;
+    }
+    else {
+        rawAlbedo = texture(globalTextures[nonuniformEXT(mat.albedoIndex)], inUV);
+        normalSample = texture(globalTextures[nonuniformEXT(mat.normalIndex)], inUV).rgb * 2.0 - 1.0;
+        metalRough = texture(globalTextures[nonuniformEXT(mat.metalRoughIndex)], inUV);
+    }
+
+    vec4 baseSample = rawAlbedo * mat.colorFactors;
     float alpha = clamp(baseSample.a, 0.0, 1.0);
     if (alpha < 0.01) {
         discard;
@@ -57,14 +74,12 @@ void main() {
 
     // normal mapping
     mat3 TBN = mat3(normalize(inTangent), normalize(inBitangent), normalize(inNormal));
-    vec3 normalSample = texture(globalTextures[nonuniformEXT(mat.normalIndex)], inUV).rgb * 2.0 - 1.0;
     normalSample.xy *= mat.extraFactors.y;
     vec3 N = normalize(TBN * normalSample);
     if (mat.extraFactors.z > 0.5 && !gl_FrontFacing) {
         N = -N;
     }
 
-    vec4 metalRough = texture(globalTextures[nonuniformEXT(mat.metalRoughIndex)], inUV);
     float metallic  = clamp(metalRough.b * mat.metalRoughFactors.x, 0.0, 1.0);
     float roughness = clamp(metalRough.g * mat.metalRoughFactors.y, 0.04, 1.0);
 

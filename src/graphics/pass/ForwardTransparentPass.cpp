@@ -1,6 +1,7 @@
 #include "ForwardTransparentPass.h"
 #include <graphics/reflection/DescriptorBinder.h>
 #include <graphics/Renderer.h>
+#include <graphics/vt/VirtualTextureSystem.h>
 #include <graphics/utils/vk_utils.h>
 #include <resources/GlobalGeometryPool.h>
 #include <algorithm>
@@ -70,6 +71,12 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 			params.gpuObjectBuffer = builder.read_buffer(targets.gpuObjectBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 			params.gpuInstanceBuffer = builder.read_buffer(targets.gpuInstanceBuffer, VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
 			params.materialBuffer = builder.read_buffer(targets.materialBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+
+			if (targets.vtDescBuffer.is_valid())
+				params.vtDescBuffer = builder.read_buffer(targets.vtDescBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
+			if (targets.vtFeedbackBuffer.is_valid()) 
+				params.vtFeedbackBuffer = builder.write_buffer(targets.vtFeedbackBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
+			
 			params.sceneColorCopy = builder.read_texture(targets.sceneColorCopy, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			params.irradianceMap = builder.read_texture(targets.irradianceMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			params.prefilterMap = builder.read_texture(targets.prefilterMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -126,18 +133,23 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 			VkDescriptorSetLayout layout0 = _rm->get_pipeline_layout_cache().get_descriptor_set_layout(_forwardVfxTemplate->get_reflection().sets.at(0), false);
 			VkDescriptorSet globalSet = frameData._frameDescriptors.allocate(_core->get_device(), layout0);
 
+			VirtualTextureSystem& vtSys = _rm->get_vtsystem();
 			DefaultResources& defaults = DefaultResources::get();
 			std::unordered_map<std::string, VkDescriptorBufferInfo> buffers = {
 				{ "sceneData", { frameData.sceneDataBuffer->get_buffer(), 0, sizeof(GPUSceneData) } },
 				{ "objectBuffer", { graph.get_buffer(params.gpuObjectBuffer), 0, sizeof(GPUObjectData) * totalObjects } },
 				{ "instanceBuffer", { graph.get_buffer(params.gpuInstanceBuffer), 0, sizeof(uint32_t) * totalObjects } },
-				{ "materialBuffer", { graph.get_buffer(params.materialBuffer), 0, frameData._materialDataBuffer->get_size() } }
+				{ "materialBuffer", { graph.get_buffer(params.materialBuffer), 0, frameData._materialDataBuffer->get_size() } },
+				{ "vtDescBuffer",   { vtSys.get_vt_desc_buffer(), 0, vtSys.get_vt_desc_buffer_size() } },
+				{ "vtFeedback",     { vtSys.get_feedback_buffer(), 0, vtSys.get_gpu_feedback_buffer_size() } }
 			};
 			std::unordered_map<std::string, VkDescriptorImageInfo> images = {
 				{ "sceneColorCopy", { defaults.defaultSamplerLinear->get_sampler(), graph.get_image_view(params.sceneColorCopy), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
 				{ "irradianceMap", { defaults.cubemapSampler->get_sampler(), graph.get_image_view(params.irradianceMap), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
 				{ "prefilterMap", { defaults.cubemapSampler->get_sampler(), graph.get_image_view(params.prefilterMap), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
-				{ "brdfLUT", { defaults.lutSampler->get_sampler(), graph.get_image_view(params.brdfLut), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } }
+				{ "brdfLUT", { defaults.lutSampler->get_sampler(), graph.get_image_view(params.brdfLut), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+				{ "vtPageTable",     { vtSys.get_page_table().get_sampler(), vtSys.get_page_table().get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+				{ "vtPhysicalAtlas", { vtSys.get_physical_pool().get_atlas_sampler(), vtSys.get_physical_pool().get_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } }
 			};
 			DescriptorBinder::update_set(_core->get_device(), globalSet, _forwardVfxTemplate->get_reflection().sets.at(0), buffers, images);
 

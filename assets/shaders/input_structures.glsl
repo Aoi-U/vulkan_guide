@@ -22,4 +22,5 @@ layout (set = 0, binding = 0) uniform SceneData
   vec4 sunlightColor;
   PointLight pointLights[MAX_POINT_LIGHTS];
   vec4 lightCount;
+  vec4 vtParams; // x: feedback subsample, y: debug mode, z: mip bias, w: frame number
 } sceneData;

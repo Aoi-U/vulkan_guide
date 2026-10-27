@@ -6,6 +6,7 @@
 #include <resources/ResourceManager.h>
 #include <resources/GlobalGeometryPool.h>
 #include <graphics/utils/StagingUploader.h>
+#include <graphics/vt/VirtualTextureSystem.h>
 #include <graphics/Renderer.h>
 #include <graphics/VulkanCore.h>
 
@@ -61,6 +62,7 @@ void ResourceLayer::on_begin_frame(uint64_t frameNumber)
 		uint64_t completedFrame = frameNumber - Renderer::FRAME_OVERLAP;
 		_ctx->vulkanCore->get_deletion_queue().flush_retired(completedFrame);
 		_ctx->resourceManager->get_staging_uploader().reclaim_completed_frames(completedFrame);
+		_ctx->resourceManager->get_vtsystem().process_feedback_readback(static_cast<uint32_t>(frameNumber % Renderer::FRAME_OVERLAP), frameNumber);
 	}
 
 	// reclaim global geometrypool allocations

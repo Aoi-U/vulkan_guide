@@ -29,11 +29,17 @@ void VirtualPageTable::init(VulkanCore* core, StagingUploader* uploader, uint32_
 		for (uint32_t m = 0; m < _mipCount; m++)
 		{
 			uint32_t dim = std::max(1u, _sizeMip0 >> m);
-			_mips[m].width = dim;
-			_mips[m].height = dim;
-			_mips[m].entries.assign(dim * dim, PageTableEntry::empty());
-			_mips[m].exactEntries.assign(dim * dim, PageTableEntry::empty());
-			_mips[m].dirtyRect.reset();
+			MipLevelStorage& mip = _mips[m];
+			mip.width = dim;
+			mip.height = dim;
+
+			mip.sectorsPerAxis = std::clamp(dim / 32u, 1u, DIRTY_GRID_DIM);
+			mip.sectorSpan = (dim + mip.sectorsPerAxis - 1u) / mip.sectorsPerAxis;
+
+			mip.entries.assign(static_cast<size_t>(dim) * dim, PageTableEntry::empty());
+			mip.exactEntries.assign(static_cast<size_t>(dim) * dim, PageTableEntry::empty());
+			mip.sectorDirtyRects.assign(static_cast<size_t>(mip.sectorsPerAxis) * mip.sectorsPerAxis, DirtyRect{});
+			mip.anyDirty = false;
 		}
 	}
 
@@ -174,7 +180,7 @@ PageTableAllocation VirtualPageTable::allocate_virtual_range(uint16_t textureId,
 	uint32_t tilesX = std::max(1u, (virtualWidth + VT_LOGICAL_TILE_SIZE - 1u) / VT_LOGICAL_TILE_SIZE);
 	uint32_t tilesY = std::max(1u, (virtualHeight + VT_LOGICAL_TILE_SIZE - 1u) / VT_LOGICAL_TILE_SIZE);
 
-	// round up to next power of two for mip shift alignment without overlap
+	// round up to next power of two so quadtree mip shifts never overlap neighbor allocations
 	uint32_t span = std::max(tilesX, tilesY);
 	uint32_t pow2Span = 1u;
 	while (pow2Span < span)
@@ -277,7 +283,7 @@ void VirtualPageTable::map_page(const PageTableAllocation& alloc, uint16_t local
 	// propagate fallback entry down to lower mips for this virtual page
 	if (mipLevel > 0)
 	{
-		propagate_fallback_down(alloc, localTileX, localTileY, mipLevel, exactEntry.as_fallback());
+		propagate_quadtree_children(alloc, localTileX, localTileY, mipLevel, exactEntry.as_fallback());
 	}
 }
 
@@ -323,58 +329,65 @@ void VirtualPageTable::unmap_page(const PageTableAllocation& alloc, uint16_t loc
 	// propagate parent fallback down to lower mips for this virtual page
 	if (mipLevel > 0)
 	{
-		propagate_fallback_down(alloc, localTileX, localTileY, mipLevel, replacement);
+		propagate_quadtree_children(alloc, localTileX, localTileY, mipLevel, replacement);
 	}
 }
 
 uint32_t VirtualPageTable::flush_dirty_pages()
 {
 	std::scoped_lock<std::mutex> lock(_mutex);
-	uint32_t flushedMipCount = 0;
+	uint32_t stagedRectCount = 0;
 
 	for (uint32_t mip = 0; mip < _mipCount; mip++)
 	{
 		MipLevelStorage& storage = _mips[mip];
-		if (!storage.dirtyRect.is_dirty())
+		if (!storage.anyDirty)
 			continue;
 
-		const uint32_t rectX = storage.dirtyRect.minX;
-		const uint32_t rectY = storage.dirtyRect.minY;
-		const uint32_t rectW = storage.dirtyRect.maxX - rectX + 1u;
-		const uint32_t rectH = storage.dirtyRect.maxY - rectY + 1u;
-
-		if (_uploader && _pageTableImage != VK_NULL_HANDLE)
+		for (DirtyRect& rect : storage.sectorDirtyRects)
 		{
-			// pack dirty subrectangle into contiguous buffer for StagingUploader
-			std::vector<uint32_t> contiguousRect(static_cast<size_t>(rectW) * rectH);
-			for (uint32_t row = 0; row < rectH; row++)
+			if (!rect.is_dirty())
+				continue;
+
+			const uint32_t rectX = rect.minX;
+			const uint32_t rectY = rect.minY;
+			const uint32_t rectW = rect.maxX - rectX + 1u;
+			const uint32_t rectH = rect.maxY - rectY + 1u;
+
+			if (_uploader && _pageTableImage != VK_NULL_HANDLE)
 			{
-				const PageTableEntry* srcRow = &storage.entries[static_cast<size_t>(rectY + row) * storage.width + rectX];
-				memcpy(&contiguousRect[static_cast<size_t>(row) * rectW], srcRow, rectW * sizeof(uint32_t));
+				std::vector<uint32_t> contiguousRect(static_cast<size_t>(rectW) * rectH);
+				for (uint32_t row = 0; row < rectH; row++)
+				{
+					const PageTableEntry* srcRow = &storage.entries[static_cast<size_t>(rectY + row) * storage.width + rectX];
+					memcpy(&contiguousRect[static_cast<size_t>(row) * rectW], srcRow, rectW * sizeof(uint32_t));
+				}
+
+				StagedTextureRegionDesc desc{};
+				desc.dstImage = _pageTableImage;
+				desc.format = VK_FORMAT_R32_UINT;
+				desc.offset = { static_cast<int32_t>(rectX), static_cast<int32_t>(rectY), 0 };
+				desc.extent = { rectW, rectH, 1 };
+				desc.mipLevel = mip;
+				desc.totalMipLevels = _mipCount;
+				desc.baseArrayLayer = 0;
+				desc.layerCount = 1;
+				desc.totalArrayLayers = 1;
+				desc.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+				desc.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+				desc.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+				_uploader->stage_texture_region_upload(desc, contiguousRect.data(), contiguousRect.size() * sizeof(uint32_t));
 			}
 
-			StagedTextureRegionDesc desc{};
-			desc.dstImage = _pageTableImage;
-			desc.format = VK_FORMAT_R32_UINT;
-			desc.offset = { static_cast<int32_t>(rectX), static_cast<int32_t>(rectY), 0 };
-			desc.extent = { rectW, rectH, 1 };
-			desc.mipLevel = mip;
-			desc.totalMipLevels = _mipCount;
-			desc.baseArrayLayer = 0;
-			desc.layerCount = 1;
-			desc.totalArrayLayers = 1;
-			desc.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			desc.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-			desc.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-
-			_uploader->stage_texture_region_upload(desc, contiguousRect.data(), contiguousRect.size() * sizeof(uint32_t));
+			rect.reset();
+			stagedRectCount++;
 		}
 
-		storage.dirtyRect.reset();
-		flushedMipCount++;
+		storage.anyDirty = false;
 	}
 
-	return flushedMipCount;
+	return stagedRectCount;
 }
 
 PageTableEntry VirtualPageTable::get_cpu_entry(uint32_t globalTileX, uint32_t globalTileY, uint8_t mipLevel) const
@@ -397,58 +410,55 @@ void VirtualPageTable::write_entry(uint8_t mip, uint32_t x, uint32_t y, PageTabl
 	if (storage.entries[idx].raw != entry.raw)
 	{
 		storage.entries[idx] = entry;
-		storage.dirtyRect.expand(x, y);
+		
+		uint32_t sx = std::min(x / storage.sectorSpan, storage.sectorsPerAxis - 1u);
+		uint32_t sy = std::min(y / storage.sectorSpan, storage.sectorsPerAxis - 1u);
+		storage.sectorDirtyRects[static_cast<size_t>(sy) * storage.sectorsPerAxis + sx].expand(x, y);
+		storage.anyDirty = true;
 	}
 }
 
-void VirtualPageTable::propagate_fallback_down(const PageTableAllocation& alloc, uint16_t localX, uint16_t localY,
-	uint8_t sourceMip, PageTableEntry fallbackEntry)
+void VirtualPageTable::propagate_quadtree_children(const PageTableAllocation& alloc, uint16_t parentLocalX, uint16_t parentLocalY,
+                                               uint8_t parentMip, PageTableEntry fallbackEntry)
 {
-	// recursively walk quadtree children from (sourceMip - 1) down to mip0
-	// stop on any subtree branch that already has its own resident tile
-	for (uint8_t childMip = sourceMip; childMip-- > 0; )
+	if (parentMip == 0)
+		return;
+
+	const uint8_t childMip = parentMip - 1u;
+	const uint32_t mipTilesX = std::max(1u, alloc.tilesX >> childMip);
+	const uint32_t mipTilesY = std::max(1u, alloc.tilesY >> childMip);
+	const uint32_t baseX = alloc.offsetX >> childMip;
+	const uint32_t baseY = alloc.offsetY >> childMip;
+
+	MipLevelStorage& childStorage = _mips[childMip];
+
+	// visit 2x2 quadtree children at childmip
+	for (uint16_t dy = 0; dy < 2u; dy++)
 	{
-		uint32_t shift = sourceMip - childMip;
-		uint32_t childStartX = static_cast<uint32_t>(localX) << shift;
-		uint32_t childStartY = static_cast<uint32_t>(localY) << shift;
-		uint32_t span = 1u << shift;
+		const uint16_t childLocalY = static_cast<uint16_t>((parentLocalY << 1u) + dy);
+		if (childLocalY >= mipTilesY)
+			continue;
 
-		uint32_t mipTilesX = std::max(1u, alloc.tilesX >> childMip);
-		uint32_t mipTilesY = std::max(1u, alloc.tilesY >> childMip);
-		uint32_t baseX = alloc.offsetX >> childMip;
-		uint32_t baseY = alloc.offsetY >> childMip;
-
-		MipLevelStorage& childStorage = _mips[childMip];
-
-		for (uint32_t dy = 0; dy < span; dy++)
+		for (uint16_t dx = 0; dx  < 2u; dx++)
 		{
-			uint32_t cy = childStartY + dy;
-			if (cy >= mipTilesY)
+			const uint16_t childLocalX = static_cast<uint16_t>((parentLocalX << 1u) + dx);
+			if (childLocalX >= mipTilesX)
 				continue;
 
-			for (uint32_t dx = 0; dx < span; dx++)
-			{
-				uint32_t cx = childStartX + dx;
-				if (cx >= mipTilesX)
-					continue;
+			const uint32_t gx = baseX + childLocalX;
+			const uint32_t gy = baseY + childLocalY;
+			if (gx >= childStorage.width || gy >= childStorage.height)
+				continue;
 
-				// check if this child or any intermediate ancestor between childMIp and sourceMip has an exact resident page
-				bool coveredByFinerAncestor = false;
-				for (uint8_t checkMip = childMip; checkMip < sourceMip; checkMip++)
-				{
-					uint32_t ancShift = checkMip - childMip;
-					uint32_t ax = (alloc.offsetX >> checkMip) + (cx >> ancShift);
-					uint32_t ay = (alloc.offsetY >> checkMip) + (cy >> ancShift);
-					if (_mips[checkMip].exactEntries[static_cast<size_t>(ay) * _mips[checkMip].width + ax].is_resident())
-					{
-						coveredByFinerAncestor = true;
-						break;
-					}
-				}
+			const size_t idx = static_cast<size_t>(gy) * childStorage.width + gx;
 
-				if (!coveredByFinerAncestor)
-					write_entry(childMip, baseX + cx, baseY + cy, fallbackEntry);
-			}
+			if (childStorage.exactEntries[idx].is_resident())
+				continue;
+
+			write_entry(childMip, gx, gy, fallbackEntry);
+
+			if (childMip > 0)
+				propagate_quadtree_children(alloc, childLocalX, childLocalY, childMip, fallbackEntry);
 		}
 	}
 }
