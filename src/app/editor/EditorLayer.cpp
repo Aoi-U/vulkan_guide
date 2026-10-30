@@ -313,6 +313,21 @@ void EditorLayer::draw_dockspace_and_menubar()
 			{
 				AssetRegistry::get().print_manifest();
 			}
+			ImGui::Separator();
+			if (ImGui::MenuItem("Virtualize All Models in Project (.vtex)") && _ctx->resourceManager)
+			{
+				for (const auto& modelMeta : AssetRegistry::get().get_assets_by_type(AssetType::Model, false))
+					AssetImporter::set_model_virtualized(modelMeta.uuid, true, _ctx->resourceManager);
+				if (_ctx->activeRegistry)
+					AssetSerializer::refresh_scene_materials(*_ctx->activeRegistry, *_ctx->resourceManager, _ctx->renderer);
+			}
+			if (ImGui::MenuItem("Unvirtualize All Models in Project (.gtex)") && _ctx->resourceManager)
+			{
+				for (const auto& modelMeta : AssetRegistry::get().get_assets_by_type(AssetType::Model, false))
+					AssetImporter::set_model_virtualized(modelMeta.uuid, false, _ctx->resourceManager);
+				if (_ctx->activeRegistry)
+					AssetSerializer::refresh_scene_materials(*_ctx->activeRegistry, *_ctx->resourceManager, _ctx->renderer);
+			}
 			ImGui::EndMenu();
 		}
 
@@ -825,7 +840,6 @@ void EditorLayer::draw_performance_panel()
 			? (static_cast<float>(vt.totalCacheHits) / static_cast<float>(totalLookups)) * 100.0f
 			: 100.0f;
 
-		ImGui::BulletText("Registered Virtual Textures: %u (Page Table: %.1f KB)", vt.registeredVirtualTextures, ptKB);
 		ImGui::BulletText("Tile Cache Hit Rate: %.1f%% (%llu hits, %llu misses, %llu evictions)",
 			hitRate,
 			static_cast<unsigned long long>(vt.totalCacheHits),
@@ -836,6 +850,13 @@ void EditorLayer::draw_performance_panel()
 			vt.lastFrameUniquePagesRequested,
 			vt.inFlightTileRequests,
 			static_cast<unsigned long long>(vt.totalTilesStreamed));
+
+		float fbKB = static_cast<float>(vt.fallbackAtlasVramBytes) / 1024.0f;
+		ImGui::BulletText("Registered Virtual Textures: %u / %u (Page Table: %.1f KB | Fallback Atlas: %.1f KB)",
+			vt.registeredVirtualTextures,
+			VirtualTextureSystem::MAX_VIRTUAL_TEXTURES,
+			ptKB,
+			fbKB);
 	}
 
 	// profiler metrics

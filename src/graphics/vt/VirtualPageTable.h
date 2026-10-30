@@ -20,9 +20,11 @@ struct PageTableAllocation
 	uint32_t tilesX{ 0 };
 	uint32_t tilesY{ 0 };
 	uint32_t mipLevels{ 1 };
-	OffsetAllocator::Allocation regionAlloc{};
+	uint32_t macroBlockX{ 0 };
+	uint32_t macroBlockY{ 0 };
+	uint32_t macroBlockSpan{ 0 };
 
-	bool is_valid() const noexcept { return textureId != VT_INVALID_TEXTURE_ID; }
+	bool is_valid() const noexcept { return textureId != VT_INVALID_TEXTURE_ID && macroBlockSpan > 0; }
 };
 
 // table of virtual texture allocations
@@ -118,6 +120,6 @@ private:
 	VkSampler _nearestSampler{ VK_NULL_HANDLE };
 
 	mutable std::mutex _mutex;
-	std::unique_ptr<OffsetAllocator::Allocator> _virtualSpaceAllocator;
+	std::vector<uint8_t> _macroGridOccupancy;
 	std::vector<MipLevelStorage> _mips;
 };

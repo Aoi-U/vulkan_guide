@@ -15,6 +15,10 @@
 #include <fstream>
 #include <cmath>
 #include <algorithm>
+#include <future>
+
+#include "AssetStreamer.h"
+#include "vt/VirtualTextureSystem.h"
 
 namespace // helpers
 {
@@ -383,6 +387,7 @@ bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
 	stbi_uc* stbiPixels = nullptr;
 	std::vector<uint8_t> gtexPayload;
 	const uint8_t* rawMip0Ptr = nullptr;
+	TextureImportSettings effectiveSettings = texMeta.textureSettings;
 
 	// try loading directly from source image file if regular texture asset
 	if (!texMeta.is_sub_asset() && std::filesystem::exists(texMeta.virtualPath))
@@ -395,6 +400,12 @@ bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
 	if (!rawMip0Ptr)
 	{
 		std::filesystem::path gtexPath = std::filesystem::path(".cache/textures") / (texMeta.uuid.to_string() + ".gtex");
+		if (!std::filesystem::exists(gtexPath) && texMeta.parentAssetUUID.is_valid())
+		{
+			if (const AssetMetadata* parentMeta = AssetRegistry::get().get_metadata(texMeta.parentAssetUUID))
+				import_model(*parentMeta);
+		}
+
 		if (std::filesystem::exists(gtexPath))
 		{
 			std::ifstream in(gtexPath, std::ios::binary);
@@ -410,6 +421,9 @@ bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
 					{
 						width = static_cast<int>(gtexHdr.width);
 						height = static_cast<int>(gtexHdr.height);
+						effectiveSettings.sRGB = (gtexHdr.format == VK_FORMAT_R8G8B8A8_SRGB);
+						effectiveSettings.addressModeU = gtexHdr.addressModeU;
+						effectiveSettings.addressModeV = gtexHdr.addressModeV;
 						rawMip0Ptr = gtexPayload.data();
 					}
 				}
@@ -423,11 +437,8 @@ bool AssetImporter::cook_virtual_texture(const AssetMetadata& texMeta)
 		return false;
 	}
 
-	std::filesystem::path targetPath = texMeta.cookedPath;
-	if (targetPath.empty() || targetPath.extension() != ".vtex")
-		targetPath = std::filesystem::path(".cache/textures") / (texMeta.uuid.to_string() + ".vtex");
-
-	bool ok = cook_vtex_from_rgba8(targetPath, rawMip0Ptr, static_cast<uint32_t>(width), static_cast<uint32_t>(height), texMeta.textureSettings);
+	std::filesystem::path targetPath = std::filesystem::path(".cache/textures") / (texMeta.uuid.to_string() + ".vtex");
+	bool ok = cook_vtex_from_rgba8(targetPath, rawMip0Ptr, static_cast<uint32_t>(width), static_cast<uint32_t>(height), effectiveSettings);
 
 	if (stbiPixels)
 		stbi_image_free(stbiPixels);
@@ -593,6 +604,251 @@ bool AssetImporter::read_vtex_tile(const std::filesystem::path& vtexPath, const 
 	outTilePixels.resize(entry.byteSize);
 	in.read(reinterpret_cast<char*>(outTilePixels.data()), static_cast<std::streamsize>(entry.byteSize));
 	return in.good();
+}
+
+bool AssetImporter::set_texture_virtualized(const UUID& texUuid, bool enableVT, ResourceManager* rm, bool saveMeta, bool forceRecook)
+{
+	if (!texUuid.is_valid())
+		return false;
+
+	const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid);
+	if (!meta || (meta->type != AssetType::Texture && meta->type != AssetType::EnvironmentHDR))
+		return false;
+
+	std::filesystem::path vtexPath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".vtex");
+	std::filesystem::path gtexPath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
+
+	if (enableVT) // set texture virtualized
+	{
+		AssetRegistry::get().set_texture_virtual_state(texUuid, true, saveMeta);
+		const AssetMetadata* updatedMeta = AssetRegistry::get().get_metadata(texUuid);
+		if (forceRecook || !std::filesystem::exists(vtexPath))
+		{
+			if (!cook_virtual_texture(*updatedMeta))
+				return false;
+		}
+		if (rm)
+			rm->get_asset_streamer().invalidate_vtex_cache(texUuid);
+	}
+	else // set texture unvirtualized
+	{
+		if (rm)
+		{
+			rm->get_vtsystem().unregister_virtual_textures_referencing_uuid(texUuid);
+			rm->get_asset_streamer().invalidate_vtex_cache(texUuid);
+		}
+		AssetRegistry::get().set_texture_virtual_state(texUuid, false, saveMeta);
+		const AssetMetadata* updatedMeta = AssetRegistry::get().get_metadata(texUuid);
+
+		// ensure .gtex cache file exists
+		if (forceRecook || !std::filesystem::exists(gtexPath))
+		{
+			if (updatedMeta->is_sub_asset() && updatedMeta->parentAssetUUID.is_valid())
+			{
+				if (const AssetMetadata* parentMeta = AssetRegistry::get().get_metadata(updatedMeta->parentAssetUUID))
+					import_model(*parentMeta);
+			}
+			else
+			{
+				cook_texture(*updatedMeta);
+			}
+		}
+	}
+
+	return true;
+}
+
+bool AssetImporter::set_material_virtualized(const UUID& matUuid, bool enableVT, ResourceManager* rm)
+{
+	const AssetMetadata* matMeta = AssetRegistry::get().get_metadata(matUuid);
+	if (!matMeta || matMeta->type != AssetType::Material)
+		return false;
+
+	std::filesystem::path matPath = matMeta->virtualPath;
+	if (matPath.extension() != ".mat")
+		matPath = matMeta->virtualPath.parent_path() / "materials" / (matMeta->name + ".mat");
+
+	MaterialAssetData matData{};
+	if (!AssetSerializer::load_material_file(matPath, matData))
+		return false;
+
+	UUID slots[] = {
+		matData.albedoTextureUUID,
+		matData.normalTextureUUID,
+		matData.metalRoughTextureUUID,
+		matData.occlusionTextureUUID
+	};
+
+	bool anyUpdated = false;
+	for (const UUID& texId : slots)
+	{
+		if (texId.is_valid())
+			anyUpdated |= set_texture_virtualized(texId, enableVT, rm, true, false);
+	}
+	return anyUpdated;
+}
+
+uint32_t AssetImporter::set_model_virtualized(const UUID& modelOrPrefabUuid, bool enableVT, ResourceManager* rm)
+{
+	if (!modelOrPrefabUuid.is_valid())
+		return 0;
+
+	const AssetMetadata* targetMeta = AssetRegistry::get().get_metadata(modelOrPrefabUuid);
+	if (!targetMeta)
+		return 0;
+
+	UUID modelUuid = modelOrPrefabUuid;
+	std::filesystem::path prefabPath;
+
+	if (targetMeta->type == AssetType::Prefab)
+	{
+		prefabPath = targetMeta->virtualPath;
+		if (targetMeta->parentAssetUUID.is_valid())
+			modelUuid = targetMeta->parentAssetUUID;
+		else
+		{
+			PrefabAssetData prefabData{};
+			if (AssetSerializer::load_prefab_file(prefabPath, prefabData) && prefabData.sourceModelUUID.is_valid())
+				modelUuid = prefabData.sourceModelUUID;
+		}
+	}
+	else if (targetMeta->type == AssetType::Model)
+	{
+		prefabPath = targetMeta->virtualPath;
+		prefabPath.replace_extension( ".prefab");
+	}
+
+	// collect all unique tex uuids belonging to the model and its materials
+	std::unordered_set<UUID> modelTexUuids;
+	if (const AssetMetadata* modelMeta = AssetRegistry::get().get_metadata(modelUuid))
+	{
+		for (const SubAssetEntry& sub : modelMeta->subAssets)
+		{
+			if (!sub.uuid.is_valid())
+				continue;
+
+			if (sub.type == AssetType::Texture)
+				modelTexUuids.insert(sub.uuid);
+			else if (sub.type == AssetType::Material)
+			{
+				if (const AssetMetadata* matSubMeta = AssetRegistry::get().get_metadata(sub.uuid))
+				{
+					MaterialAssetData matData{};
+					if (AssetSerializer::load_material_file(matSubMeta->virtualPath, matData))
+					{
+						if (matData.albedoTextureUUID.is_valid())
+							modelTexUuids.insert(matData.albedoTextureUUID);
+						if (matData.normalTextureUUID.is_valid())
+							modelTexUuids.insert(matData.normalTextureUUID);
+						if (matData.metalRoughTextureUUID.is_valid())
+							modelTexUuids.insert(matData.metalRoughTextureUUID);
+						if (matData.occlusionTextureUUID.is_valid())
+							modelTexUuids.insert(matData.occlusionTextureUUID);
+					}
+				}
+			}
+		}
+	}
+
+	// check .prefab file directly in case subassets was not populated
+	if (!prefabPath.empty() && std::filesystem::exists(prefabPath))
+	{
+		PrefabAssetData prefab{};
+		if (AssetSerializer::load_prefab_file(prefabPath, prefab))
+		{
+			for (const auto& node : prefab.nodes)
+			{
+				for (const auto& sm : node.submeshes)
+				{
+					if (!sm.materialAssetUUID.is_valid())
+						continue;
+					if (const AssetMetadata* matMeta = AssetRegistry::get().get_metadata(sm.materialAssetUUID))
+					{
+						std::filesystem::path matPath = matMeta->virtualPath;
+						if (matPath.extension() != ".mat")
+							matPath = prefabPath.parent_path() / "materials" / (matMeta->name + ".mat");
+
+						MaterialAssetData matData{};
+						if (AssetSerializer::load_material_file(matPath, matData))
+						{
+							if (matData.albedoTextureUUID.is_valid())     
+								modelTexUuids.insert(matData.albedoTextureUUID);
+							if (matData.normalTextureUUID.is_valid())     
+								modelTexUuids.insert(matData.normalTextureUUID);
+							if (matData.metalRoughTextureUUID.is_valid()) 
+								modelTexUuids.insert(matData.metalRoughTextureUUID);
+							if (matData.occlusionTextureUUID.is_valid())  
+								modelTexUuids.insert(matData.occlusionTextureUUID);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (modelTexUuids.empty())
+		return 0;
+
+	// update metadata for all textures
+	std::vector<AssetMetadata> texturesToCookVtex;
+	for (const UUID& texId : modelTexUuids)
+	{
+		if (!enableVT && rm)
+		{
+			rm->get_vtsystem().unregister_virtual_textures_referencing_uuid(texId);
+			rm->get_asset_streamer().invalidate_vtex_cache(texId);
+		}
+
+		AssetRegistry::get().set_texture_virtual_state(texId, enableVT, false);
+
+		if (enableVT)
+		{
+			std::filesystem::path vtexPath = std::filesystem::path(".cache/textures") / (texId.to_string() + ".vtex");
+			if (!std::filesystem::exists(vtexPath))
+			{
+				if (const AssetMetadata* texMeta = AssetRegistry::get().get_metadata(texId))
+					texturesToCookVtex.push_back(*texMeta);
+			}
+		}
+	}
+
+	// cook all missing .vtex files 
+	if (enableVT && !texturesToCookVtex.empty())
+	{
+		fmt::println("AssetImporter: cooking {} virtual textures for model '{}'", texturesToCookVtex.size(), targetMeta->name);
+		std::vector<std::future<bool>> futures;
+		futures.reserve(texturesToCookVtex.size());
+
+		for (const AssetMetadata& texMetaCopy : texturesToCookVtex)
+		{
+			futures.push_back(std::async(std::launch::async, [texMetaCopy]()
+				{
+					return AssetImporter::cook_virtual_texture(texMetaCopy);
+				}));
+		}
+
+		for (auto& f : futures)
+			f.get();
+	}
+
+	// update parent models meshSettings.virtualizeTextures and save .meta file
+	if (AssetMetadata* mutableModelMeta = AssetRegistry::get().get_metadata_mutable(modelUuid))
+	{
+		mutableModelMeta->meshSettings.virtualizeTextures = enableVT;
+		if (!mutableModelMeta->virtualPath.empty())
+		{
+			std::filesystem::path metaFile = mutableModelMeta->virtualPath;
+			metaFile += ".meta";
+			AssetSerializer::save_meta_file(metaFile, *mutableModelMeta);
+		}
+	}
+
+	fmt::println("AssetImporter: {} {} textures for model {}",
+		enableVT ? "Virtualized (.vtex)" : "Unvirtualized (.gtex)",
+		modelTexUuids.size(),
+		targetMeta->name);
+
+	return static_cast<uint32_t>(modelTexUuids.size());
 }
 
 bool AssetImporter::cook_mesh_data(const std::filesystem::path& cookedPath, std::span<const Vertex> rawVertices, std::span<const uint32_t> rawIndices, const MeshImportSettings& settings, Bounds& outBounds)
@@ -1145,6 +1401,9 @@ bool AssetImporter::import_model(const AssetMetadata& modelMeta)
 			}
 		}
 	}
+
+	if (modelMeta.meshSettings.virtualizeTextures)
+		set_model_virtualized(modelMeta.uuid, true, nullptr);
 
 	std::filesystem::path prefabPath = filePath;
 	prefabPath.replace_extension(".prefab");

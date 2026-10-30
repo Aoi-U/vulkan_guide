@@ -53,6 +53,7 @@ struct MeshImportSettings
 	bool keepCpuPickingData{ true };
 	bool optimizeVertexCache{ true };
 	bool optimizeOverdraw{ true };
+	bool virtualizeTextures{ true };
 };
 
 struct SubAssetEntry
@@ -60,6 +61,7 @@ struct SubAssetEntry
 	std::string name;
 	UUID uuid;
 	AssetType type{ AssetType::Unknown };
+	bool virtualTexture{ false };
 };
 
 struct AssetMetadata

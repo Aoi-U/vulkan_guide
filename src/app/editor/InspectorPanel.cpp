@@ -152,6 +152,42 @@ void InspectorPanel::draw_entity_inspector(EngineContext& ctx, EditorContext& ed
 					editorCtx.select_disk_asset(matc->materialAssetUUID);
 				}
 			}
+
+			if (matc->material)
+			{
+				uint16_t vtId = matc->material->get_virtual_texture_id();
+				bool isVT = (vtId != UINT16_MAX);
+				ImGui::TextColored(
+					isVT ? ImVec4(0.3f, 0.9f, 0.45f, 1.0f) : ImVec4(0.7f, 0.7f, 0.75f, 1.0f),
+					isVT ? "Mode: Virtual Texture (ID: %u)" : "Mode: Standard Bindless (.gtex)",
+					vtId
+				);
+				if (matc->materialAssetUUID.is_valid() && ctx.resourceManager)
+				{
+					if (ImGui::Button(isVT ? "Disable VT for Material (.gtex)" : "Enable VT for Material (.vtex)", ImVec2(-1.0f, 0.0f)))
+					{
+						AssetImporter::set_material_virtualized(matc->materialAssetUUID, !isVT, ctx.resourceManager);
+						AssetSerializer::refresh_scene_materials(registry, *ctx.resourceManager, ctx.renderer);
+					}
+				}
+			}
+		}
+	}
+
+	// PrefabInstanceComponent
+	if (const auto* prefabComp = registry.try_get<PrefabInstanceComponent>(entity))
+	{
+		if (prefabComp->prefabAssetUUID.is_valid() && ImGui::CollapsingHeader("Model / Prefab Virtual Texturing", ImGuiTreeNodeFlags_DefaultOpen)) {
+			if (ImGui::Button("Virtualize Model (.vtex)", ImVec2(-1.0f, 28.0f)) && ctx.resourceManager)
+			{
+				AssetImporter::set_model_virtualized(prefabComp->prefabAssetUUID, true, ctx.resourceManager);
+				AssetSerializer::refresh_scene_materials(registry, *ctx.resourceManager, ctx.renderer);
+			}
+			if (ImGui::Button("Unvirtualize Model (.gtex)", ImVec2(-1.0f, 28.0f)) && ctx.resourceManager)
+			{
+				AssetImporter::set_model_virtualized(prefabComp->prefabAssetUUID, false, ctx.resourceManager);
+				AssetSerializer::refresh_scene_materials(registry, *ctx.resourceManager, ctx.renderer);
+			}
 		}
 	}
 
@@ -221,11 +257,14 @@ void InspectorPanel::draw_disk_asset_inspector(EngineContext& ctx, EditorContext
 		else if (meta->type == AssetType::Texture || meta->type == AssetType::EnvironmentHDR) {
 			_editingTextureSettings = meta->textureSettings;
 			_hasValidVTexHeader = false;
-			std::filesystem::path vtexPath = std::filesystem::path(".cache/textures") / (meta->uuid.to_string() + ".vtex");
-			if (std::filesystem::exists(vtexPath))
+			if (meta->textureSettings.virtualTexture)
 			{
-				std::vector<CookedVTexTileEntry> dummyTable;
-				_hasValidVTexHeader = AssetImporter::read_vtex_header(vtexPath, _inspectedVTexHeader, dummyTable);
+				std::filesystem::path vtexPath = std::filesystem::path(".cache/textures") / (meta->uuid.to_string() + ".vtex");
+				if (std::filesystem::exists(vtexPath))
+				{
+					std::vector<CookedVTexTileEntry> dummyTable;
+					_hasValidVTexHeader = AssetImporter::read_vtex_header(vtexPath, _inspectedVTexHeader, dummyTable);
+				}
 			}
 		}
 		else if (meta->type == AssetType::Mesh || meta->type == AssetType::Model) {
@@ -237,6 +276,24 @@ void InspectorPanel::draw_disk_asset_inspector(EngineContext& ctx, EditorContext
 					_hasValidMeshHeader = (in.good() && _inspectedMeshHeader.magic == GMESH_MAGIC);
 				}
 			}
+		}
+		else if (meta->type == AssetType::Prefab) {
+			ImGui::TextUnformatted("Prefab Virtual Texturing");
+			if (ImGui::Button("Virtualize All Prefab Textures (.vtex) & Update", ImVec2(-1.0f, 32.0f))) {
+				AssetImporter::set_model_virtualized(meta->uuid, true, ctx.resourceManager);
+				if (ctx.activeRegistry && ctx.resourceManager) {
+					AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
+				}
+			}
+			if (ImGui::Button("Unvirtualize All Prefab Textures (.gtex) & Update", ImVec2(-1.0f, 32.0f))) {
+				AssetImporter::set_model_virtualized(meta->uuid, false, ctx.resourceManager);
+				if (ctx.activeRegistry && ctx.resourceManager) {
+					AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
+				}
+			}
+		}
+		else {
+			ImGui::TextDisabled("Disk size: %.2f KB", static_cast<double>(meta->diskSizeBytes) / 1024.0);
 		}
 	}
 
@@ -320,50 +377,40 @@ void InspectorPanel::draw_material_asset_inspector(const AssetMetadata& meta, En
 		}
 	}
 
-	if (ImGui::Button("Convert Material Textures to Virtual (.vtex) & Hot-Update", ImVec2(-1.0f, 32.0f))) {
-		UUID slotsToConvert[] = {
-			_editingMaterialData.albedoTextureUUID,
-			_editingMaterialData.normalTextureUUID,
-			_editingMaterialData.metalRoughTextureUUID,
-			_editingMaterialData.occlusionTextureUUID
-		};
+	bool isAlbedoVT = false;
+	if (_editingMaterialData.albedoTextureUUID.is_valid())
+	{
+		if (const AssetMetadata* albedoMeta = AssetRegistry::get().get_metadata(_editingMaterialData.albedoTextureUUID))
+			isAlbedoVT = albedoMeta->textureSettings.virtualTexture;
+	}
 
-		for (const UUID& texId : slotsToConvert) {
-			if (!texId.is_valid())
-				continue;
-			if (AssetMetadata* texMeta = AssetRegistry::get().get_metadata_mutable(texId)) {
-				texMeta->textureSettings.virtualTexture = true;
-				texMeta->cookedPath = std::filesystem::path(".cache/textures") / (texId.to_string() + ".vtex");
-				if (!texMeta->is_sub_asset()) {
-					std::filesystem::path metaFile = texMeta->virtualPath;
-					metaFile += ".meta";
-					AssetSerializer::save_meta_file(metaFile, *texMeta);
-				}
-				AssetImporter::cook_virtual_texture(*texMeta);
-			}
-		}
+	ImGui::Spacing();
+	ImGui::TextColored(
+		isAlbedoVT ? ImVec4(0.3f, 0.9f, 0.45f, 1.0f) : ImVec4(0.75f, 0.75f, 0.8f, 1.0f),
+		"Virtual Texturing Status: %s",
+		isAlbedoVT ? "ENABLED (.vtex)" : "DISABLED (Standard .gtex)"
+	);
 
-		if (AssetSerializer::save_material_file(meta.virtualPath, _editingMaterialData) && ctx.activeRegistry && ctx.resourceManager) {
-			auto newInstance = AssetSerializer::build_material_instance(_editingMaterialData, *ctx.resourceManager);
-			auto view = ctx.activeRegistry->view<MaterialComponent>();
-			for (auto [entity, matComp] : view.each()) {
-				if (matComp.materialAssetUUID == meta.uuid) {
-					matComp.material = newInstance;
-					matComp.alphaMode = _editingMaterialData.alphaMode;
-					matComp.doubleSided = _editingMaterialData.doubleSided;
-					matComp.isDirty = true;
-				}
-			}
-			if (ctx.renderer) {
-				ctx.renderer->mark_scene_dirty();
-			}
-		}
+	if (ImGui::Button("Enable Virtual Textures (.vtex) & Hot-Update", ImVec2(-1.0f, 30.0f)))
+	{
+		AssetSerializer::save_material_file(meta.virtualPath, _editingMaterialData);
+		AssetImporter::set_material_virtualized(meta.uuid, true, ctx.resourceManager);
+		if (ctx.activeRegistry && ctx.resourceManager)
+			AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
+	}
+
+	if (ImGui::Button("Disable Virtual Textures (.gtex) & Hot-Update", ImVec2(-1.0f, 30.0f)))
+	{
+		AssetSerializer::save_material_file(meta.virtualPath, _editingMaterialData);
+		AssetImporter::set_material_virtualized(meta.uuid, false, ctx.resourceManager);
+		if (ctx.activeRegistry && ctx.resourceManager)
+			AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
 	}
 }
 
 void InspectorPanel::draw_texture_asset_inspector(const AssetMetadata& meta, EngineContext& ctx)
 {
-	if (_hasValidVTexHeader) 
+	if (_hasValidVTexHeader)
 	{
 		ImGui::TextUnformatted("Cooked .vtex Virtual Texture Telemetry");
 		ImGui::BulletText("Virtual Resolution: %u x %u", _inspectedVTexHeader.virtualWidth, _inspectedVTexHeader.virtualHeight);
@@ -429,22 +476,21 @@ void InspectorPanel::draw_texture_asset_inspector(const AssetMetadata& meta, Eng
 	ImGui::SliderFloat("Max Anisotropy", &_editingTextureSettings.anisotropy, 1.0f, 16.0f);
 
 	ImGui::Spacing();
-	if (ImGui::Button("Apply Settings & Recook", ImVec2(-1.0f, 32.0f))) {
-		if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid)) {
+	if (ImGui::Button("Apply Settings & Recook", ImVec2(-1.0f, 32.0f)))
+	{
+		if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid))
 			mutableMeta->textureSettings = _editingTextureSettings;
-			mutableMeta->cookedPath = std::filesystem::path(".cache/textures") /
-				(meta.uuid.to_string() + (_editingTextureSettings.virtualTexture ? ".vtex" : ".gtex"));
-
-			if (!mutableMeta->is_sub_asset()) {
-				std::filesystem::path metaPath = mutableMeta->virtualPath;
-				metaPath += ".meta";
-				AssetSerializer::save_meta_file(metaPath, *mutableMeta);
-			}
-			AssetImporter::cook_texture(*mutableMeta);
-
-			// refresh cached .vtex telemetry in Inspector
-			_loadedDiskAssetUUID = UUID::null();
-		}
+		AssetImporter::set_texture_virtualized(
+			meta.uuid,
+			_editingTextureSettings.virtualTexture,
+			ctx.resourceManager,
+			true,
+			true
+		);
+		if (ctx.activeRegistry && ctx.resourceManager)
+			AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
+		// refresh cached .vtex in inspector
+		_loadedDiskAssetUUID = UUID::null();
 	}
 }
 
@@ -475,14 +521,40 @@ void InspectorPanel::draw_mesh_asset_inspector(const AssetMetadata& meta, Engine
 	ImGui::Checkbox("Optimize Vertex Cache (ACMR)", &_editingMeshSettings.optimizeVertexCache);
 	ImGui::Checkbox("Optimize Overdraw", &_editingMeshSettings.optimizeOverdraw);
 
-	if (meta.type == AssetType::Model && ImGui::Button("Apply & Re-Import Model", ImVec2(-1.0f, 32.0f))) {
-		if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid)) {
-			mutableMeta->meshSettings = _editingMeshSettings;
-			std::filesystem::path metaPath = mutableMeta->virtualPath;
-			metaPath += ".meta";
-			AssetSerializer::save_meta_file(metaPath, *mutableMeta);
-			AssetImporter::import_model(*mutableMeta);
-			if (ctx.renderer) ctx.renderer->mark_scene_dirty();
+	if (meta.type == AssetType::Model)
+	{
+		if (ImGui::Button("Apply & Re-Import Model", ImVec2(-1.0f, 32.0f)))
+		{
+			if (AssetMetadata* mutableMeta = AssetRegistry::get().get_metadata_mutable(meta.uuid))
+			{
+				mutableMeta->meshSettings = _editingMeshSettings;
+				std::filesystem::path metaPath = mutableMeta->virtualPath;
+				metaPath += ".meta";
+				AssetSerializer::save_meta_file(metaPath, *mutableMeta);
+				AssetImporter::import_model(*mutableMeta);
+				if (ctx.activeRegistry && ctx.resourceManager)
+					AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
+			}
+		}
+
+		ImGui::Spacing();
+		ImGui::Separator();
+		ImGui::TextUnformatted("One-Click Model Virtual Texturing");
+
+		if (ImGui::Button("Virtualize Model Textures (.vtex) & Update", ImVec2(-1.0f, 32.0f)))
+		{
+			_editingMeshSettings.virtualizeTextures = true;
+			AssetImporter::set_model_virtualized(meta.uuid, true, ctx.resourceManager);
+			if (ctx.activeRegistry && ctx.resourceManager)
+				AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
+		}
+
+		if (ImGui::Button("Unvirtualize Model Textures (.gtex) & Update", ImVec2(-1.0f, 32.0f)))
+		{
+			_editingMeshSettings.virtualizeTextures = false;
+			AssetImporter::set_model_virtualized(meta.uuid, false, ctx.resourceManager);
+			if (ctx.activeRegistry && ctx.resourceManager)
+				AssetSerializer::refresh_scene_materials(*ctx.activeRegistry, *ctx.resourceManager, ctx.renderer);
 		}
 	}
 }

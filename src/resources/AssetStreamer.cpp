@@ -183,6 +183,12 @@ void AssetStreamer::cancel_vt_tiles_for_texture(uint16_t textureId, std::vector<
 	}
 }
 
+void AssetStreamer::invalidate_vtex_cache(const UUID& texUuid)
+{
+	std::scoped_lock<std::mutex> lock(_vtexCacheMutex);
+	_vtexHeaderCache.erase(texUuid);
+}
+
 size_t AssetStreamer::get_pending_vt_tile_count() const
 {
 	std::scoped_lock<std::mutex> lock(_queueMutex);

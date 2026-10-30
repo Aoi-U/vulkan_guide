@@ -9,6 +9,8 @@
 #include <core/cvars.h>
 #include <fmt/core.h>
 
+#include "utils/vk_utils.h"
+
 AutoCVar_Int cvVTFeedbackSubsample(
 	"r.vt.feedbackSubsample",
 	"Screenspace tile subsample factor for VT feedback (e.g. 8 = 1 pixel per 8x8 block)",
@@ -50,14 +52,27 @@ void VirtualTextureSystem::init(VulkanCore* core, ResourceManager* rm, uint32_t 
 	_pool.init(_core, uploader, atlasTilesPerAxis, static_cast<uint32_t>(VTPhysicalLayer::Count), VK_FORMAT_R8G8B8A8_UNORM);
 	_pageTable.init(_core, uploader, pageTableSize, VT_MAX_MIP_LEVELS);
 
+	// 136x136 default fallback white and normal tiles 
+	init_fallback_atlas();
+	constexpr size_t tileTexelCount = static_cast<size_t>(VT_PHYSICAL_TILE_SIZE) * VT_PHYSICAL_TILE_SIZE;
+	_defaultWhiteTile.assign(tileTexelCount * 4u, 255u);
+	_defaultNormalTile.resize(tileTexelCount * 4u);
+	for (size_t i = 0; i < tileTexelCount; i++)
+	{
+		_defaultNormalTile[i * 4 + 0] = 128u;
+		_defaultNormalTile[i * 4 + 1] = 128u;
+		_defaultNormalTile[i * 4 + 2] = 255u;
+		_defaultNormalTile[i * 4 + 3] = 255u;
+	}
+
 	{
 		std::scoped_lock<std::mutex> lock(_mutex);
 		_textures.assign(MAX_VIRTUAL_TEXTURES, RegisteredTextureRecord{});
-		_freeTextureIds.resize(MAX_VIRTUAL_TEXTURES);
 
+		_freeTextureIds.clear();
 		for (uint32_t i = 0; i < MAX_VIRTUAL_TEXTURES; i++)
 		{
-			_freeTextureIds[MAX_VIRTUAL_TEXTURES - 1 - i] = static_cast<uint16_t>(i);
+			_freeTextureIds.push_back(static_cast<TextureId>(i));
 		}
 		_uuidToTextureId.clear();
 		_inFlightPages.clear();
@@ -99,18 +114,6 @@ void VirtualTextureSystem::init(VulkanCore* core, ResourceManager* rm, uint32_t 
 			}
 		}
 	}
-
-	// 136x136 default fallback white and normal tiles 
-	constexpr size_t tileTexelCount = static_cast<size_t>(VT_PHYSICAL_TILE_SIZE) * VT_PHYSICAL_TILE_SIZE;
-	_defaultWhiteTile.assign(tileTexelCount * 4u, 255u);
-	_defaultNormalTile.resize(tileTexelCount * 4u);
-	for (size_t i = 0; i < tileTexelCount; i++)
-	{
-		_defaultNormalTile[i * 4 + 0] = 128u; // Tangent X = 0.0
-		_defaultNormalTile[i * 4 + 1] = 128u; // Tangent Y = 0.0
-		_defaultNormalTile[i * 4 + 2] = 255u; // Tangent Z = 1.0
-		_defaultNormalTile[i * 4 + 3] = 255u;
-	}
 }
 
 void VirtualTextureSystem::cleanup()
@@ -122,6 +125,7 @@ void VirtualTextureSystem::cleanup()
 
 	_gpuFeedbackBuffer = {};
 	_gpuDescBuffer = {};
+	cleanup_fallback_atlas();
 	_pageTable.cleanup();
 	_pool.cleanup();
 	_textures.clear();
@@ -157,13 +161,13 @@ uint16_t VirtualTextureSystem::register_virtual_texture(const UUID& assetUuid, u
 		return VT_INVALID_TEXTURE_ID;
 	}
 
-	uint16_t texId = _freeTextureIds.back();
-	_freeTextureIds.pop_back();
+	TextureId texId = _freeTextureIds.front();
+	_freeTextureIds.pop_front();
 
 	PageTableAllocation ptAlloc = _pageTable.allocate_virtual_range(texId, virtualWidth, virtualHeight, mipLevels);
 	if (!ptAlloc.is_valid())
 	{
-		_freeTextureIds.push_back(texId);
+		_freeTextureIds.push_front(texId);
 		return VT_INVALID_TEXTURE_ID;
 	}
 
@@ -190,29 +194,12 @@ uint16_t VirtualTextureSystem::register_virtual_texture(const UUID& assetUuid, u
 
 	_activeTextureCount++;
 
-	// pin tail mip so shaders always has valid fallback
-	uint8_t tailMip = static_cast<uint8_t>(ptAlloc.mipLevels - 1u);
-	VirtualPageID tailPageId{ texId, 0, 0, tailMip };
-	PhysicalSlotCoord tailSlot{};
-	std::optional<VirtualPageID> evicted{};
-	bool wasHit = false;
+	// write 1x1 tail mip colors into global fallback atlas
+	const auto albedoFallback = extract_rgba(tailMipAlbedoPixels, { 255u, 255u, 255u, 255u });
+	const auto normalFallback = extract_rgba(tailMipNormalPixels, { 128u, 128u, 255u, 255u });
+	const auto mrFallback = extract_rgba(tailMipMetalRoughPixels, { 255u, 255u, 255u, 255u });
 
-	if (_pool.request_or_allocate_slot(tailPageId, 0, true, tailSlot, evicted, wasHit))
-	{
-		if (evicted.has_value())
-			handle_evicted_page(*evicted);
-
-		std::span<const uint8_t> albedoSpan = tailMipAlbedoPixels.empty() ? std::span<const uint8_t>(_defaultWhiteTile) : tailMipAlbedoPixels;
-		std::span<const uint8_t> normalSpan = tailMipNormalPixels.empty() ? std::span<const uint8_t>(_defaultNormalTile) : tailMipNormalPixels;
-		std::span<const uint8_t> mrSpan = tailMipMetalRoughPixels.empty() ? std::span<const uint8_t>(_defaultWhiteTile) : tailMipMetalRoughPixels;
-
-		_pool.stage_tile_upload(tailSlot.slotIndex, static_cast<uint32_t>(VTPhysicalLayer::Albedo), albedoSpan);
-		_pool.stage_tile_upload(tailSlot.slotIndex, static_cast<uint32_t>(VTPhysicalLayer::Normal), normalSpan);
-		_pool.stage_tile_upload(tailSlot.slotIndex, static_cast<uint32_t>(VTPhysicalLayer::MetalRoughOccl), mrSpan);
-
-		_pageTable.map_page(ptAlloc, 0, 0, tailMip, tailSlot.tileX, tailSlot.tileY);
-		rec.gpuDesc.fallbackPageEntry = PageTableEntry::pack(tailSlot.tileX, tailSlot.tileY, tailMip, false).raw;
-	}
+	stage_fallback_texel_upload(texId, albedoFallback, normalFallback, mrFallback);
 
 	_descBufferDirty = true;
 	return texId;
@@ -224,12 +211,24 @@ uint16_t VirtualTextureSystem::register_virtual_texture_from_asset(const UUID& a
 	if (!albedoAssetUuid.is_valid())
 		return VT_INVALID_TEXTURE_ID;
 
+	TextureId staleId = VT_INVALID_TEXTURE_ID;
 	{
 		std::scoped_lock<std::mutex> lock(_mutex);
 		auto it = _uuidToTextureId.find(albedoAssetUuid);
 		if (it != _uuidToTextureId.end())
-			return it->second;
+		{
+			const RegisteredTextureRecord& existing = _textures[it->second];
+			if (existing.normalAssetUuid == normalAssetUuid &&
+				existing.metalRoughAssetUuid == metalRoughAssetUuid &&
+				existing.occlusionAssetUuid == occlusionAssetUuid)
+			{
+				return it->second;
+			}
+			staleId = it->second;
+		}
 	}
+	if (staleId != VT_INVALID_TEXTURE_ID)
+		unregister_virtual_texture(staleId);
 
 	// helper to ensure .vtex exists and read its 1x1 tail mip
 	auto load_tail_mip = [](const UUID& uuid, CookedVTexHeader& outHeader, std::vector<uint8_t>& outTailPixels) -> bool
@@ -277,9 +276,10 @@ uint16_t VirtualTextureSystem::register_virtual_texture_from_asset(const UUID& a
 	if (!hasMr && hasOccl)
 	{
 		tailMetalRough.assign(tailOcclusion.size(), 255u);
-		for (size_t i = 0; i + 3 < tailMetalRough.size(); i += 4)	
+		for (size_t i = 0; i + 3 < tailMetalRough.size(); i += 4)
 			tailMetalRough[i] = tailOcclusion[i];
-	} else if (hasMr && !(occlusionAssetUuid.is_valid() && occlusionAssetUuid == metalRoughAssetUuid))
+	}
+	else if (hasMr && !(occlusionAssetUuid.is_valid() && occlusionAssetUuid == metalRoughAssetUuid))
 	{
 		for (size_t i = 0; i + 3 < tailMetalRough.size(); i += 4)
 			tailMetalRough[i] = (hasOccl && i < tailOcclusion.size()) ? tailOcclusion[i] : 255u;
@@ -291,7 +291,7 @@ uint16_t VirtualTextureSystem::register_virtual_texture_from_asset(const UUID& a
 		normalAssetUuid, metalRoughAssetUuid, occlusionAssetUuid);
 }
 
-void VirtualTextureSystem::unregister_virtual_texture(uint16_t textureId)
+void VirtualTextureSystem::unregister_virtual_texture(TextureId textureId)
 {
 	std::scoped_lock<std::mutex> lock(_mutex);
 
@@ -324,6 +324,54 @@ void VirtualTextureSystem::unregister_virtual_texture(uint16_t textureId)
 		_activeTextureCount--;
 
 	_descBufferDirty = true;
+}
+
+bool VirtualTextureSystem::unregister_virtual_texture_by_uuid(const UUID& assetUuid)
+{
+	if (!assetUuid.is_valid())
+		return false;
+
+	TextureId texId = VT_INVALID_TEXTURE_ID;
+	{
+		std::scoped_lock<std::mutex> lock(_mutex);
+		auto it = _uuidToTextureId.find(assetUuid);
+		if (it == _uuidToTextureId.end())
+			return false;
+		texId = it->second;
+	}
+	unregister_virtual_texture(texId);
+	return true;
+}
+
+void VirtualTextureSystem::unregister_virtual_textures_referencing_uuid(const UUID& texUuid)
+{
+	if (!texUuid.is_valid())
+		return;
+
+	std::vector<TextureId> toUnregister;
+	{
+		std::scoped_lock<std::mutex> lock(_mutex);
+		for (size_t i = 0; i < _textures.size(); i++)
+		{
+			const RegisteredTextureRecord& rec = _textures[i];
+			if (!rec.active)
+				continue;
+
+			if (rec.assetUuid == texUuid || rec.normalAssetUuid == texUuid || rec.metalRoughAssetUuid == texUuid || rec.occlusionAssetUuid == texUuid)
+				toUnregister.push_back(static_cast<TextureId>(i));
+		}
+	}
+	for (TextureId id : toUnregister)
+		unregister_virtual_texture(id);
+}
+
+bool VirtualTextureSystem::is_uuid_registered(const UUID& assetUuid) const noexcept
+{
+	if (!assetUuid.is_valid())
+		return false;
+
+	std::scoped_lock<std::mutex> lock(_mutex);
+	return _uuidToTextureId.contains(assetUuid);
 }
 
 bool VirtualTextureSystem::map_streamed_tile(const VirtualPageID& pageId, uint64_t currentFrame, bool pinTile,
@@ -589,6 +637,7 @@ VirtualTextureMetrics VirtualTextureSystem::get_metrics() const
 	m.totalEvictions = _pool.get_evictions();
 	m.physicalAtlasVramBytes = _pool.get_vram_bytes();
 	m.pageTableVramBytes = _pageTable.get_vram_bytes();
+	m.fallbackAtlasVramBytes = _fallbackVramBytes;
 
 	m.lastFrameRawFeedbackCount = _lastFrameRawFeedbackCount;
 	m.lastFrameUniquePagesRequested = _lastFrameUniquePages;
@@ -596,6 +645,196 @@ VirtualTextureMetrics VirtualTextureSystem::get_metrics() const
 	m.inFlightTileRequests = static_cast<uint32_t>(_inFlightPages.size());
 	m.totalTilesStreamed = _totalTilesStreamed;
 	return m;
+}
+
+void VirtualTextureSystem::init_fallback_atlas()
+{
+	if (!_core)
+		return;
+
+	constexpr uint32_t layerCount = static_cast<uint32_t>(VTPhysicalLayer::Count);
+
+	VkImageCreateInfo imgInfo{
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = VK_FORMAT_R8G8B8A8_UNORM,
+		.extent = { VT_FALLBACK_ATLAS_DIM, VT_FALLBACK_ATLAS_DIM, 1},
+		.mipLevels = 1,
+		.arrayLayers = layerCount,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_OPTIMAL,
+		.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+	};
+
+	VmaAllocationCreateInfo allocInfo{
+		.usage = VMA_MEMORY_USAGE_GPU_ONLY,
+		.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+	};
+
+	VmaAllocationInfo vmaInfo{};
+	VK_CHECK(vmaCreateImage(_core->get_allocator(), &imgInfo, &allocInfo, &_fallbackAtlasImage, &_fallbackAtlasAlloc, &vmaInfo));
+	_fallbackVramBytes = vmaInfo.size;
+
+	VkImageViewCreateInfo viewInfo{};
+	viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+	viewInfo.image = _fallbackAtlasImage;
+	viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+	viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+	viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	viewInfo.subresourceRange.baseMipLevel = 0;
+	viewInfo.subresourceRange.levelCount = 1;
+	viewInfo.subresourceRange.baseArrayLayer = 0;
+	viewInfo.subresourceRange.layerCount = layerCount;
+	VK_CHECK(vkCreateImageView(_core->get_device(), &viewInfo, nullptr, &_fallbackAtlasView));
+
+	_fallbackLayerViews.resize(layerCount, VK_NULL_HANDLE);
+	for (uint32_t layer = 0; layer < layerCount; layer++)
+	{
+		VkImageViewCreateInfo layerViewInfo = viewInfo;
+		layerViewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		layerViewInfo.subresourceRange.baseArrayLayer = layer;
+		layerViewInfo.subresourceRange.layerCount = 1;
+		VK_CHECK(vkCreateImageView(_core->get_device(), &layerViewInfo, nullptr, &_fallbackLayerViews[layer]));
+	}
+
+	VkSamplerCreateInfo samplerInfo{};
+	samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+	samplerInfo.magFilter = VK_FILTER_NEAREST;
+	samplerInfo.minFilter = VK_FILTER_NEAREST;
+	samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+	samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+	samplerInfo.minLod = 0.0f;
+	samplerInfo.maxLod = 0.0f;
+	VK_CHECK(vkCreateSampler(_core->get_device(), &samplerInfo, nullptr, &_fallbackSampler));
+
+	// clear layers to neutral pbr defaults 
+	_core->immediate_submit([this, layerCount](VkCommandBuffer cmd)
+		{
+			// transition to transfer dst layout to clear
+			vkutil::image_mem_barrier2(cmd, _fallbackAtlasImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, layerCount, 1, 0);
+
+			// layer 0 albedo, layer 2 metalrough: white (1, 1, 1, 1)
+			VkClearColorValue whiteClear{ {1.0f, 1.0f, 1.0f, 1.0f} };
+			VkImageSubresourceRange range0{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+			VkImageSubresourceRange range2{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 2, 1 };
+			vkCmdClearColorImage(cmd, _fallbackAtlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &whiteClear, 1, &range0);
+			vkCmdClearColorImage(cmd, _fallbackAtlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &whiteClear, 1, &range2);
+
+			// layer 1 normal: flat normal (0.5, 0.5, 1.0, 1.0)
+			VkClearColorValue normalClear{ {0.5f, 0.5f, 1.0f, 1.0f} };
+			VkImageSubresourceRange range1{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 1, 1 };
+			vkCmdClearColorImage(cmd, _fallbackAtlasImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &normalClear, 1, &range1);
+
+			// transition to shader read only
+			vkutil::image_mem_barrier2(cmd, _fallbackAtlasImage, VK_FORMAT_R8G8B8A8_UNORM, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, layerCount, 1, 0);
+		});
+}
+
+void VirtualTextureSystem::cleanup_fallback_atlas()
+{
+	if (_core)
+	{
+		VkDevice dev = _core->get_device();
+		if (_fallbackSampler != VK_NULL_HANDLE)
+		{
+			vkDestroySampler(dev, _fallbackSampler, nullptr);
+			_fallbackSampler = VK_NULL_HANDLE;
+		}
+		for (VkImageView view : _fallbackLayerViews)
+		{
+			if (view != VK_NULL_HANDLE)
+				vkDestroyImageView(dev, view, nullptr);
+		}
+		_fallbackLayerViews.clear();
+
+		if (_fallbackAtlasView != VK_NULL_HANDLE)
+		{
+			vkDestroyImageView(dev, _fallbackAtlasView, nullptr);
+			_fallbackAtlasView = VK_NULL_HANDLE;
+		}
+		if (_fallbackAtlasImage != VK_NULL_HANDLE)
+		{
+			vmaDestroyImage(_core->get_allocator(), _fallbackAtlasImage, _fallbackAtlasAlloc);
+			_fallbackAtlasImage = VK_NULL_HANDLE;
+			_fallbackAtlasAlloc = VK_NULL_HANDLE;
+		}
+	}
+	_fallbackVramBytes = 0;
+}
+
+void VirtualTextureSystem::stage_fallback_texel_upload(TextureId textureId, const std::array<uint8_t, 4>& albedoRgba,
+	const std::array<uint8_t, 4>& normalRgba, const std::array<uint8_t, 4>& metalRoughRgba)
+{
+	if (!_rm || _fallbackAtlasImage == VK_NULL_HANDLE || textureId >= MAX_VIRTUAL_TEXTURES)
+		return;
+
+	StagingUploader& uploader = _rm->get_staging_uploader();
+	const int32_t coordX = static_cast<int32_t>(textureId % VT_FALLBACK_ATLAS_DIM);
+	const int32_t coordY = static_cast<int32_t>(textureId / VT_FALLBACK_ATLAS_DIM);
+	constexpr uint32_t totalLayers = static_cast<uint32_t>(VTPhysicalLayer::Count);
+
+	const std::array<const uint8_t*, 3> layerPixels = { albedoRgba.data(), normalRgba.data(), metalRoughRgba.data() };
+	for (uint32_t layer = 0; layer < totalLayers; layer++)
+	{
+		StagedTextureRegionDesc desc{
+			.dstImage = _fallbackAtlasImage,
+			.format = VK_FORMAT_R8G8B8A8_UNORM,
+			.offset = { coordX, coordY, 0},
+			.extent = { 1, 1, 1},
+			.mipLevel = 0,
+			.totalMipLevels = 1,
+			.baseArrayLayer = layer,
+			.layerCount = 1,
+			.totalArrayLayers = totalLayers,
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+			.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+		};
+
+		uploader.stage_texture_region_upload(desc, layerPixels[layer], 4u);
+	}
+}
+
+std::array<uint8_t, 4> VirtualTextureSystem::extract_rgba(std::span<const uint8_t> pixelData,
+                                                          std::array<uint8_t, 4> defaultColor) noexcept
+{
+	if (pixelData.size() < 4)
+		return defaultColor;
+
+	// if caller passed 1x1 texel directly
+	if (pixelData.size() == 4)
+	{
+		return { pixelData[0], pixelData[1], pixelData[2], pixelData[3] };
+	}
+	
+	// if caller passed 136x136 physical tile from .vtex, average 128x128 logical texels
+	constexpr size_t fullTileBytes = static_cast<size_t>(VT_PHYSICAL_TILE_SIZE) * VT_PHYSICAL_TILE_SIZE * 4u;
+	if (pixelData.size() >= fullTileBytes)
+	{
+		uint64_t rSum = 0, gSum = 0, bSum = 0, aSum = 0;
+		for (uint32_t y = VT_TILE_BORDER; y < VT_TILE_BORDER + VT_LOGICAL_TILE_SIZE; y++)
+		{
+			for (uint32_t x = VT_TILE_BORDER; x < VT_TILE_BORDER + VT_LOGICAL_TILE_SIZE; x++)
+			{
+				const size_t idx = (static_cast<size_t>(y) * VT_PHYSICAL_TILE_SIZE + x) * 4u;
+				rSum += pixelData[idx + 0];
+				gSum += pixelData[idx + 1];
+				bSum += pixelData[idx + 2];
+				aSum += pixelData[idx + 3];
+			}
+		}
+		constexpr uint64_t count = static_cast<uint64_t>(VT_LOGICAL_TILE_SIZE) * VT_LOGICAL_TILE_SIZE;
+		return {
+			static_cast<uint8_t>((rSum + count / 2) / count),
+			static_cast<uint8_t>((gSum + count / 2) / count),
+			static_cast<uint8_t>((bSum + count / 2) / count),
+			static_cast<uint8_t>((aSum + count / 2) / count)
+		};
+	}
+	
+	return { pixelData[0], pixelData[1], pixelData[2], pixelData[3] };
 }
 
 void VirtualTextureSystem::handle_evicted_page(const VirtualPageID& evictedPage)

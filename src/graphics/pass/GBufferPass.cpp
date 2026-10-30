@@ -93,7 +93,8 @@ void GBufferPass::add_to_graph(RenderGraph& graph, RGBlackboard& blackboard, con
 
 			std::unordered_map<std::string, VkDescriptorImageInfo> images = {
 				{ "vtPageTable", { vtSys.get_page_table().get_sampler(), vtSys.get_page_table().get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }},
-				{ "vtPhysicalAtlas", { vtSys.get_physical_pool().get_atlas_sampler(), vtSys.get_physical_pool().get_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
+				{ "vtPhysicalAtlas", { vtSys.get_physical_pool().get_atlas_sampler(), vtSys.get_physical_pool().get_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }},
+				{ "vtFallbackAtlas", { vtSys.get_fallback_atlas_sampler(), vtSys.get_fallback_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
 			};
 
 			DescriptorBinder::update_set(_vulkanCore->get_device(), globalSet, pbrTemplate->get_reflection().sets.at(0), buffers, images);

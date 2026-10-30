@@ -429,7 +429,8 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 	}
 
 	// register virtual texture tile atlas in debug targets
-	const PhysicalTilePool& vtPool = _resourceManager->get_vtsystem().get_physical_pool();
+	const VirtualTextureSystem& vtSys = _resourceManager->get_vtsystem();
+	const PhysicalTilePool& vtPool = vtSys.get_physical_pool();
 	if (vtPool.get_atlas_view() != VK_NULL_HANDLE)
 	{
 		TargetInfo vtAtlasInfo{};
@@ -443,6 +444,21 @@ void Renderer::render_frame(const entt::registry& registry, const GPUSceneData& 
 			vtAtlasInfo.faceViews.push_back(vtPool.get_layer_view(layer));
 		}
 		_debugTargets["VT_PhysicalAtlas"] = vtAtlasInfo;
+	}
+
+	if (vtSys.get_fallback_atlas_view() != VK_NULL_HANDLE)
+	{
+		TargetInfo vtFallbackInfo{};
+		vtFallbackInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+		VkExtent3D fbExt = vtSys.get_fallback_atlas_extent();
+		vtFallbackInfo.extent = { fbExt.width, fbExt.height };
+		vtFallbackInfo.view = vtSys.get_fallback_layer_view(0);
+		vtFallbackInfo.isCube = false;
+		for (uint32_t layer = 0; layer < static_cast<uint32_t>(VTPhysicalLayer::Count); layer++)
+		{
+			vtFallbackInfo.faceViews.push_back(vtSys.get_fallback_layer_view(layer));
+		}
+		_debugTargets["VT_FallbackAtlas"] = vtFallbackInfo;
 	}
 
 	_renderGraph.execute(ctx);

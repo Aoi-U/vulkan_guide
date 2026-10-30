@@ -1,5 +1,6 @@
 const uint VT_INVALID_INDEX = 0xFFFFu;
 const uint VT_MAX_FEEDBACK_ITEMS = 16384u;
+const uint VT_FALLBACK_ATLAS_DIM = 64u;
 const float VT_LOGICAL_TILE_SIZE = 128.0;
 const float VT_TILE_BORDER = 4.0;
 const float VT_PHYSICAL_TILE_SIZE = 136.0;
@@ -41,6 +42,8 @@ layout (std430, set = 0, binding = 11) buffer VTFeedbackBuffer
 	uint pad2;
 	uint requests[];
 } vtFeedback;
+
+layout (set = 0, binding = 12) uniform sampler2DArray vtFallbackAtlas;
 
 vec3 vt_srgb_to_linear(vec3 srgb)
 {
@@ -142,8 +145,26 @@ void vt_sample_pbr_layers(uint textureId, vec2 rawUV, out vec4 outAlbedo, out ve
 	uvec2 globalPageCoord = (uvec2(desc.pageTableOffsetX, desc.pageTableOffsetY) >> requestedMip) + localTile;
 	uint pageEntry = texelFetch(vtPageTable, ivec2(globalPageCoord), int(requestedMip)).r;
 
+	int debugMode = int(sceneData.vtParams.y);
+
+	// if pageEntry is unmapped, use global fallback atlas
 	if ((pageEntry & 1u) == 0u) {
-		pageEntry = desc.fallbackPageEntry;
+		ivec2 fallbackCoord = ivec2(int(textureId % VT_FALLBACK_ATLAS_DIM), int(textureId / VT_FALLBACK_ATLAS_DIM));
+		vec4 rawFallbackAlbedo = texelFetch(vtFallbackAtlas, ivec3(fallbackCoord, 0), 0);
+		outAlbedo = vec4(vt_srgb_to_linear(rawFallbackAlbedo.rgb), rawFallbackAlbedo.a);
+		outNormal = texelFetch(vtFallbackAtlas, ivec3(fallbackCoord, 1), 0);
+		outMetalRoughOccl = texelFetch(vtFallbackAtlas, ivec3(fallbackCoord, 2), 0);
+
+		if (debugMode == VT_DEBUG_MIP_HEATMAP) {
+			outAlbedo.rgb = mix(outAlbedo.rgb * 0.25, vec3(1.0, 1.0, 1.0), 0.75);
+		}
+		else if (debugMode == VT_DEBUG_RESIDENCY_STATUS) {
+			outAlbedo.rgb = mix(outAlbedo.rgb * 0.3, vec3(1.0, 0.1, 0.4), 0.7);
+		}
+		else if (debugMode == VT_DEBUG_PHYSICAL_GRID) {
+			outAlbedo.rgb = vec3(0.15, 0.15, 0.20);
+		}
+		return;
 	}
 
 	uint physTileX  = (pageEntry >> 1u)  & 0xFFu;
@@ -168,12 +189,11 @@ void vt_sample_pbr_layers(uint textureId, vec2 rawUV, out vec4 outAlbedo, out ve
 	vec2 gradY = clamp(ddyUV * uvToAtlasScale, -maxGrad, maxGrad);
 
 	vec4 rawAlbedoSample = textureGrad(vtPhysicalAtlas, vec3(atlasUV, VT_LAYER_ALBEDO), gradX, gradY);
-	outAlbedo         = vec4(vt_srgb_to_linear(rawAlbedoSample.rgb), rawAlbedoSample.a);
-	outNormal         = textureGrad(vtPhysicalAtlas, vec3(atlasUV, VT_LAYER_NORMAL),        gradX, gradY);
+	outAlbedo = vec4(vt_srgb_to_linear(rawAlbedoSample.rgb), rawAlbedoSample.a);
+	outNormal = textureGrad(vtPhysicalAtlas, vec3(atlasUV, VT_LAYER_NORMAL),        gradX, gradY);
 	outMetalRoughOccl = textureGrad(vtPhysicalAtlas, vec3(atlasUV, VT_LAYER_METALROUGH_AO), gradX, gradY);
 
 	// debug visualizations 
-	int debugMode = int(sceneData.vtParams.y);
 	if (debugMode != VT_DEBUG_NONE) {
 		vec2 borderDist = min(inTileUV, vec2(1.0) - inTileUV) * VT_LOGICAL_TILE_SIZE;
 		float gridLine = (min(borderDist.x, borderDist.y) < 1.25) ? 1.0 : 0.0;

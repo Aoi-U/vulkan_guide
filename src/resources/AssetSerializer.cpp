@@ -8,6 +8,8 @@
 #include <fstream>
 #include <algorithm>
 
+#include "Components.h"
+#include "Renderer.h"
 #include "vt/VirtualTextureSystem.h"
 
 namespace
@@ -220,6 +222,7 @@ bool AssetSerializer::save_meta_file(const std::filesystem::path& metaFilePath, 
 		out << YAML::Key << "keepCpuPickingData" << YAML::Value << ms.keepCpuPickingData;
 		out << YAML::Key << "optimizeVertexCache" << YAML::Value << ms.optimizeVertexCache;
 		out << YAML::Key << "optimizeOverdraw" << YAML::Value << ms.optimizeOverdraw;
+		out << YAML::Key << "virtualizeTextures" << YAML::Value << ms.virtualizeTextures;
 		out << YAML::EndMap; // importSettings
 	}
 
@@ -238,6 +241,8 @@ bool AssetSerializer::save_meta_file(const std::filesystem::path& metaFilePath, 
 			out << YAML::Key << "name" << YAML::Value << sub.name;
 			out << YAML::Key << "uuid" << YAML::Value << sub.uuid;
 			out << YAML::Key << "type" << YAML::Value << std::string(AssetUtils::asset_type_to_string(sub.type));
+			if (sub.type == AssetType::Texture)
+				out << YAML::Key << "virtualTexture" << YAML::Value << sub.virtualTexture;
 			out << YAML::EndMap;
 		}
 		out << YAML::EndSeq;
@@ -307,11 +312,12 @@ bool AssetSerializer::load_meta_file(const std::filesystem::path& metaFilePath, 
 			}
 			else if (outMetadata.type == AssetType::Model || outMetadata.type == AssetType::Mesh) {
 				auto& ms = outMetadata.meshSettings;
-				if (settings["generateLODs"])        ms.generateLODs = settings["generateLODs"].as<bool>();
-				if (settings["maxLODCount"])         ms.maxLODCount = settings["maxLODCount"].as<uint32_t>();
-				if (settings["keepCpuPickingData"])  ms.keepCpuPickingData = settings["keepCpuPickingData"].as<bool>();
-				if (settings["optimizeVertexCache"]) ms.optimizeVertexCache = settings["optimizeVertexCache"].as<bool>();
-				if (settings["optimizeOverdraw"])    ms.optimizeOverdraw = settings["optimizeOverdraw"].as<bool>();
+				if (settings["generateLODs"])					ms.generateLODs = settings["generateLODs"].as<bool>();
+				if (settings["maxLODCount"])					ms.maxLODCount = settings["maxLODCount"].as<uint32_t>();
+				if (settings["keepCpuPickingData"])		ms.keepCpuPickingData = settings["keepCpuPickingData"].as<bool>();
+				if (settings["optimizeVertexCache"])	ms.optimizeVertexCache = settings["optimizeVertexCache"].as<bool>();
+				if (settings["optimizeOverdraw"])			ms.optimizeOverdraw = settings["optimizeOverdraw"].as<bool>();
+				if (settings["virtualizeTextures"])		ms.virtualizeTextures = settings["virtualizeTextures"].as<bool>();
 			}
 		}
 
@@ -329,6 +335,8 @@ bool AssetSerializer::load_meta_file(const std::filesystem::path& metaFilePath, 
 				entry.name = subNode["name"].as<std::string>("");
 				entry.uuid = subNode["uuid"].as<UUID>();
 				entry.type = AssetUtils::asset_type_from_string(subNode["type"].as<std::string>("Unknown"));
+				if (subNode["virtualTexture"])
+					entry.virtualTexture = subNode["virtualTexture"].as<bool>(false);
 				outMetadata.subAssets.push_back(std::move(entry));
 			}
 		}
@@ -471,21 +479,13 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 	bool isVirtualMaterial = false;
 
 	// check if the materials albedo texture is configured as virtual texture 
-	if (matData.albedoTextureUUID.is_valid()) 
+	if (matData.albedoTextureUUID.is_valid())
 	{
 		bool shouldRegisterVT = false;
-		if (const AssetMetadata* albedoMeta = AssetRegistry::get().get_metadata(matData.albedoTextureUUID)) 
-		{
-			shouldRegisterVT = albedoMeta->textureSettings.virtualTexture ||
-				(albedoMeta->cookedPath.extension() == ".vtex");
-		}
-		else 
-		{
-			std::filesystem::path directVtexPath = std::filesystem::path(".cache/textures") / (matData.albedoTextureUUID.to_string() + ".vtex");
-			shouldRegisterVT = std::filesystem::exists(directVtexPath);
-		}
+		if (const AssetMetadata* albedoMeta = AssetRegistry::get().get_metadata(matData.albedoTextureUUID))
+			shouldRegisterVT = albedoMeta->textureSettings.virtualTexture;
 
-		if (shouldRegisterVT) 
+		if (shouldRegisterVT)
 		{
 			uint16_t vtId = rm.get_vtsystem().register_virtual_texture_from_asset(
 				matData.albedoTextureUUID,
@@ -493,68 +493,67 @@ std::shared_ptr<MaterialInstance> AssetSerializer::build_material_instance(const
 				matData.metalRoughTextureUUID,
 				matData.occlusionTextureUUID
 			);
-			if (vtId != VT_INVALID_TEXTURE_ID) 
+			if (vtId != VT_INVALID_TEXTURE_ID)
 			{
 				instance->set_virtual_texture_id(vtId);
 				isVirtualMaterial = true;
 			}
 		}
+		else
+			rm.get_vtsystem().unregister_virtual_texture_by_uuid(matData.albedoTextureUUID);
 	}
 
 	// helper to resolve standard non-virtual texture UUID to a bindless GPU Texture handle
-	auto resolve_slot_texture = [&](const UUID& texUuid, ResourceHandle<Texture> fallback, VkFormat defaultFormat) -> ResourceHandle<Texture> 
-	{
-		if (!texUuid.is_valid()) 
+	auto resolve_slot_texture = [&](const UUID& texUuid, ResourceHandle<Texture> fallback, VkFormat defaultFormat) -> ResourceHandle<Texture>
 		{
-			return fallback;
-		}
-		if (rm.has_resource<Texture>(texUuid)) 
-		{
-			return rm.get_handle<Texture>(texUuid);
-		}
-		if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid)) 
-		{
-			if (meta->textureSettings.virtualTexture || meta->cookedPath.extension() == ".vtex") {
+			if (!texUuid.is_valid())
 				return fallback;
-			}
 
-			VkFormat fmt = meta->textureSettings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : defaultFormat;
-			std::filesystem::path loadPath = (meta->is_sub_asset() && !meta->cookedPath.empty()) ? meta->cookedPath : meta->virtualPath;
+			if (rm.has_resource<Texture>(texUuid))
+				return rm.get_handle<Texture>(texUuid);
 
-			if (std::filesystem::exists(loadPath)) {
-				auto loaded = rm.load_by_uuid<Texture>(
-					texUuid,
-					meta->name,
-					loadPath,
-					fmt,
-					VK_IMAGE_USAGE_SAMPLED_BIT,
-					meta->textureSettings.generateMips
-				);
-				if (loaded.is_valid()) 
-				{
-					return loaded;
+			if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(texUuid))
+			{
+				VkFormat fmt = meta->textureSettings.sRGB ? VK_FORMAT_R8G8B8A8_SRGB : defaultFormat;
+				std::filesystem::path gtexCachePath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
+				std::filesystem::path loadPath = meta->is_sub_asset() ?
+					gtexCachePath :
+					(std::filesystem::exists(meta->virtualPath) ?
+						meta->virtualPath :
+						gtexCachePath);
+
+				if (std::filesystem::exists(loadPath)) {
+					auto loaded = rm.load_by_uuid<Texture>(
+						texUuid,
+						meta->name,
+						loadPath,
+						fmt,
+						VK_IMAGE_USAGE_SAMPLED_BIT,
+						meta->textureSettings.generateMips
+					);
+					if (loaded.is_valid())
+						return loaded;
+					
 				}
 			}
-		}
 
-		std::filesystem::path directCachePath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
-		if (std::filesystem::exists(directCachePath)) 
-		{
-			auto loaded = rm.load_by_uuid<Texture>(
-				texUuid,
-				texUuid.to_string(),
-				directCachePath,
-				defaultFormat,
-				VK_IMAGE_USAGE_SAMPLED_BIT,
-				true
-			);
-			if (loaded.is_valid()) 
+			std::filesystem::path directCachePath = std::filesystem::path(".cache/textures") / (texUuid.to_string() + ".gtex");
+			if (std::filesystem::exists(directCachePath))
 			{
-				return loaded;
+				auto loaded = rm.load_by_uuid<Texture>(
+					texUuid,
+					texUuid.to_string(),
+					directCachePath,
+					defaultFormat,
+					VK_IMAGE_USAGE_SAMPLED_BIT,
+					true
+				);
+				if (loaded.is_valid())
+					return loaded;
+				
 			}
-		}
 
-		return fallback;
+			return fallback;
 		};
 
 	// if virtual texturing is active for this material, bind 1x1 default fallbacks to 
@@ -699,4 +698,44 @@ bool AssetSerializer::load_prefab_file(const std::filesystem::path& prefabFilePa
 	}
 }
 
+void AssetSerializer::refresh_scene_materials(entt::registry& registry, ResourceManager& rm, Renderer* renderer)
+{
+	std::map<UUID, std::shared_ptr<MaterialInstance>> rebuiltCache;
 
+	auto view = registry.view<MaterialComponent>();
+	for (auto [entity, matComp] : view.each())
+	{
+		if (!matComp.materialAssetUUID.is_valid())
+			continue;
+
+		auto cachedIt = rebuiltCache.find(matComp.materialAssetUUID);
+		if (cachedIt != rebuiltCache.end())
+		{
+			matComp.material = cachedIt->second;
+			matComp.isDirty = true;
+			continue;
+		}
+
+		if (const AssetMetadata* matMeta = AssetRegistry::get().get_metadata(matComp.materialAssetUUID))
+		{
+			std::filesystem::path matPath = matMeta->virtualPath;
+			if (matPath.extension() != ".mat")
+				matPath = matMeta->virtualPath.parent_path() / "materials" / (matMeta->name + ".mat");
+
+			MaterialAssetData matData{};
+			if (load_material_file(matPath, matData))
+			{
+				auto newInst = build_material_instance(matData, rm);
+				rebuiltCache[matComp.materialAssetUUID] = newInst;
+				matComp.material = newInst;
+				matComp.alphaMode = matData.alphaMode;
+				matComp.doubleSided = matData.doubleSided;
+				matComp.isDirty = true;
+			}
+		}
+	}
+
+	rm.process_evictions_immediate();
+	if (renderer)
+		renderer->mark_scene_dirty();
+}

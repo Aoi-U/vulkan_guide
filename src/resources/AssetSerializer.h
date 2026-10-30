@@ -4,12 +4,14 @@
 #include <resources/AssetMetadata.h>
 #include <resources/MaterialInstance.h>
 #include <graphics/utils/vk_types.h>
+#include <entt.hpp>
 #include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
 
 class ResourceManager;
+class Renderer;
 
 struct MaterialAssetData
 {
@@ -83,4 +85,6 @@ public:
 	// .prefab yaml serialization
 	static bool save_prefab_file(const std::filesystem::path& prefabFilePath, const PrefabAssetData& prefabData);
 	static bool load_prefab_file(const std::filesystem::path& prefabFilePath, PrefabAssetData& outPrefabData);
+
+	static void refresh_scene_materials(entt::registry& registry, ResourceManager& rm, Renderer* renderer = nullptr);
 };

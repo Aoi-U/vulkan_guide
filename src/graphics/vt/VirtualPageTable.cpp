@@ -22,7 +22,7 @@ void VirtualPageTable::init(VulkanCore* core, StagingUploader* uploader, uint32_
 
 	{
 		std::scoped_lock<std::mutex> lock(_mutex);
-		_virtualSpaceAllocator = std::make_unique<OffsetAllocator::Allocator>(_sizeMip0 * _sizeMip0);
+		_macroGridOccupancy.assign(static_cast<size_t>(_macroGridWidth) * _macroGridWidth, 0u);
 		_allocatedTilesMip0 = 0;
 
 		_mips.resize(_mipCount);
@@ -165,7 +165,7 @@ void VirtualPageTable::cleanup()
 	}
 
 	_mips.clear();
-	_virtualSpaceAllocator = nullptr;
+	_macroGridOccupancy.clear();
 	_allocatedTilesMip0 = 0;
 	_vramBytes = 0;
 	_core = nullptr;
@@ -188,37 +188,67 @@ PageTableAllocation VirtualPageTable::allocate_virtual_range(uint16_t textureId,
 
 	// allocate aligned macro blocks along page table
 	uint32_t blockSpan = std::max(1u, (pow2Span + _macroBlockSize - 1u) / _macroBlockSize);
-	uint32_t neededUnits = blockSpan * blockSpan;
 
-	OffsetAllocator::Allocation rawAlloc = _virtualSpaceAllocator->allocate(neededUnits);
-	if (rawAlloc.offset == OffsetAllocator::Allocation::NO_SPACE)
+	// find free region in macro grid
+	uint32_t foundX = UINT32_MAX;
+	uint32_t foundY = UINT32_MAX;
+
+	for (uint32_t by = 0; by + blockSpan <= _macroGridWidth; by += blockSpan)
 	{
-		fmt::println("VirtualPageTable: failed to suballocate {}x{} tiles for texture {}", tilesX, tilesY, textureId);
-		return PageTableAllocation{};
+		for (uint32_t bx = 0; bx + blockSpan <= _macroGridWidth; bx += blockSpan)
+		{
+			bool regionFree = true;
+			for (uint32_t dy = 0; dy < blockSpan && regionFree; dy++)
+			{
+				const size_t row = static_cast<size_t>(by + dy) * _macroGridWidth + bx;
+				for (uint32_t dx = 0; dx < blockSpan; dx++)
+				{
+					if (_macroGridOccupancy[row + dx] != 0u)
+					{
+						regionFree = false;
+						break;
+					}
+				}
+			}
+
+			if (regionFree)
+			{
+				foundX = bx;
+				foundY = by;
+				break;
+			}
+		}
+		
+		if (foundX != UINT32_MAX)
+			break;
 	}
 
-	// map 1d offset to 2d macro block coordinates
-	uint32_t macroIndex = rawAlloc.offset;
-	uint32_t tileOffsetX = (macroIndex % _macroGridWidth) * _macroBlockSize;
-	uint32_t tileOffsetY = (macroIndex / _macroGridWidth) * _macroBlockSize;
-
-	if (tileOffsetX + pow2Span > _sizeMip0 || tileOffsetY + pow2Span > _sizeMip0)
+	if (foundX == UINT32_MAX)
 	{
-		_virtualSpaceAllocator->free(rawAlloc);
-		fmt::println("VirtualPageTable: virtual address range exceeded {}x{} page table bounds", _sizeMip0, _sizeMip0);
+		fmt::println("VirtualPageTable: failed to allocate {}x{} tiles for texture {}", tilesX, tilesY, textureId);
 		return PageTableAllocation{};
+	}
+	
+	// mark block region as occupied
+	for (uint32_t dy = 0; dy < blockSpan; dy++)
+	{
+		const size_t row = static_cast<size_t>(foundY + dy) * _macroGridWidth + foundX;
+		for (uint32_t dx = 0; dx < blockSpan; dx++)
+			_macroGridOccupancy[row + dx] = 1u;
 	}
 
 	_allocatedTilesMip0 += (tilesX * tilesY);
 
 	PageTableAllocation result{};
 	result.textureId = textureId;
-	result.offsetX = tileOffsetX;
-	result.offsetY = tileOffsetY;
+	result.offsetX = foundX * _macroBlockSize;
+	result.offsetY = foundY * _macroBlockSize;
 	result.tilesX = tilesX;
 	result.tilesY = tilesY;
 	result.mipLevels = std::min(mipLevels, _mipCount);
-	result.regionAlloc = rawAlloc;
+	result.macroBlockX = foundX;
+	result.macroBlockY = foundY;
+	result.macroBlockSpan = blockSpan;
 	return result;
 }
 
@@ -253,10 +283,21 @@ void VirtualPageTable::free_virtual_range(const PageTableAllocation& alloc)
 		}
 	}
 
-	if (alloc.regionAlloc.offset != OffsetAllocator::Allocation::NO_SPACE && _virtualSpaceAllocator)
+	// release block region
+	for (uint32_t dy = 0; dy < alloc.macroBlockSpan; dy++)
 	{
-		_virtualSpaceAllocator->free(alloc.regionAlloc);
+		uint32_t by = alloc.macroBlockY + dy;
+		if (by >= _macroGridWidth)
+			continue;
+
+		for (uint32_t dx = 0; dx < alloc.macroBlockSpan; dx++)
+		{
+			uint32_t bx = alloc.macroBlockX + dx;
+			if (bx < _macroGridWidth)
+				_macroGridOccupancy[static_cast<size_t>(by) * _macroGridWidth + bx] = 0u;
+		}
 	}
+	
 
 	uint32_t freedTiles = alloc.tilesX * alloc.tilesY;
 	_allocatedTilesMip0 = (_allocatedTilesMip0 >= freedTiles) ? (_allocatedTilesMip0 - freedTiles) : 0;

@@ -5,6 +5,8 @@
 #include <filesystem>
 #include <span>
 
+#include "ResourceManager.h"
+
 class AssetImporter
 {
 public:
@@ -29,6 +31,15 @@ public:
 	// read single tile from .vtex file into outTilePixels
 	static bool read_vtex_tile(const std::filesystem::path& vtexPath, const CookedVTexHeader& header, std::span<const CookedVTexTileEntry> tileTable, 
 		uint32_t mipLevel, uint32_t tileX, uint32_t tileY, std::vector<uint8_t>& outTilePixels);
+
+	// toggle single texture between .gtex and .vtex
+	static bool set_texture_virtualized(const UUID& texUuid, bool enableVT, ResourceManager* rm = nullptr, bool saveMeta = true, bool forceRecook = false);
+
+	// toggle all pbr textures of .mat between .gtex and .vtex
+	static bool set_material_virtualized(const UUID& matUuid, bool enableVT, ResourceManager* rm = nullptr);
+
+	// virtualize/unvirtualize all textures for an entire model/prefab
+	static uint32_t set_model_virtualized(const UUID& modelOrPrefabUuid, bool enableVT, ResourceManager* rm = nullptr);
 
 	// optimize raw vertex/index, generate 4 lods and write to .gmesh
 	static bool cook_mesh_data(const std::filesystem::path& cookedPath, std::span<const Vertex> rawVertices, std::span<const uint32_t> rawIndices, const MeshImportSettings& settings, Bounds& outBounds);

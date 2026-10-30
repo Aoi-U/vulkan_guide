@@ -29,6 +29,7 @@ public:
 
 	void request_vt_tile(const VTTileStreamRequest& request);
 	void cancel_vt_tiles_for_texture(uint16_t textureId, std::vector<VirtualPageID>& outCancelledPages);
+	void invalidate_vtex_cache(const UUID& texUuid);
 
 	size_t get_pending_vt_tile_count() const;
 

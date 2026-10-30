@@ -66,13 +66,13 @@ bool Texture::doLoad()
 			gtexPath = _filePath;
 		}
 		else if (const AssetMetadata* meta = AssetRegistry::get().get_metadata(get_uuid())) {
-			if (!meta->cookedPath.empty()) {
-				gtexPath = meta->cookedPath; 
+			if (!meta->cookedPath.empty() && meta->cookedPath.extension() == ".gtex")
+				gtexPath = meta->cookedPath;
+			else
+				gtexPath = std::filesystem::path(".cache/textures") / (get_uuid().to_string() + ".gtex");
 
-				if (!std::filesystem::exists(gtexPath) && std::filesystem::exists(meta->virtualPath) && !meta->is_sub_asset()) {
-					AssetImporter::cook_texture(*meta);
-				}
-			}
+			if (!std::filesystem::exists(gtexPath) && std::filesystem::exists(meta->virtualPath) && !meta->is_sub_asset())
+				AssetImporter::cook_texture(*meta);
 		}
 
 		if (!gtexPath.empty() && std::filesystem::exists(gtexPath)) {

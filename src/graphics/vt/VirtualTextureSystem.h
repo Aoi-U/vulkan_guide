@@ -10,6 +10,7 @@
 #include <unordered_set>
 #include <span>
 #include <mutex>
+#include <deque>
 
 class VulkanCore;
 class ResourceManager;
@@ -18,6 +19,7 @@ class ResourceManager;
 class VirtualTextureSystem
 {
 public:
+	using TextureId = uint16_t;
 	static constexpr uint32_t MAX_VIRTUAL_TEXTURES = 4096;
 	static constexpr uint32_t FEEDBACK_FRAME_OVERLAP = 2;
 
@@ -27,7 +29,7 @@ public:
 
 	// register a virtual texture in the page table, and pins its 1x1 tail mip in  the physical pool
 	// return its runtime virtual texture id
-	uint16_t register_virtual_texture(const UUID& assetUuid, uint32_t virtualWidth, uint32_t virtualHeight, uint32_t mipLevels, 
+	TextureId register_virtual_texture(const UUID& assetUuid, uint32_t virtualWidth, uint32_t virtualHeight, uint32_t mipLevels,
 		std::span<const uint8_t> tailMipAlbedoPixels = {}, 
 		std::span<const uint8_t> tailMipNormalPixels = {},
 		std::span<const uint8_t> tailMipMetalRoughPixels = {},
@@ -38,7 +40,7 @@ public:
 
 	// reads cooked .vtex asset header from disk
 	// extract 1x1 tail mip and register with virtualtexturesystem
-	uint16_t register_virtual_texture_from_asset(
+	TextureId register_virtual_texture_from_asset(
 		const UUID& albedoAssetUuid,
 		const UUID& normalAssetUuid = UUID::null(),
 		const UUID& metalRoughAssetUuid = UUID::null(),
@@ -47,7 +49,16 @@ public:
 
 	// unregisters a virtual texture
 	// frees its physical tiles and page table allocation
-	void unregister_virtual_texture(uint16_t textureId);
+	void unregister_virtual_texture(TextureId textureId);
+
+	// unregister virtual texture by primary (albedo) asset uuid
+	bool unregister_virtual_texture_by_uuid(const UUID& assetUuid);
+
+	// unregister any virtual texture that references texUuid in any PBR layer
+	void unregister_virtual_textures_referencing_uuid(const UUID& texUuid);
+
+	// check if albedo tex uuid is registered in virtualtexturesystem
+	bool is_uuid_registered(const UUID& assetUuid) const noexcept;
 
 	// map streamed tile into physical pool and update virtual page table
 	bool map_streamed_tile(const VirtualPageID& pageId, uint64_t currentFrame, bool pinTile,
@@ -69,7 +80,7 @@ public:
 		bool success = true
 	);
 
-	bool is_texture_active(uint16_t textureId) const noexcept
+	bool is_texture_active(TextureId textureId) const noexcept
 	{
 		std::scoped_lock<std::mutex> lock(_mutex);
 		return textureId < _textures.size() && _textures[textureId].active;
@@ -83,6 +94,16 @@ public:
 
 	VirtualPageTable& get_page_table() noexcept { return _pageTable; }
 	const VirtualPageTable& get_page_table() const noexcept { return _pageTable; }
+
+	// global fallback atlas getters
+	VkImage get_fallback_atlas_image() const noexcept { return _fallbackAtlasImage; }
+	VkImageView get_fallback_atlas_view() const noexcept { return _fallbackAtlasView; }
+	VkImageView get_fallback_layer_view(uint32_t layer) const noexcept
+	{
+		return (layer < _fallbackLayerViews.size()) ? _fallbackLayerViews[layer] : _fallbackAtlasView;
+	}
+	VkSampler get_fallback_atlas_sampler() const noexcept { return _fallbackSampler; }
+	VkExtent3D get_fallback_atlas_extent() const noexcept { return { VT_FALLBACK_ATLAS_DIM, VT_FALLBACK_ATLAS_DIM, 1 }; }
 
 	VkBuffer get_vt_desc_buffer() const noexcept
 	{
@@ -123,6 +144,11 @@ private:
 		GPUVirtualTextureDesc gpuDesc{};
 	};
 
+	void init_fallback_atlas();
+	void cleanup_fallback_atlas();
+	void stage_fallback_texel_upload(TextureId textureId, const std::array<uint8_t, 4>& albedoRgba, const std::array<uint8_t, 4>& normalRgba, const std::array<uint8_t, 4>& metalRoughRgba);
+	static std::array<uint8_t, 4> extract_rgba(std::span<const uint8_t> pixelData, std::array<uint8_t, 4> defaultColor) noexcept;
+
 	void handle_evicted_page(const VirtualPageID& evictedPage);
 
 	VulkanCore* _core{ nullptr };
@@ -132,6 +158,14 @@ private:
 	PhysicalTilePool _pool;
 	VirtualPageTable _pageTable;
 
+	// global fallback atlas of 3 64x64 pbr layers
+	VkImage _fallbackAtlasImage{ VK_NULL_HANDLE };
+	VmaAllocation _fallbackAtlasAlloc{ VK_NULL_HANDLE };
+	VkImageView _fallbackAtlasView{ VK_NULL_HANDLE };
+	std::vector<VkImageView> _fallbackLayerViews;
+	VkSampler _fallbackSampler{ VK_NULL_HANDLE };
+	uint64_t _fallbackVramBytes{ 0 };
+
 	ResourceHandle<Buffer> _gpuDescBuffer;
 	ResourceHandle<Buffer> _gpuFeedbackBuffer;
 	std::array<ResourceHandle<Buffer>, FEEDBACK_FRAME_OVERLAP> _feedbackReadbackBuffers;
@@ -140,8 +174,8 @@ private:
 
 	mutable std::mutex _mutex;
 	std::vector<RegisteredTextureRecord> _textures;
-	std::vector<uint16_t> _freeTextureIds;
-	std::unordered_map<UUID, uint16_t> _uuidToTextureId;
+	std::deque<TextureId> _freeTextureIds;
+	std::unordered_map<UUID, TextureId> _uuidToTextureId;
 	std::unordered_set<VirtualPageID> _inFlightPages;
 	uint32_t _activeTextureCount{ 0 };
 

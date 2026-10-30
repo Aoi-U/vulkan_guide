@@ -74,9 +74,9 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 
 			if (targets.vtDescBuffer.is_valid())
 				params.vtDescBuffer = builder.read_buffer(targets.vtDescBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-			if (targets.vtFeedbackBuffer.is_valid()) 
+			if (targets.vtFeedbackBuffer.is_valid())
 				params.vtFeedbackBuffer = builder.write_buffer(targets.vtFeedbackBuffer, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT);
-			
+
 			params.sceneColorCopy = builder.read_texture(targets.sceneColorCopy, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			params.irradianceMap = builder.read_texture(targets.irradianceMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 			params.prefilterMap = builder.read_texture(targets.prefilterMap, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
@@ -149,7 +149,8 @@ void ForwardTransparentPass::add_to_graph(RenderGraph& graph, RGBlackboard& blac
 				{ "prefilterMap", { defaults.cubemapSampler->get_sampler(), graph.get_image_view(params.prefilterMap), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
 				{ "brdfLUT", { defaults.lutSampler->get_sampler(), graph.get_image_view(params.brdfLut), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
 				{ "vtPageTable",     { vtSys.get_page_table().get_sampler(), vtSys.get_page_table().get_image_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
-				{ "vtPhysicalAtlas", { vtSys.get_physical_pool().get_atlas_sampler(), vtSys.get_physical_pool().get_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } }
+				{ "vtPhysicalAtlas", { vtSys.get_physical_pool().get_atlas_sampler(), vtSys.get_physical_pool().get_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL } },
+				{ "vtFallbackAtlas", { vtSys.get_fallback_atlas_sampler(), vtSys.get_fallback_atlas_view(), VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }}
 			};
 			DescriptorBinder::update_set(_core->get_device(), globalSet, _forwardVfxTemplate->get_reflection().sets.at(0), buffers, images);
 

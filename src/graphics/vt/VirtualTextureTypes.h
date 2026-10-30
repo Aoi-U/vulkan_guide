@@ -28,6 +28,9 @@ static constexpr uint32_t VT_DEFAULT_PAGE_TABLE_SIZE = 1024;
 // max number of packed uint32_t tile requests written by shaders per frame
 static constexpr uint32_t VT_MAX_FEEDBACK_REQUESTS = 16384;
 
+// dimension of 64x64 global fallback atlas
+static constexpr uint32_t VT_FALLBACK_ATLAS_DIM = 64;
+
 static constexpr uint16_t VT_INVALID_TEXTURE_ID = UINT16_MAX;
 static constexpr uint32_t VT_INVALID_PHYSICAL_SLOT = UINT32_MAX;
 
@@ -251,6 +254,7 @@ struct VirtualTextureMetrics
 	uint64_t totalEvictions{ 0 };
 	uint64_t physicalAtlasVramBytes{ 0 };
 	uint64_t pageTableVramBytes{ 0 };
+	uint64_t fallbackAtlasVramBytes{ 0 };
 
 	uint32_t lastFrameRawFeedbackCount{ 0 };
 	uint32_t lastFrameUniquePagesRequested{ 0 };
